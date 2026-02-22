@@ -9,18 +9,18 @@
 ## Todo
 
 ### nexl-ast
-- [ ] Span type (byte offset + length, source file ID)
-- [ ] Source location type (line, column, file)
-- [ ] AST node types: Atom (Int, Float, Ratio, Bool, Str, Char, Keyword, Symbol, Unit)
-- [ ] AST node types: Compound (List, Vector, Map, Set)
-- [ ] AST node types: Special (Quote, Deref, Discard)
-- [ ] Every node carries a `Span`
-- [ ] Comment attachment (for round-trip formatting)
+- [x] Span type (byte offset + length, source file ID)
+- [x] Source location type (line, column, file)
+- [x] AST node types: Atom (Int, Float, Ratio, Bool, Str, Char, Keyword, Symbol, Unit)
+- [x] AST node types: Compound (List, Vector, Map, Set)
+- [x] AST node types: Special (Quote, Deref, Discard)
+- [x] Every node carries a `Span`
+- [x] Comment attachment (for round-trip formatting)
 
 ### nexl-errors
-- [ ] Diagnostic type with severity, message, span, labels
-- [ ] Source snippet rendering (miette integration)
-- [ ] Error codes for lexer/reader errors
+- [x] Diagnostic type with severity, message, span, labels
+- [x] Source snippet rendering (miette integration)
+- [x] Error codes for lexer/reader errors
 
 ### nexl-reader — Lexer
 - [ ] Integer literals with width suffixes (`42`, `42i32`, `42u8`)
