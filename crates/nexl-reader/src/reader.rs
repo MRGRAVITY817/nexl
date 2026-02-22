@@ -1,4 +1,4 @@
-use nexl_ast::{Atom, FileId, Node, NodeKind, Span};
+use nexl_ast::{Atom, Comment, FileId, Node, NodeKind, Span};
 use nexl_errors::{codes, Diagnostic, Label, Severity};
 
 use crate::lexer::{Lexer, StringPart, Token, TokenKind};
@@ -10,10 +10,11 @@ use crate::lexer::{Lexer, StringPart, Token, TokenKind};
 /// Parse all top-level forms in `src` and return them as a [`Vec<Node>`].
 ///
 /// Runs the lexer internally; any lex error propagates immediately.
-/// Every node in the result carries a byte-accurate [`Span`] tagged with `file_id`.
+/// Every node carries a byte-accurate [`Span`], and line comments are attached
+/// as `leading_comments` / `trailing_comment` for round-trip formatting.
 pub fn read(src: &str, file_id: FileId) -> Result<Vec<Node>, Box<Diagnostic>> {
     let tokens = Lexer::new(src, file_id).tokenize()?;
-    let mut reader = Reader { tokens, pos: 0 };
+    let mut reader = Reader { tokens, pos: 0, src };
     reader.read_all()
 }
 
@@ -21,36 +22,37 @@ pub fn read(src: &str, file_id: FileId) -> Result<Vec<Node>, Box<Diagnostic>> {
 // Reader
 // ---------------------------------------------------------------------------
 
-struct Reader {
+struct Reader<'src> {
     tokens: Vec<Token>,
     pos: usize,
+    /// Original source text, used to detect same-line trailing comments.
+    src: &'src str,
 }
 
-impl Reader {
+impl<'src> Reader<'src> {
     fn read_all(&mut self) -> Result<Vec<Node>, Box<Diagnostic>> {
         let mut nodes = Vec::new();
         loop {
-            self.skip_comments();
-            match self.peek() {
+            match self.peek_no_comment() {
                 None => break,
-                Some(t) if is_close(t) => {
-                    let t = t.clone();
-                    return Err(self.unmatched_delimiter(&t));
-                }
+                Some(t) if is_close(&t) => return Err(self.unmatched_delimiter(&t)),
                 _ => self.read_forms_into(&mut nodes)?,
             }
         }
         Ok(nodes)
     }
 
-    /// Read a single form, advancing past it.
+    /// Read a single form for single-form contexts (Quote/Deref/`#_` target).
+    ///
+    /// Comments before the form are discarded; this path does not attach
+    /// leading or trailing comments (the caller owns that responsibility).
     fn read_form(&mut self) -> Result<Node, Box<Diagnostic>> {
         self.skip_comments();
         let tok = self.advance().expect("called after checking peek");
         self.dispatch(tok)
     }
 
-    /// Dispatch on the token to build the appropriate AST node.
+    /// Dispatch on `tok` to build the appropriate AST node.
     fn dispatch(&mut self, tok: Token) -> Result<Node, Box<Diagnostic>> {
         match tok.kind.clone() {
             TokenKind::Int(value, suffix) => {
@@ -97,9 +99,8 @@ impl Reader {
             TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
                 Err(self.unmatched_delimiter(&tok))
             }
-            // Comments are skipped before dispatch; this arm is unreachable in practice.
             TokenKind::Comment(_) => {
-                unreachable!("comments must be skipped before dispatch")
+                unreachable!("comments must be drained before dispatch")
             }
         }
     }
@@ -107,17 +108,14 @@ impl Reader {
     fn read_list(&mut self, open_span: Span) -> Result<Node, Box<Diagnostic>> {
         let mut items = Vec::new();
         loop {
-            self.skip_comments();
-            match self.peek() {
+            match self.peek_no_comment() {
                 None => return Err(self.unclosed_delimiter(open_span, "(")),
                 Some(t) if matches!(t.kind, TokenKind::RParen) => {
+                    self.skip_comments();
                     let close = self.advance().unwrap();
                     return Ok(Node::new(NodeKind::List(items), open_span.merge(close.span)));
                 }
-                Some(t) if is_close(t) => {
-                    let t = t.clone();
-                    return Err(self.unmatched_delimiter(&t));
-                }
+                Some(t) if is_close(&t) => return Err(self.unmatched_delimiter(&t)),
                 _ => self.read_forms_into(&mut items)?,
             }
         }
@@ -126,40 +124,32 @@ impl Reader {
     fn read_vector(&mut self, open_span: Span) -> Result<Node, Box<Diagnostic>> {
         let mut items = Vec::new();
         loop {
-            self.skip_comments();
-            match self.peek() {
+            match self.peek_no_comment() {
                 None => return Err(self.unclosed_delimiter(open_span, "[")),
                 Some(t) if matches!(t.kind, TokenKind::RBracket) => {
+                    self.skip_comments();
                     let close = self.advance().unwrap();
                     return Ok(Node::new(NodeKind::Vector(items), open_span.merge(close.span)));
                 }
-                Some(t) if is_close(t) => {
-                    let t = t.clone();
-                    return Err(self.unmatched_delimiter(&t));
-                }
+                Some(t) if is_close(&t) => return Err(self.unmatched_delimiter(&t)),
                 _ => self.read_forms_into(&mut items)?,
             }
         }
     }
 
     fn read_map(&mut self, open_span: Span) -> Result<Node, Box<Diagnostic>> {
-        // Collect all forms (including any Discard nodes) into a flat list, then
-        // check for even count and pair them up. Discard nodes count as forms for
-        // the even-count check; the semantic pass handles them within pairs.
+        // Collect all forms flatly (Discard nodes included) then pair them up.
         let mut forms: Vec<Node> = Vec::new();
         let close_span;
         loop {
-            self.skip_comments();
-            match self.peek() {
+            match self.peek_no_comment() {
                 None => return Err(self.unclosed_delimiter(open_span, "{")),
                 Some(t) if matches!(t.kind, TokenKind::RBrace) => {
+                    self.skip_comments();
                     close_span = self.advance().unwrap().span;
                     break;
                 }
-                Some(t) if is_close(t) => {
-                    let t = t.clone();
-                    return Err(self.unmatched_delimiter(&t));
-                }
+                Some(t) if is_close(&t) => return Err(self.unmatched_delimiter(&t)),
                 _ => self.read_forms_into(&mut forms)?,
             }
         }
@@ -179,35 +169,36 @@ impl Reader {
     fn read_set(&mut self, open_span: Span) -> Result<Node, Box<Diagnostic>> {
         let mut items = Vec::new();
         loop {
-            self.skip_comments();
-            match self.peek() {
+            match self.peek_no_comment() {
                 None => return Err(self.unclosed_delimiter(open_span, "#{")),
                 Some(t) if matches!(t.kind, TokenKind::RBrace) => {
+                    self.skip_comments();
                     let close = self.advance().unwrap();
                     return Ok(Node::new(NodeKind::Set(items), open_span.merge(close.span)));
                 }
-                Some(t) if is_close(t) => {
-                    let t = t.clone();
-                    return Err(self.unmatched_delimiter(&t));
-                }
+                Some(t) if is_close(&t) => return Err(self.unmatched_delimiter(&t)),
                 _ => self.read_forms_into(&mut items)?,
             }
         }
     }
 
-    /// Push one logical form-unit into `items`.
+    /// Push one logical form-unit into `items`, attaching comments.
     ///
-    /// For a run of N consecutive [`TokenKind::Discard`] tokens: advances past
-    /// all N, then reads N separate forms and wraps each in [`NodeKind::Discard`].
-    /// This implements spec §2.1: "To discard N consecutive forms, use N `#_` markers."
+    /// **Leading comments** (lines immediately before the form) are placed in
+    /// `node.leading_comments`.  **Trailing comment** (same line as the form's
+    /// last token) is placed in `node.trailing_comment`.
     ///
-    /// For any other token: reads exactly one form and pushes it.
+    /// For a run of N consecutive `#_` tokens (skipping inter-token comments):
+    /// advances past all N, reads N forms, and wraps each in `Discard`. The
+    /// pre-chain leading comments go on the first Discard node.
     fn read_forms_into(&mut self, items: &mut Vec<Node>) -> Result<(), Box<Diagnostic>> {
-        // Collect spans of a run of Discard tokens, skipping any line comments
-        // that appear between them (e.g. `#_ ; skip\n#_ a b`).
+        // Step 1: collect leading comments and any Discard chain.
+        let leading = self.drain_comments();
+
         let mut discard_spans: Vec<Span> = Vec::new();
         let mut scan = self.pos;
         loop {
+            // Skip inter-Discard comments (they are absorbed, not attached).
             while let Some(TokenKind::Comment(_)) = self.tokens.get(scan).map(|t| &t.kind) {
                 scan += 1;
             }
@@ -218,14 +209,19 @@ impl Reader {
                 break;
             }
         }
-        // Advance past all consumed Discard tokens (and any intervening comments).
-        self.pos = scan;
+        self.pos = scan; // consumed all Discards and inter-Discard comments
 
+        // Step 2: build nodes.
         if discard_spans.is_empty() {
-            let tok = self.advance().expect("called after verifying peek is Some and non-close");
-            items.push(self.dispatch(tok)?);
+            let tok = self.advance().expect("called after verifying peek_no_comment is Some");
+            let mut form = self.dispatch(tok)?;
+            form.leading_comments = leading;
+            form.trailing_comment = self.try_trailing(form.span.end());
+            items.push(form);
         } else {
+            let mut first_leading = Some(leading);
             for discard_span in discard_spans {
+                // Comments between #_ and its target are absorbed (not yet attached).
                 self.skip_comments();
                 match self.peek() {
                     None => {
@@ -246,9 +242,12 @@ impl Reader {
                     }
                     _ => {
                         let tok = self.advance().unwrap();
-                        let form = self.dispatch(tok)?;
-                        let span = discard_span.merge(form.span);
-                        items.push(Node::new(NodeKind::Discard(Box::new(form)), span));
+                        let inner = self.dispatch(tok)?;
+                        let span = discard_span.merge(inner.span);
+                        let mut node = Node::new(NodeKind::Discard(Box::new(inner)), span);
+                        node.leading_comments = first_leading.take().unwrap_or_default();
+                        node.trailing_comment = self.try_trailing(node.span.end());
+                        items.push(node);
                     }
                 }
             }
@@ -258,6 +257,9 @@ impl Reader {
     }
 
     /// Consume the next form, erroring if none is available.
+    ///
+    /// Used for single-form contexts (`'`, `@`, `#_`). Comments before the
+    /// target form are discarded — the caller owns comment-attachment.
     fn require_form(&mut self, prefix: &str, prefix_span: Span) -> Result<Node, Box<Diagnostic>> {
         self.skip_comments();
         match self.peek() {
@@ -278,10 +280,58 @@ impl Reader {
         }
     }
 
+    // --- Comment helpers ---
+
+    /// Advance past comment tokens, returning them as [`Comment`] values.
+    fn drain_comments(&mut self) -> Vec<Comment> {
+        let mut out = Vec::new();
+        while let Some(TokenKind::Comment(text)) = self.tokens.get(self.pos).map(|t| &t.kind) {
+            out.push(Comment(text.clone()));
+            self.pos += 1;
+        }
+        out
+    }
+
+    /// Advance past comment tokens, discarding them.
     fn skip_comments(&mut self) {
         while matches!(self.peek().map(|t| &t.kind), Some(TokenKind::Comment(_))) {
             self.advance();
         }
+    }
+
+    /// Peek at the next non-comment token without advancing.
+    ///
+    /// Returns a cloned [`Token`] so callers can inspect it without holding
+    /// a borrow over a mutable call.
+    fn peek_no_comment(&self) -> Option<Token> {
+        let mut i = self.pos;
+        while let Some(t) = self.tokens.get(i) {
+            if !matches!(t.kind, TokenKind::Comment(_)) {
+                return Some(t.clone());
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// If the next token is a comment on the **same source line** as byte
+    /// `after_byte`, consume it and return it as a trailing [`Comment`].
+    fn try_trailing(&mut self, after_byte: u32) -> Option<Comment> {
+        let tok = self.tokens.get(self.pos)?;
+        let TokenKind::Comment(text) = &tok.kind else { return None };
+        let start = tok.span.start as usize;
+        let end = after_byte as usize;
+        // Guard: comment must start after `after_byte` (it always should).
+        if start < end {
+            return None;
+        }
+        let between = &self.src[end..start];
+        if between.contains('\n') {
+            return None; // comment is on a different line
+        }
+        let comment = Comment(text.clone());
+        self.pos += 1;
+        Some(comment)
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -723,5 +773,103 @@ mod tests {
         assert_eq!(nodes.len(), 2);
         assert!(matches!(nodes[0].kind, NodeKind::Discard(_)));
         assert!(matches!(nodes[1].kind, NodeKind::Discard(_)));
+    }
+
+    // ── Round-trip comment attachment ─────────────────────────────────────
+
+    use nexl_ast::Comment;
+
+    // ── RT1. leading_comment_on_atom ──────────────────────────────────────
+    #[test]
+    fn leading_comment_on_atom() {
+        let nodes = read("; note\n42", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].leading_comments, vec![Comment(" note".into())]);
+    }
+
+    // ── RT2. multiple_leading_comments ────────────────────────────────────
+    #[test]
+    fn multiple_leading_comments() {
+        let nodes = read("; a\n; b\n42", fid()).expect("parse failed");
+        assert_eq!(nodes[0].leading_comments, vec![
+            Comment(" a".into()),
+            Comment(" b".into()),
+        ]);
+    }
+
+    // ── RT3. trailing_comment_on_atom ─────────────────────────────────────
+    #[test]
+    fn trailing_comment_on_atom() {
+        let nodes = read("42 ; answer", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].trailing_comment, Some(Comment(" answer".into())));
+    }
+
+    // ── RT4. comment_on_next_line_not_trailing ────────────────────────────
+    // A comment on the line after a form is leading for the next form, not trailing.
+    #[test]
+    fn comment_on_next_line_not_trailing() {
+        let nodes = read("42\n; note\n:x", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].trailing_comment, None);
+        assert_eq!(nodes[1].leading_comments, vec![Comment(" note".into())]);
+    }
+
+    // ── RT5. leading_comment_on_list ──────────────────────────────────────
+    #[test]
+    fn leading_comment_on_list() {
+        let nodes = read("; header\n(+ 1 2)", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(nodes[0].kind, NodeKind::List(_)));
+        assert_eq!(nodes[0].leading_comments, vec![Comment(" header".into())]);
+    }
+
+    // ── RT6. trailing_comment_after_list ──────────────────────────────────
+    #[test]
+    fn trailing_comment_after_list() {
+        let nodes = read("(+ 1 2) ; sum", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].trailing_comment, Some(Comment(" sum".into())));
+    }
+
+    // ── RT7. inner_trailing_comment ───────────────────────────────────────
+    // A trailing comment inside a list attaches to the element, not the list.
+    #[test]
+    fn inner_trailing_comment() {
+        let nodes = read("(1 ; first\n2)", fid()).expect("parse failed");
+        let NodeKind::List(items) = &nodes[0].kind else { panic!("expected List") };
+        assert_eq!(items[0].trailing_comment, Some(Comment(" first".into())));
+        assert_eq!(items[1].trailing_comment, None);
+    }
+
+    // ── RT8. no_comments_empty_vecs ───────────────────────────────────────
+    // Regression: forms with no adjacent comments have empty/None comment fields.
+    #[test]
+    fn no_comments_empty_vecs() {
+        let nodes = read("42 :key", fid()).expect("parse failed");
+        assert_eq!(nodes[0].leading_comments, vec![]);
+        assert_eq!(nodes[0].trailing_comment, None);
+        assert_eq!(nodes[1].leading_comments, vec![]);
+        assert_eq!(nodes[1].trailing_comment, None);
+    }
+
+    // ── RT9. leading_comment_inside_list ─────────────────────────────────
+    // A comment at the start of a list body becomes the inner element's leading comment.
+    #[test]
+    fn leading_comment_inside_list() {
+        let nodes = read("(; inner\n42)", fid()).expect("parse failed");
+        let NodeKind::List(items) = &nodes[0].kind else { panic!("expected List") };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].leading_comments, vec![Comment(" inner".into())]);
+    }
+
+    // ── RT10. comment_before_discard ─────────────────────────────────────
+    // A leading comment before a `#_` attaches to the Discard node.
+    #[test]
+    fn comment_before_discard() {
+        let nodes = read("; skip\n#_ 99", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(nodes[0].kind, NodeKind::Discard(_)));
+        assert_eq!(nodes[0].leading_comments, vec![Comment(" skip".into())]);
     }
 }

@@ -39,7 +39,7 @@
 ### nexl-reader — Reader (S-expression → AST)
 - [x] Recursive descent S-expression parser
 - [x] Source spans on every node
-- [ ] Round-trip formatting preservation (whitespace/comment tokens)
+- [x] Round-trip formatting preservation (whitespace/comment tokens)
 - [x] `#_` nesting: `#_ #_ a b` discards both `a` and `b`
 
 ### AST Pretty-Printer
