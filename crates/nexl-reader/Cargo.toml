@@ -1,0 +1,8 @@
+[package]
+name = "nexl-reader"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nexl-ast = { path = "../nexl-ast" }
+nexl-errors = { path = "../nexl-errors" }

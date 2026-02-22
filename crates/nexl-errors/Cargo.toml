@@ -1,0 +1,9 @@
+[package]
+name = "nexl-errors"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nexl-ast = { path = "../nexl-ast" }
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
