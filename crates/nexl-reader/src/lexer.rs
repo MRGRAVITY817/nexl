@@ -22,6 +22,9 @@ pub enum TokenKind {
     Int(i128, Option<IntSuffix>),
     /// Float literal with optional precision suffix, e.g. `3.14`, `3.14f32`.
     Float(f64, Option<FloatSuffix>),
+    /// Ratio literal, e.g. `3/4`. Stored as raw numerator/denominator; reduction
+    /// to lowest terms is deferred to the reader pass.
+    Ratio(i64, i64),
 }
 
 // ---------------------------------------------------------------------------
@@ -150,13 +153,17 @@ impl<'src> Lexer<'src> {
         // Decimal integer part
         let int_raw = self.collect_while(|c| c.is_ascii_digit() || c == '_');
 
-        // Decide: float or int?
+        // Decide: ratio, float, or int?
+        let is_ratio = self.peek() == Some('/')
+            && self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit());
         let is_float_dot = self.peek() == Some('.')
             && self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit());
         let is_float_exp =
             self.peek().is_some_and(|c| c == 'e' || c == 'E');
 
-        if is_float_dot || is_float_exp {
+        if is_ratio {
+            self.lex_ratio_from(start, negative, &int_raw)
+        } else if is_float_dot || is_float_exp {
             self.lex_float_from(start, negative, &int_raw)
         } else {
             let clean: String = int_raw.chars().filter(|&c| c != '_').collect();
@@ -213,6 +220,36 @@ impl<'src> Lexer<'src> {
         let suffix = self.lex_float_suffix()?;
         let span = self.span_from(start);
         Ok(Token { kind: TokenKind::Float(value, suffix), span })
+    }
+
+    /// Finish lexing a ratio literal after the numerator integer part has been
+    /// collected. The lexer position is at `/`.
+    fn lex_ratio_from(
+        &mut self,
+        start: usize,
+        negative: bool,
+        numer_raw: &str,
+    ) -> Result<Token, Box<Diagnostic>> {
+        self.advance(); // consume '/'
+
+        let denom_raw = self.collect_while(|c| c.is_ascii_digit() || c == '_');
+        let denom_clean: String = denom_raw.chars().filter(|&c| c != '_').collect();
+        let denom: i64 = denom_clean.parse().map_err(|_| {
+            Box::new(self.error_at(start, "ratio denominator out of range", None))
+        })?;
+
+        if denom == 0 {
+            return Err(Box::new(self.error_at(start, "ratio literal with zero denominator", None)));
+        }
+
+        let numer_clean: String = numer_raw.chars().filter(|&c| c != '_').collect();
+        let numer_abs: i64 = numer_clean.parse().map_err(|_| {
+            Box::new(self.error_at(start, "ratio numerator out of range", None))
+        })?;
+        let numer = if negative { -numer_abs } else { numer_abs };
+
+        let span = self.span_from(start);
+        Ok(Token { kind: TokenKind::Ratio(numer, denom), span })
     }
 
     fn lex_float_suffix(&mut self) -> Result<Option<FloatSuffix>, Box<Diagnostic>> {
@@ -531,5 +568,72 @@ mod tests {
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].span.start, 2);
         assert_eq!(tokens[0].span.len, 2);
+    }
+
+    // --- ratio test 1 ---
+    #[test]
+    fn lex_ratio_basic() {
+        assert_eq!(lex_one("3/4"), TokenKind::Ratio(3, 4));
+    }
+
+    // --- ratio test 2 ---
+    #[test]
+    fn lex_ratio_one_over_three() {
+        assert_eq!(lex_one("1/3"), TokenKind::Ratio(1, 3));
+    }
+
+    // --- ratio test 3 ---
+    #[test]
+    fn lex_ratio_reducible_stored_raw() {
+        // 6/4 reduces to 3/2, but the lexer stores raw values; reduction is reader-level
+        assert_eq!(lex_one("6/4"), TokenKind::Ratio(6, 4));
+    }
+
+    // --- ratio test 4 ---
+    #[test]
+    fn lex_ratio_negative_numerator() {
+        assert_eq!(lex_one("-3/4"), TokenKind::Ratio(-3, 4));
+    }
+
+    // --- ratio test 5 ---
+    #[test]
+    fn lex_ratio_zero_numerator() {
+        assert_eq!(lex_one("0/1"), TokenKind::Ratio(0, 1));
+    }
+
+    // --- ratio test 6 ---
+    #[test]
+    fn lex_ratio_zero_denominator_is_error() {
+        let err = lex("3/0").unwrap_err();
+        assert!(
+            err.message.contains("zero denominator"),
+            "expected 'zero denominator' in message, got: {}",
+            err.message
+        );
+    }
+
+    // --- ratio test 7 ---
+    #[test]
+    fn lex_ratio_span_correct() {
+        // "  1/3  " — ratio starts at byte 2, length 3
+        let tokens = lex("  1/3  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 3);
+    }
+
+    // --- ratio test 8 ---
+    #[test]
+    fn lex_ratio_adjacent_tokens() {
+        let tokens = lex("3/4 42").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Ratio(3, 4));
+        assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
+    }
+
+    // --- ratio test 9 ---
+    #[test]
+    fn lex_ratio_underscore_in_numerator() {
+        assert_eq!(lex_one("1_000/3"), TokenKind::Ratio(1000, 3));
     }
 }

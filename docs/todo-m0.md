@@ -25,7 +25,7 @@
 ### nexl-reader — Lexer
 - [x] Integer literals with width suffixes (`42`, `42i32`, `42u8`)
 - [x] Float literals with suffixes (`3.14`, `3.14f32`)
-- [ ] Ratio literals (`1/3`)
+- [x] Ratio literals (`1/3`)
 - [ ] String literals with interpolation spans (`"hello {name}"`)
 - [ ] Escape sequences: `\\`, `\n`, `\t`, `\"`, `\{`, `{{`, `}}`
 - [ ] Character literals (`\a`, `\newline`, `\u{1F600}`)
