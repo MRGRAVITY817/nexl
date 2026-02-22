@@ -31,7 +31,7 @@
 - [x] Character literals (`\a`, `\newline`, `\u{1F600}`)
 - [x] Keywords (`:foo`, `:bar/baz`)
 - [x] Symbols
-- [ ] Booleans (`true`, `false`) and `unit`
+- [x] Booleans (`true`, `false`) and `unit`
 - [ ] Reader macros: `'` (quote), `#{}` (set), `#_` (discard), `@` (deref)
 - [ ] Line comments (`;`)
 - [ ] Form comments with nesting (`#_`, `#_ #_`)

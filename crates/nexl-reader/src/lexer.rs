@@ -56,6 +56,10 @@ pub enum TokenKind {
     ///
     /// `ns` is `Some("my-module")` for qualified symbols, `None` otherwise.
     Symbol { ns: Option<String>, name: String },
+    /// Boolean literal: `true` or `false`.
+    Bool(bool),
+    /// The unit value `unit` — the sole inhabitant of type `Unit` (ADR-001).
+    Unit,
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +556,16 @@ impl<'src> Lexer<'src> {
         };
 
         let span = self.span_from(start);
-        Ok(Token { kind: TokenKind::Symbol { ns, name }, span })
+
+        // Reserved words: only recognised when unqualified.
+        let kind = match (ns.as_deref(), name.as_str()) {
+            (None, "true")  => TokenKind::Bool(true),
+            (None, "false") => TokenKind::Bool(false),
+            (None, "unit")  => TokenKind::Unit,
+            _               => TokenKind::Symbol { ns, name },
+        };
+
+        Ok(Token { kind, span })
     }
 
     // --- character literal lexing ---
@@ -1014,6 +1027,64 @@ mod tests {
     // Small helpers to reduce boilerplate in string tests.
     fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
     fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
+
+    // --- bool/unit test 1 ---
+    #[test]
+    fn lex_true() {
+        // `true` — boolean literal (spec §3.1)
+        assert_eq!(lex_one("true"), TokenKind::Bool(true));
+    }
+
+    // --- bool/unit test 2 ---
+    #[test]
+    fn lex_false() {
+        // `false` — boolean literal (spec §3.1)
+        assert_eq!(lex_one("false"), TokenKind::Bool(false));
+    }
+
+    // --- bool/unit test 3 ---
+    #[test]
+    fn lex_unit() {
+        // `unit` — sole value of type Unit (ADR-001: Unit not Nil)
+        assert_eq!(lex_one("unit"), TokenKind::Unit);
+    }
+
+    // --- bool/unit test 4 ---
+    #[test]
+    fn lex_truefoo_is_symbol() {
+        // `truefoo` — consumed as one token; no implicit word-boundary break
+        assert_eq!(lex_one("truefoo"), TokenKind::Symbol { ns: None, name: "truefoo".into() });
+    }
+
+    // --- bool/unit test 5 ---
+    #[test]
+    fn lex_bool_span_correct() {
+        // "  true  " — span starts at 2, `true` is 4 bytes
+        let tokens = lex("  true  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 4);
+    }
+
+    // --- bool/unit test 6 ---
+    #[test]
+    fn lex_unit_span_correct() {
+        // "  unit  " — span starts at 2, `unit` is 4 bytes
+        let tokens = lex("  unit  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 4);
+    }
+
+    // --- bool/unit test 7 ---
+    #[test]
+    fn lex_bool_adjacent_tokens() {
+        // `true 42` — bool literal followed by an integer
+        let tokens = lex("true 42").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Bool(true));
+        assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
+    }
 
     // --- symbol test 1 ---
     #[test]
