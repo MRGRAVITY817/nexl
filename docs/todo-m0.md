@@ -40,7 +40,7 @@
 - [x] Recursive descent S-expression parser
 - [x] Source spans on every node
 - [ ] Round-trip formatting preservation (whitespace/comment tokens)
-- [ ] `#_` nesting: `#_ #_ a b` discards both `a` and `b`
+- [x] `#_` nesting: `#_ #_ a b` discards both `a` and `b`
 
 ### AST Pretty-Printer
 - [ ] S-expression → formatted string

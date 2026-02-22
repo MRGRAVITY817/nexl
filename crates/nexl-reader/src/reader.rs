@@ -37,7 +37,7 @@ impl Reader {
                     let t = t.clone();
                     return Err(self.unmatched_delimiter(&t));
                 }
-                _ => nodes.push(self.read_form()?),
+                _ => self.read_forms_into(&mut nodes)?,
             }
         }
         Ok(nodes)
@@ -118,7 +118,7 @@ impl Reader {
                     let t = t.clone();
                     return Err(self.unmatched_delimiter(&t));
                 }
-                _ => items.push(self.read_form()?),
+                _ => self.read_forms_into(&mut items)?,
             }
         }
     }
@@ -137,40 +137,43 @@ impl Reader {
                     let t = t.clone();
                     return Err(self.unmatched_delimiter(&t));
                 }
-                _ => items.push(self.read_form()?),
+                _ => self.read_forms_into(&mut items)?,
             }
         }
     }
 
     fn read_map(&mut self, open_span: Span) -> Result<Node, Box<Diagnostic>> {
-        let mut pairs = Vec::new();
+        // Collect all forms (including any Discard nodes) into a flat list, then
+        // check for even count and pair them up. Discard nodes count as forms for
+        // the even-count check; the semantic pass handles them within pairs.
+        let mut forms: Vec<Node> = Vec::new();
+        let close_span;
         loop {
             self.skip_comments();
             match self.peek() {
                 None => return Err(self.unclosed_delimiter(open_span, "{")),
                 Some(t) if matches!(t.kind, TokenKind::RBrace) => {
-                    let close = self.advance().unwrap();
-                    return Ok(Node::new(NodeKind::Map(pairs), open_span.merge(close.span)));
+                    close_span = self.advance().unwrap().span;
+                    break;
                 }
                 Some(t) if is_close(t) => {
                     let t = t.clone();
                     return Err(self.unmatched_delimiter(&t));
                 }
-                _ => {
-                    let key = self.read_form()?;
-                    self.skip_comments();
-                    match self.peek() {
-                        None | Some(Token { kind: TokenKind::RBrace, .. }) => {
-                            return Err(self.odd_map(open_span, key.span));
-                        }
-                        _ => {
-                            let val = self.read_form()?;
-                            pairs.push((key, val));
-                        }
-                    }
-                }
+                _ => self.read_forms_into(&mut forms)?,
             }
         }
+        if !forms.len().is_multiple_of(2) {
+            let key_span = forms.last().unwrap().span;
+            return Err(self.odd_map(open_span, key_span));
+        }
+        let mut pairs = Vec::with_capacity(forms.len() / 2);
+        let mut iter = forms.into_iter();
+        while let Some(key) = iter.next() {
+            let val = iter.next().unwrap();
+            pairs.push((key, val));
+        }
+        Ok(Node::new(NodeKind::Map(pairs), open_span.merge(close_span)))
     }
 
     fn read_set(&mut self, open_span: Span) -> Result<Node, Box<Diagnostic>> {
@@ -187,9 +190,71 @@ impl Reader {
                     let t = t.clone();
                     return Err(self.unmatched_delimiter(&t));
                 }
-                _ => items.push(self.read_form()?),
+                _ => self.read_forms_into(&mut items)?,
             }
         }
+    }
+
+    /// Push one logical form-unit into `items`.
+    ///
+    /// For a run of N consecutive [`TokenKind::Discard`] tokens: advances past
+    /// all N, then reads N separate forms and wraps each in [`NodeKind::Discard`].
+    /// This implements spec §2.1: "To discard N consecutive forms, use N `#_` markers."
+    ///
+    /// For any other token: reads exactly one form and pushes it.
+    fn read_forms_into(&mut self, items: &mut Vec<Node>) -> Result<(), Box<Diagnostic>> {
+        // Collect spans of a run of Discard tokens, skipping any line comments
+        // that appear between them (e.g. `#_ ; skip\n#_ a b`).
+        let mut discard_spans: Vec<Span> = Vec::new();
+        let mut scan = self.pos;
+        loop {
+            while let Some(TokenKind::Comment(_)) = self.tokens.get(scan).map(|t| &t.kind) {
+                scan += 1;
+            }
+            if let Some(TokenKind::Discard) = self.tokens.get(scan).map(|t| &t.kind) {
+                discard_spans.push(self.tokens[scan].span);
+                scan += 1;
+            } else {
+                break;
+            }
+        }
+        // Advance past all consumed Discard tokens (and any intervening comments).
+        self.pos = scan;
+
+        if discard_spans.is_empty() {
+            let tok = self.advance().expect("called after verifying peek is Some and non-close");
+            items.push(self.dispatch(tok)?);
+        } else {
+            for discard_span in discard_spans {
+                self.skip_comments();
+                match self.peek() {
+                    None => {
+                        let mut d = Diagnostic::new(
+                            Severity::Error,
+                            "expected a form after `#_`, found end of file",
+                        );
+                        d.code = Some(codes::UNCLOSED_DELIMITER);
+                        d.push_label(Label::new(
+                            discard_span,
+                            "this `#_` expects a following form",
+                        ));
+                        return Err(Box::new(d));
+                    }
+                    Some(t) if is_close(t) => {
+                        let t = t.clone();
+                        return Err(self.unmatched_delimiter(&t));
+                    }
+                    _ => {
+                        let tok = self.advance().unwrap();
+                        let form = self.dispatch(tok)?;
+                        let span = discard_span.merge(form.span);
+                        items.push(Node::new(NodeKind::Discard(Box::new(form)), span));
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Consume the next form, erroring if none is available.
@@ -586,5 +651,77 @@ mod tests {
     fn parse_string_with_interp() {
         let nodes = read("\"hello {name}!\"", fid()).expect("parse failed");
         assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Str("hello {name}!".into())));
+    }
+
+    // ── Discard nesting ───────────────────────────────────────────────────
+
+    // ── D1. discard_chain_two_forms ───────────────────────────────────────
+    // spec §2.1: "To discard N consecutive forms, use N `#_` markers."
+    #[test]
+    fn discard_chain_two_forms() {
+        let nodes = read("#_ #_ a b", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 2);
+        assert!(matches!(nodes[0].kind, NodeKind::Discard(_)));
+        assert!(matches!(nodes[1].kind, NodeKind::Discard(_)));
+        let NodeKind::Discard(inner0) = &nodes[0].kind else { panic!() };
+        let NodeKind::Discard(inner1) = &nodes[1].kind else { panic!() };
+        assert_eq!(inner0.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "a".into() }));
+        assert_eq!(inner1.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "b".into() }));
+    }
+
+    // ── D2. discard_chain_three_forms ─────────────────────────────────────
+    #[test]
+    fn discard_chain_three_forms() {
+        let nodes = read("#_ #_ #_ a b c", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 3);
+        for n in &nodes {
+            assert!(matches!(n.kind, NodeKind::Discard(_)), "expected all Discard, got {:?}", n.kind);
+        }
+    }
+
+    // ── D3. discard_chain_inside_list ─────────────────────────────────────
+    #[test]
+    fn discard_chain_inside_list() {
+        let nodes = read("(1 #_ #_ a b 2)", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        let NodeKind::List(items) = &nodes[0].kind else { panic!("expected List") };
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].kind, NodeKind::Atom(Atom::Int { value: 1, suffix: None }));
+        assert!(matches!(items[1].kind, NodeKind::Discard(_)));
+        assert!(matches!(items[2].kind, NodeKind::Discard(_)));
+        assert_eq!(items[3].kind, NodeKind::Atom(Atom::Int { value: 2, suffix: None }));
+    }
+
+    // ── D4. discard_chain_inside_vector ───────────────────────────────────
+    #[test]
+    fn discard_chain_inside_vector() {
+        let nodes = read("[#_ #_ x y z]", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        let NodeKind::Vector(items) = &nodes[0].kind else { panic!("expected Vector") };
+        assert_eq!(items.len(), 3);
+        assert!(matches!(items[0].kind, NodeKind::Discard(_)));
+        assert!(matches!(items[1].kind, NodeKind::Discard(_)));
+        assert_eq!(items[2].kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "z".into() }));
+    }
+
+    // ── D5. single_discard_unchanged ──────────────────────────────────────
+    // Regression: existing single-#_ behaviour must be preserved.
+    #[test]
+    fn single_discard_unchanged() {
+        let nodes = read("#_ a b", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 2);
+        let NodeKind::Discard(inner) = &nodes[0].kind else { panic!("expected Discard") };
+        assert_eq!(inner.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "a".into() }));
+        assert_eq!(nodes[1].kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "b".into() }));
+    }
+
+    // ── D6. discard_chain_with_comment_between ────────────────────────────
+    // A line comment between two #_ tokens is skipped; both forms are discarded.
+    #[test]
+    fn discard_chain_with_comment_between() {
+        let nodes = read("#_ ; note\n#_ a b", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 2);
+        assert!(matches!(nodes[0].kind, NodeKind::Discard(_)));
+        assert!(matches!(nodes[1].kind, NodeKind::Discard(_)));
     }
 }
