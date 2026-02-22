@@ -23,8 +23,8 @@
 - [x] Error codes for lexer/reader errors
 
 ### nexl-reader — Lexer
-- [ ] Integer literals with width suffixes (`42`, `42i32`, `42u8`)
-- [ ] Float literals with suffixes (`3.14`, `3.14f32`)
+- [x] Integer literals with width suffixes (`42`, `42i32`, `42u8`)
+- [x] Float literals with suffixes (`3.14`, `3.14f32`)
 - [ ] Ratio literals (`1/3`)
 - [ ] String literals with interpolation spans (`"hello {name}"`)
 - [ ] Escape sequences: `\\`, `\n`, `\t`, `\"`, `\{`, `{{`, `}}`
