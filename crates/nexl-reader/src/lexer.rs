@@ -25,6 +25,11 @@ pub enum TokenKind {
     /// Ratio literal, e.g. `3/4`. Stored as raw numerator/denominator; reduction
     /// to lowest terms is deferred to the reader pass.
     Ratio(i64, i64),
+    /// String literal. Content is the raw characters between the opening and closing
+    /// `"` delimiters, with no escape processing applied (escape sequences are
+    /// resolved in a later lexer pass). Interpolation spans `{...}` are preserved
+    /// as-is for resolution by a later compiler pass.
+    Str(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +100,10 @@ impl<'src> Lexer<'src> {
         let next_is_digit = self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit());
         if ch.is_ascii_digit() || (ch == '-' && next_is_digit) {
             return self.lex_number();
+        }
+
+        if ch == '"' {
+            return self.lex_string();
         }
 
         let start = self.pos;
@@ -325,6 +334,52 @@ impl<'src> Lexer<'src> {
             }
             _ => Ok(None),
         }
+    }
+
+    // --- string lexing ---
+
+    /// Lex a double-quoted string literal.
+    ///
+    /// The opening `"` must not yet have been consumed. Content is collected
+    /// verbatim — escape sequences are left unprocessed; a `\` followed by any
+    /// character is consumed as a two-character unit so that `\"` does not
+    /// prematurely end the string. Interpolation spans `{...}` are preserved
+    /// as-is for a later compiler pass.
+    fn lex_string(&mut self) -> Result<Token, Box<Diagnostic>> {
+        let start = self.pos;
+        self.advance(); // consume opening `"`
+
+        let mut content = String::new();
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(Box::new(self.error_at(
+                        start,
+                        "unterminated string literal",
+                        Some(codes::UNCLOSED_STRING.clone()),
+                    )));
+                }
+                Some('"') => {
+                    self.advance(); // consume closing `"`
+                    break;
+                }
+                Some('\\') => {
+                    // Consume the backslash and whatever follows without
+                    // interpreting the escape — that is task 2.
+                    content.push(self.advance().unwrap());
+                    if let Some(escaped) = self.advance() {
+                        content.push(escaped);
+                    }
+                }
+                Some(ch) => {
+                    content.push(ch);
+                    self.advance();
+                }
+            }
+        }
+
+        let span = self.span_from(start);
+        Ok(Token { kind: TokenKind::Str(content), span })
     }
 
     // --- helpers ---
@@ -635,5 +690,73 @@ mod tests {
     #[test]
     fn lex_ratio_underscore_in_numerator() {
         assert_eq!(lex_one("1_000/3"), TokenKind::Ratio(1000, 3));
+    }
+
+    // --- string test 1 ---
+    #[test]
+    fn lex_plain_string() {
+        assert_eq!(lex_one("\"hello\""), TokenKind::Str("hello".to_string()));
+    }
+
+    // --- string test 2 ---
+    #[test]
+    fn lex_empty_string() {
+        assert_eq!(lex_one("\"\""), TokenKind::Str("".to_string()));
+    }
+
+    // --- string test 3 ---
+    #[test]
+    fn lex_string_with_interpolation() {
+        // {name} is preserved as-is for a later compiler pass (spec §2.4)
+        assert_eq!(
+            lex_one("\"hello {name}!\""),
+            TokenKind::Str("hello {name}!".to_string()),
+        );
+    }
+
+    // --- string test 4 ---
+    #[test]
+    fn lex_string_multiple_interpolations() {
+        assert_eq!(
+            lex_one("\"{a} and {b}\""),
+            TokenKind::Str("{a} and {b}".to_string()),
+        );
+    }
+
+    // --- string test 5 ---
+    #[test]
+    fn lex_string_span_covers_quotes() {
+        // "  \"hello\"  " — string starts at byte 2 (the opening `"`), length 7
+        // The span covers both `"` delimiters: `"hello"` = 7 bytes
+        let tokens = lex("  \"hello\"  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 7); // `"hello"` = 7 bytes including both `"`
+    }
+
+    // --- string test 6 ---
+    #[test]
+    fn lex_string_adjacent_to_int() {
+        let tokens = lex("\"hi\" 42").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Str("hi".to_string()));
+        assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
+    }
+
+    // --- string test 7 ---
+    #[test]
+    fn lex_unclosed_string_is_error() {
+        let err = lex("\"hello").unwrap_err();
+        assert_eq!(err.code, Some(codes::UNCLOSED_STRING.clone()));
+        // label points at the opening `"` (byte 0)
+        assert_eq!(err.labels[0].span.start, 0);
+    }
+
+    // --- string test 8 ---
+    #[test]
+    fn lex_string_backslash_skipped_for_boundary() {
+        // `"a\"b"` — the `\"` must NOT end the string; the string ends at the
+        // final `"`. Raw content stored as-is; escape resolution is task 2.
+        assert_eq!(lex_one("\"a\\\"b\""), TokenKind::Str("a\\\"b".to_string()));
     }
 }
