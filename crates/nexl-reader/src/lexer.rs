@@ -47,6 +47,11 @@ pub enum TokenKind {
     Str(Vec<StringPart>),
     /// Character literal, e.g. `\a`, `\newline`, `\u{1F600}`.
     Char(char),
+    /// Keyword literal, e.g. `:foo`, `:http/ok`, `::local-alias`.
+    ///
+    /// `ns` is `Some("http")` for `:http/ok`, `None` otherwise.
+    /// `auto_ns` is `true` for the `::name` form (resolves to the current module namespace).
+    Keyword { ns: Option<String>, name: String, auto_ns: bool },
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +130,10 @@ impl<'src> Lexer<'src> {
 
         if ch == '\\' {
             return self.lex_char();
+        }
+
+        if ch == ':' {
+            return self.lex_keyword();
         }
 
         let start = self.pos;
@@ -469,6 +478,50 @@ impl<'src> Lexer<'src> {
         Ok(Token { kind: TokenKind::Str(parts), span })
     }
 
+    // --- keyword lexing ---
+
+    /// Lex a keyword literal.
+    ///
+    /// The opening `:` must not yet have been consumed. Handles three forms:
+    /// - `:name` — plain keyword
+    /// - `:ns/name` — namespaced keyword
+    /// - `::name` — auto-namespace keyword (resolves to current module)
+    fn lex_keyword(&mut self) -> Result<Token, Box<Diagnostic>> {
+        let start = self.pos;
+        self.advance(); // consume first `:`
+
+        // Check for auto-namespace form `::`
+        let auto_ns = if self.peek() == Some(':') {
+            self.advance(); // consume second `:`
+            true
+        } else {
+            false
+        };
+
+        // Must be followed by at least one symbol-start character
+        if !self.peek().is_some_and(is_symbol_start) {
+            return Err(Box::new(self.error_at(
+                start,
+                "keyword must have a name after `:`",
+                Some(codes::INVALID_KEYWORD.clone()),
+            )));
+        }
+
+        let first_name = self.collect_while(is_symbol_cont);
+
+        // Check for namespaced form `:ns/name`
+        let (ns, name) = if !auto_ns && self.peek() == Some('/') && self.peek_ahead(1).is_some_and(is_symbol_start) {
+            self.advance(); // consume '/'
+            let name = self.collect_while(is_symbol_cont);
+            (Some(first_name), name)
+        } else {
+            (None, first_name)
+        };
+
+        let span = self.span_from(start);
+        Ok(Token { kind: TokenKind::Keyword { ns, name, auto_ns }, span })
+    }
+
     // --- character literal lexing ---
 
     /// Lex a character literal.
@@ -633,6 +686,18 @@ fn flush_lit(lit: &mut String, parts: &mut Vec<StringPart>) {
 /// character literal name (list/vector/map/set delimiters and `"`).
 fn is_structural(c: char) -> bool {
     matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | '"')
+}
+
+/// Returns `true` for characters that may start a symbol or keyword name
+/// (Appendix D: `symbol-start`).
+pub(crate) fn is_symbol_start(c: char) -> bool {
+    c.is_alphabetic() || matches!(c, '_' | '?' | '!' | '*' | '+' | '<' | '>' | '=' | '-')
+}
+
+/// Returns `true` for characters that may continue a symbol or keyword name
+/// (Appendix D: `symbol-cont = symbol-start | digit`).
+pub(crate) fn is_symbol_cont(c: char) -> bool {
+    is_symbol_start(c) || c.is_ascii_digit()
 }
 
 // ---------------------------------------------------------------------------
@@ -916,6 +981,87 @@ mod tests {
     // Small helpers to reduce boilerplate in string tests.
     fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
     fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
+
+    // --- keyword test 8 ---
+    #[test]
+    fn lex_keyword_bare_colon_is_error() {
+        // `:` at EOF — grammar requires at least one symbol-start char
+        let err = lex(":").unwrap_err();
+        assert_eq!(err.code, Some(codes::INVALID_KEYWORD.clone()));
+    }
+
+    // --- keyword test 7 ---
+    #[test]
+    fn lex_keyword_adjacent_tokens() {
+        // `:foo 42` — keyword followed by an integer
+        let tokens = lex(":foo 42").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::Keyword { ns: None, name: "foo".into(), auto_ns: false },
+        );
+        assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
+    }
+
+    // --- keyword test 6 ---
+    #[test]
+    fn lex_keyword_span_correct() {
+        // "  :foo  " — keyword starts at byte 2, `:foo` is 4 bytes
+        let tokens = lex("  :foo  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 4); // `:foo` = 4 bytes
+    }
+
+    // --- keyword test 4 ---
+    #[test]
+    fn lex_keyword_namespaced() {
+        // `:http/ok` — namespaced keyword (spec §2.6)
+        assert_eq!(
+            lex_one(":http/ok"),
+            TokenKind::Keyword { ns: Some("http".into()), name: "ok".into(), auto_ns: false },
+        );
+    }
+
+    // --- keyword test 5 ---
+    #[test]
+    fn lex_keyword_auto_ns() {
+        // `::local-alias` — auto-namespace form (spec §2.6)
+        assert_eq!(
+            lex_one("::local-alias"),
+            TokenKind::Keyword { ns: None, name: "local-alias".into(), auto_ns: true },
+        );
+    }
+
+    // --- keyword test 2 ---
+    #[test]
+    fn lex_keyword_with_hyphen() {
+        // `:my-key` — hyphen is a valid symbol-start char (Appendix D)
+        assert_eq!(
+            lex_one(":my-key"),
+            TokenKind::Keyword { ns: None, name: "my-key".into(), auto_ns: false },
+        );
+    }
+
+    // --- keyword test 3 ---
+    #[test]
+    fn lex_keyword_with_special_chars() {
+        // `:valid?` — `?` is a valid symbol-start char (Appendix D)
+        assert_eq!(
+            lex_one(":valid?"),
+            TokenKind::Keyword { ns: None, name: "valid?".into(), auto_ns: false },
+        );
+    }
+
+    // --- keyword test 1 ---
+    #[test]
+    fn lex_keyword_simple() {
+        // `:status` — plain keyword (spec §2.6)
+        assert_eq!(
+            lex_one(":status"),
+            TokenKind::Keyword { ns: None, name: "status".into(), auto_ns: false },
+        );
+    }
 
     // --- char test 3 ---
     #[test]

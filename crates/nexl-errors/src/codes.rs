@@ -22,6 +22,9 @@ pub const INVALID_NUMERIC_SUFFIX: ErrorCode = ErrorCode { phase: ErrorPhase::Lex
 /// Suffixed integer literal is out of range for its type (e.g. `256u8`).
 pub const LITERAL_OUT_OF_RANGE: ErrorCode = ErrorCode { phase: ErrorPhase::Lexer, number: 5 };
 
+/// Keyword is malformed (bare `:`, unknown namespace form, etc.).
+pub const INVALID_KEYWORD: ErrorCode = ErrorCode { phase: ErrorPhase::Lexer, number: 6 };
+
 // --- Reader errors (NXL-R…) ---
 
 /// A closing delimiter (`)`, `]`, `}`) has no matching opener.

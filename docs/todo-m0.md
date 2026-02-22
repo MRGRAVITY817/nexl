@@ -29,7 +29,7 @@
 - [x] String literals with interpolation spans (`"hello {name}"`)
 - [x] Escape sequences: `\\`, `\n`, `\t`, `\"`, `\{`, `{{`, `}}`
 - [x] Character literals (`\a`, `\newline`, `\u{1F600}`)
-- [ ] Keywords (`:foo`, `:bar/baz`)
+- [x] Keywords (`:foo`, `:bar/baz`)
 - [ ] Symbols
 - [ ] Booleans (`true`, `false`) and `unit`
 - [ ] Reader macros: `'` (quote), `#{}` (set), `#_` (discard), `@` (deref)
