@@ -1,3 +1,3 @@
 pub mod lexer;
 
-pub use lexer::{Lexer, Token, TokenKind};
+pub use lexer::{Lexer, StringPart, Token, TokenKind};

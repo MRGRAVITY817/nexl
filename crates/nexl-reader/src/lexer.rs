@@ -12,6 +12,19 @@ pub struct Token {
     pub span: Span,
 }
 
+/// A segment of a string literal after escape processing.
+///
+/// String content is split into alternating literal runs and interpolation
+/// holes at lex time so that later compiler passes see a clean boundary
+/// between text and embedded expressions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringPart {
+    /// Literal text with all escape sequences already resolved.
+    Lit(String),
+    /// An interpolation hole: the raw expression text between `{` and `}`.
+    Interp(String),
+}
+
 /// The structural kind and value of a token.
 ///
 /// Variants are added as each lexer task is implemented. Non-exhaustive
@@ -25,11 +38,13 @@ pub enum TokenKind {
     /// Ratio literal, e.g. `3/4`. Stored as raw numerator/denominator; reduction
     /// to lowest terms is deferred to the reader pass.
     Ratio(i64, i64),
-    /// String literal. Content is the raw characters between the opening and closing
-    /// `"` delimiters, with no escape processing applied (escape sequences are
-    /// resolved in a later lexer pass). Interpolation spans `{...}` are preserved
-    /// as-is for resolution by a later compiler pass.
-    Str(String),
+    /// String literal split into literal runs and interpolation holes.
+    ///
+    /// Escape sequences (`\n`, `\t`, `\\`, `\"`, `\{`) are resolved to their
+    /// actual characters inside `Lit` segments. `{{` and `}}` produce literal
+    /// `{` / `}` without triggering interpolation. `{expr}` spans become
+    /// `Interp` segments containing the raw expression text.
+    Str(Vec<StringPart>),
 }
 
 // ---------------------------------------------------------------------------
@@ -340,16 +355,17 @@ impl<'src> Lexer<'src> {
 
     /// Lex a double-quoted string literal.
     ///
-    /// The opening `"` must not yet have been consumed. Content is collected
-    /// verbatim — escape sequences are left unprocessed; a `\` followed by any
-    /// character is consumed as a two-character unit so that `\"` does not
-    /// prematurely end the string. Interpolation spans `{...}` are preserved
-    /// as-is for a later compiler pass.
+    /// The opening `"` must not yet have been consumed. Returns a
+    /// `TokenKind::Str` whose parts are fully resolved: escape sequences
+    /// (`\n`, `\t`, `\r`, `\\`, `\"`, `\{`) are expanded, `{{`/`}}` become
+    /// literal braces, and `{expr}` spans become `StringPart::Interp`.
     fn lex_string(&mut self) -> Result<Token, Box<Diagnostic>> {
         let start = self.pos;
         self.advance(); // consume opening `"`
 
-        let mut content = String::new();
+        let mut parts: Vec<StringPart> = Vec::new();
+        let mut lit = String::new();
+
         loop {
             match self.peek() {
                 None => {
@@ -364,22 +380,87 @@ impl<'src> Lexer<'src> {
                     break;
                 }
                 Some('\\') => {
-                    // Consume the backslash and whatever follows without
-                    // interpreting the escape — that is task 2.
-                    content.push(self.advance().unwrap());
-                    if let Some(escaped) = self.advance() {
-                        content.push(escaped);
+                    let bs_pos = self.pos;
+                    self.advance(); // consume '\'
+                    match self.peek() {
+                        Some('n') => { self.advance(); lit.push('\n'); }
+                        Some('t') => { self.advance(); lit.push('\t'); }
+                        Some('r') => { self.advance(); lit.push('\r'); }
+                        Some('\\') => { self.advance(); lit.push('\\'); }
+                        Some('"') => { self.advance(); lit.push('"'); }
+                        Some('{') => { self.advance(); lit.push('{'); }
+                        Some(ch) => {
+                            let bad_ch = ch;
+                            self.advance();
+                            return Err(Box::new(self.error_at(
+                                bs_pos,
+                                format!("unknown escape sequence `\\{bad_ch}`"),
+                                Some(codes::INVALID_ESCAPE.clone()),
+                            )));
+                        }
+                        None => {
+                            return Err(Box::new(self.error_at(
+                                start,
+                                "unterminated string literal",
+                                Some(codes::UNCLOSED_STRING.clone()),
+                            )));
+                        }
+                    }
+                }
+                Some('{') => {
+                    if self.peek_ahead(1) == Some('{') {
+                        // `{{` → literal `{`
+                        self.advance();
+                        self.advance();
+                        lit.push('{');
+                    } else {
+                        // `{expr}` → interpolation hole
+                        flush_lit(&mut lit, &mut parts);
+                        self.advance(); // consume '{'
+                        let mut expr = String::new();
+                        loop {
+                            match self.peek() {
+                                None => {
+                                    return Err(Box::new(self.error_at(
+                                        start,
+                                        "unterminated string literal",
+                                        Some(codes::UNCLOSED_STRING.clone()),
+                                    )));
+                                }
+                                Some('}') => {
+                                    self.advance(); // consume '}'
+                                    break;
+                                }
+                                Some(ch) => {
+                                    expr.push(ch);
+                                    self.advance();
+                                }
+                            }
+                        }
+                        parts.push(StringPart::Interp(expr));
+                    }
+                }
+                Some('}') => {
+                    if self.peek_ahead(1) == Some('}') {
+                        // `}}` → literal `}`
+                        self.advance();
+                        self.advance();
+                        lit.push('}');
+                    } else {
+                        lit.push('}');
+                        self.advance();
                     }
                 }
                 Some(ch) => {
-                    content.push(ch);
+                    lit.push(ch);
                     self.advance();
                 }
             }
         }
 
+        flush_lit(&mut lit, &mut parts);
         let span = self.span_from(start);
-        Ok(Token { kind: TokenKind::Str(content), span })
+        Ok(Token { kind: TokenKind::Str(parts), span })
     }
 
     // --- helpers ---
@@ -415,6 +496,18 @@ impl<'src> Lexer<'src> {
 }
 
 // ---------------------------------------------------------------------------
+// Free helpers
+// ---------------------------------------------------------------------------
+
+/// Move the accumulated literal run into `parts`, leaving `lit` empty.
+/// Does nothing if `lit` is already empty (avoids spurious empty `Lit` nodes).
+fn flush_lit(lit: &mut String, parts: &mut Vec<StringPart>) {
+    if !lit.is_empty() {
+        parts.push(StringPart::Lit(std::mem::take(lit)));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -436,7 +529,7 @@ mod tests {
     // --- float test 1 ---
     #[test]
     fn lex_plain_float() {
-        assert_eq!(lex_one("3.14"), TokenKind::Float(3.14, None));
+        assert_eq!(lex_one("1.25"), TokenKind::Float(1.25, None));
     }
 
     // --- float test 2 ---
@@ -449,14 +542,14 @@ mod tests {
     #[test]
     fn lex_float_suffix_f32() {
         use nexl_ast::FloatSuffix;
-        assert_eq!(lex_one("3.14f32"), TokenKind::Float(3.14, Some(FloatSuffix::F32)));
+        assert_eq!(lex_one("1.25f32"), TokenKind::Float(1.25, Some(FloatSuffix::F32)));
     }
 
     // --- float test 4 ---
     #[test]
     fn lex_float_suffix_f64() {
         use nexl_ast::FloatSuffix;
-        assert_eq!(lex_one("3.14f64"), TokenKind::Float(3.14, Some(FloatSuffix::F64)));
+        assert_eq!(lex_one("1.25f64"), TokenKind::Float(1.25, Some(FloatSuffix::F64)));
     }
 
     // --- float test 5 ---
@@ -507,10 +600,10 @@ mod tests {
     // --- float test 11 ---
     #[test]
     fn lex_mixed_int_and_float() {
-        let tokens = lex("42 3.14").unwrap();
+        let tokens = lex("42 1.25").unwrap();
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].kind, TokenKind::Int(42, None));
-        assert_eq!(tokens[1].kind, TokenKind::Float(3.14, None));
+        assert_eq!(tokens[1].kind, TokenKind::Float(1.25, None));
     }
 
     // --- test 1 ---
@@ -692,25 +785,29 @@ mod tests {
         assert_eq!(lex_one("1_000/3"), TokenKind::Ratio(1000, 3));
     }
 
+    // Small helpers to reduce boilerplate in string tests.
+    fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
+    fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
+
     // --- string test 1 ---
     #[test]
     fn lex_plain_string() {
-        assert_eq!(lex_one("\"hello\""), TokenKind::Str("hello".to_string()));
+        assert_eq!(lex_one("\"hello\""), TokenKind::Str(vec![lit("hello")]));
     }
 
     // --- string test 2 ---
     #[test]
     fn lex_empty_string() {
-        assert_eq!(lex_one("\"\""), TokenKind::Str("".to_string()));
+        assert_eq!(lex_one("\"\""), TokenKind::Str(vec![]));
     }
 
     // --- string test 3 ---
     #[test]
     fn lex_string_with_interpolation() {
-        // {name} is preserved as-is for a later compiler pass (spec §2.4)
+        // {name} is split into an Interp part; surrounding text becomes Lit (spec §2.4)
         assert_eq!(
             lex_one("\"hello {name}!\""),
-            TokenKind::Str("hello {name}!".to_string()),
+            TokenKind::Str(vec![lit("hello "), interp("name"), lit("!")]),
         );
     }
 
@@ -719,7 +816,7 @@ mod tests {
     fn lex_string_multiple_interpolations() {
         assert_eq!(
             lex_one("\"{a} and {b}\""),
-            TokenKind::Str("{a} and {b}".to_string()),
+            TokenKind::Str(vec![interp("a"), lit(" and "), interp("b")]),
         );
     }
 
@@ -739,7 +836,7 @@ mod tests {
     fn lex_string_adjacent_to_int() {
         let tokens = lex("\"hi\" 42").unwrap();
         assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens[0].kind, TokenKind::Str("hi".to_string()));
+        assert_eq!(tokens[0].kind, TokenKind::Str(vec![lit("hi")]));
         assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
     }
 
@@ -754,9 +851,84 @@ mod tests {
 
     // --- string test 8 ---
     #[test]
-    fn lex_string_backslash_skipped_for_boundary() {
-        // `"a\"b"` — the `\"` must NOT end the string; the string ends at the
-        // final `"`. Raw content stored as-is; escape resolution is task 2.
-        assert_eq!(lex_one("\"a\\\"b\""), TokenKind::Str("a\\\"b".to_string()));
+    fn lex_string_escaped_quote_does_not_end_string() {
+        // `"a\"b"` — `\"` is resolved to `"` and must NOT terminate the string.
+        // After escape processing the content is the 3-char literal `a"b`.
+        assert_eq!(lex_one("\"a\\\"b\""), TokenKind::Str(vec![lit("a\"b")]));
+    }
+
+    // --- escape test 1 ---
+    #[test]
+    fn escape_newline() {
+        // `"line1\nline2"` — spec §2.4: \n resolves to actual newline character
+        assert_eq!(lex_one("\"line1\\nline2\""), TokenKind::Str(vec![lit("line1\nline2")]));
+    }
+
+    // --- escape test 2 ---
+    #[test]
+    fn escape_tab() {
+        // `"a\tb"` — spec §2.4: \t resolves to actual tab character
+        assert_eq!(lex_one("\"a\\tb\""), TokenKind::Str(vec![lit("a\tb")]));
+    }
+
+    // --- escape test 3 ---
+    #[test]
+    fn escape_carriage_return() {
+        // `"a\rb"` — spec §2.4: \r resolves to carriage return
+        assert_eq!(lex_one("\"a\\rb\""), TokenKind::Str(vec![lit("a\rb")]));
+    }
+
+    // --- escape test 4 ---
+    #[test]
+    fn escape_backslash() {
+        // `"a\\b"` — spec §2.4: \\ resolves to a single backslash
+        assert_eq!(lex_one("\"a\\\\b\""), TokenKind::Str(vec![lit("a\\b")]));
+    }
+
+    // --- escape test 5 ---
+    // (covered by string test 8 above — `\"` resolves without ending the string)
+
+    // --- escape test 6 ---
+    #[test]
+    fn escape_brace() {
+        // `"\{name}"` — \{ is a literal `{`; the span is NOT treated as interpolation
+        assert_eq!(
+            lex_one("\"\\{name}\""),
+            TokenKind::Str(vec![lit("{name}")]),
+        );
+    }
+
+    // --- escape test 7 ---
+    #[test]
+    fn double_brace() {
+        // `"{{a}}"` — {{ → literal `{`, }} → literal `}` (spec §2.4 example)
+        assert_eq!(lex_one("\"{{a}}\""), TokenKind::Str(vec![lit("{a}")]));
+    }
+
+    // --- escape test 8 ---
+    #[test]
+    fn double_brace_mixed_with_interp() {
+        // `"{{x}} {name}"` — literal `{x}` then interpolation `name` (spec §2.4)
+        assert_eq!(
+            lex_one("\"{{x}} {name}\""),
+            TokenKind::Str(vec![lit("{x} "), interp("name")]),
+        );
+    }
+
+    // --- escape test 9 ---
+    #[test]
+    fn invalid_escape_is_error() {
+        // `"\q"` — unrecognized escape must produce NXL-L0002
+        let err = lex("\"\\q\"").unwrap_err();
+        assert_eq!(err.code, Some(codes::INVALID_ESCAPE.clone()));
+    }
+
+    // --- escape test 10 ---
+    #[test]
+    fn invalid_escape_span_at_backslash() {
+        // `"a\qb"` — the error label must point at the `\` (byte 2: `"` at 0, `a` at 1)
+        let err = lex("\"a\\qb\"").unwrap_err();
+        assert_eq!(err.code, Some(codes::INVALID_ESCAPE.clone()));
+        assert_eq!(err.labels[0].span.start, 2); // `\` is at byte 2
     }
 }
