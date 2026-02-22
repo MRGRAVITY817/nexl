@@ -28,7 +28,7 @@
 - [x] Ratio literals (`1/3`)
 - [x] String literals with interpolation spans (`"hello {name}"`)
 - [x] Escape sequences: `\\`, `\n`, `\t`, `\"`, `\{`, `{{`, `}}`
-- [ ] Character literals (`\a`, `\newline`, `\u{1F600}`)
+- [x] Character literals (`\a`, `\newline`, `\u{1F600}`)
 - [ ] Keywords (`:foo`, `:bar/baz`)
 - [ ] Symbols
 - [ ] Booleans (`true`, `false`) and `unit`

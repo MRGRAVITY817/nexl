@@ -45,6 +45,8 @@ pub enum TokenKind {
     /// `{` / `}` without triggering interpolation. `{expr}` spans become
     /// `Interp` segments containing the raw expression text.
     Str(Vec<StringPart>),
+    /// Character literal, e.g. `\a`, `\newline`, `\u{1F600}`.
+    Char(char),
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +121,10 @@ impl<'src> Lexer<'src> {
 
         if ch == '"' {
             return self.lex_string();
+        }
+
+        if ch == '\\' {
+            return self.lex_char();
         }
 
         let start = self.pos;
@@ -463,6 +469,122 @@ impl<'src> Lexer<'src> {
         Ok(Token { kind: TokenKind::Str(parts), span })
     }
 
+    // --- character literal lexing ---
+
+    /// Lex a character literal.
+    ///
+    /// The opening `\` must not yet have been consumed. Returns a
+    /// `TokenKind::Char` for well-formed literals, or an `INVALID_CHAR_LITERAL`
+    /// diagnostic otherwise.
+    fn lex_char(&mut self) -> Result<Token, Box<Diagnostic>> {
+        let start = self.pos;
+        self.advance(); // consume `\`
+
+        let first = match self.peek() {
+            None => {
+                return Err(Box::new(self.error_at(
+                    start,
+                    "character literal is empty",
+                    Some(codes::INVALID_CHAR_LITERAL.clone()),
+                )));
+            }
+            Some(ch) => ch,
+        };
+
+        // Unicode escape: `\uXXXX` or `\u{...}`
+        if first == 'u' {
+            return self.lex_char_unicode(start);
+        }
+
+        // Collect a run of letters/digits to distinguish single-char from named forms.
+        // Structural delimiters and whitespace terminate the run.
+        let word = self.collect_while(|c| !c.is_ascii_whitespace() && !is_structural(c));
+
+        let ch = match word.as_str() {
+            "space"   => ' ',
+            "newline" => '\n',
+            "tab"     => '\t',
+            s if s.chars().count() == 1 => s.chars().next().expect("non-empty single char"),
+            _ => {
+                return Err(Box::new(self.error_at(
+                    start,
+                    format!("unknown character name `\\{word}`"),
+                    Some(codes::INVALID_CHAR_LITERAL.clone()),
+                )));
+            }
+        };
+
+        let span = self.span_from(start);
+        Ok(Token { kind: TokenKind::Char(ch), span })
+    }
+
+    /// Finish lexing a unicode character escape after `\u` has been peeked.
+    ///
+    /// Handles both `\uXXXX` (exactly 4 hex digits) and `\u{X...}` (1–6 hex
+    /// digits). Rejects code points in the surrogate range (U+D800–U+DFFF).
+    fn lex_char_unicode(&mut self, start: usize) -> Result<Token, Box<Diagnostic>> {
+        self.advance(); // consume 'u'
+
+        let (code_point, span) = if self.peek() == Some('{') {
+            // Braced form: `\u{XXXXXX}`
+            self.advance(); // consume '{'
+            let hex = self.collect_while(|c| c.is_ascii_hexdigit());
+            if hex.is_empty() || hex.len() > 6 {
+                return Err(Box::new(self.error_at(
+                    start,
+                    "unicode escape must have 1–6 hex digits",
+                    Some(codes::INVALID_CHAR_LITERAL.clone()),
+                )));
+            }
+            match self.peek() {
+                Some('}') => { self.advance(); }
+                _ => {
+                    return Err(Box::new(self.error_at(
+                        start,
+                        "missing closing `}` in unicode escape",
+                        Some(codes::INVALID_CHAR_LITERAL.clone()),
+                    )));
+                }
+            }
+            let cp = u32::from_str_radix(&hex, 16).expect("validated hex digits");
+            (cp, self.span_from(start))
+        } else {
+            // Unbraced form: exactly 4 hex digits `\uXXXX`
+            let hex = self.collect_while(|c| c.is_ascii_hexdigit());
+            if hex.len() != 4 {
+                return Err(Box::new(self.error_at(
+                    start,
+                    format!(
+                        "unicode escape `\\u` must be followed by exactly 4 hex digits, got {}",
+                        hex.len()
+                    ),
+                    Some(codes::INVALID_CHAR_LITERAL.clone()),
+                )));
+            }
+            let cp = u32::from_str_radix(&hex, 16).expect("validated hex digits");
+            (cp, self.span_from(start))
+        };
+
+        // Reject surrogates (U+D800–U+DFFF)
+        if (0xD800..=0xDFFF).contains(&code_point) {
+            return Err(Box::new(self.error_at(
+                start,
+                format!("U+{code_point:04X} is a surrogate and not a valid Unicode scalar value"),
+                Some(codes::INVALID_CHAR_LITERAL.clone()),
+            )));
+        }
+
+        let ch = char::from_u32(code_point).ok_or_else(|| {
+            Box::new(self.error_at(
+                start,
+                format!("U+{code_point:06X} is not a valid Unicode code point"),
+                Some(codes::INVALID_CHAR_LITERAL.clone()),
+            ))
+        })?;
+
+        Ok(Token { kind: TokenKind::Char(ch), span })
+    }
+
     // --- helpers ---
 
     fn collect_while(&mut self, pred: impl Fn(char) -> bool) -> String {
@@ -505,6 +627,12 @@ fn flush_lit(lit: &mut String, parts: &mut Vec<StringPart>) {
     if !lit.is_empty() {
         parts.push(StringPart::Lit(std::mem::take(lit)));
     }
+}
+
+/// Returns `true` for structural delimiter characters that terminate a
+/// character literal name (list/vector/map/set delimiters and `"`).
+fn is_structural(c: char) -> bool {
+    matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | '"')
 }
 
 // ---------------------------------------------------------------------------
@@ -788,6 +916,103 @@ mod tests {
     // Small helpers to reduce boilerplate in string tests.
     fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
     fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
+
+    // --- char test 3 ---
+    #[test]
+    fn lex_char_named_space() {
+        // `\space` — named form (spec §2.5)
+        assert_eq!(lex_one("\\space"), TokenKind::Char(' '));
+    }
+
+    // --- char test 4 ---
+    #[test]
+    fn lex_char_named_newline() {
+        // `\newline` — named form (spec §2.5)
+        assert_eq!(lex_one("\\newline"), TokenKind::Char('\n'));
+    }
+
+    // --- char test 12 ---
+    #[test]
+    fn lex_char_eof_after_backslash() {
+        // `\` at EOF — empty character literal
+        let err = lex("\\").unwrap_err();
+        assert_eq!(err.code, Some(codes::INVALID_CHAR_LITERAL.clone()));
+    }
+
+    // --- char test 11 ---
+    #[test]
+    fn lex_char_surrogate_is_error() {
+        // `\uD800` — start of surrogate range, not a valid scalar value (spec §2.5)
+        let err = lex("\\uD800").unwrap_err();
+        assert_eq!(err.code, Some(codes::INVALID_CHAR_LITERAL.clone()));
+        assert!(
+            err.message.contains("surrogate"),
+            "expected 'surrogate' in message, got: {}",
+            err.message
+        );
+    }
+
+    // --- char test 10 ---
+    #[test]
+    fn lex_char_adjacent_tokens() {
+        // `\a 42` — char literal followed by an integer
+        let tokens = lex("\\a 42").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Char('a'));
+        assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
+    }
+
+    // --- char test 9 ---
+    #[test]
+    fn lex_char_span_correct() {
+        // "  \newline  " — char starts at byte 2, `\newline` is 8 bytes (\ + 7 chars)
+        let tokens = lex("  \\newline  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 8); // '\' + "newline" = 8 bytes
+    }
+
+    // --- char test 7 ---
+    #[test]
+    fn lex_char_unicode_braced_short() {
+        // `\u{41}` — braced form with fewer than 4 digits (spec §2.5 1–6 hex digits)
+        assert_eq!(lex_one("\\u{41}"), TokenKind::Char('A'));
+    }
+
+    // --- char test 8 ---
+    #[test]
+    fn lex_char_unicode_braced_full() {
+        // `\u{1F600}` — spec §2.5 example: emoji outside BMP
+        assert_eq!(lex_one("\\u{1F600}"), TokenKind::Char('😀'));
+    }
+
+    // --- char test 6 ---
+    #[test]
+    fn lex_char_unicode_4hex() {
+        // `\u0041` — BMP form: exactly 4 hex digits (spec §2.5)
+        assert_eq!(lex_one("\\u0041"), TokenKind::Char('A'));
+    }
+
+    // --- char test 5 ---
+    #[test]
+    fn lex_char_named_tab() {
+        // `\tab` — named form (spec §2.5)
+        assert_eq!(lex_one("\\tab"), TokenKind::Char('\t'));
+    }
+
+    // --- char test 2 ---
+    #[test]
+    fn lex_char_single_digit() {
+        // `\5` — single non-alpha character (still a valid 1-char literal)
+        assert_eq!(lex_one("\\5"), TokenKind::Char('5'));
+    }
+
+    // --- char test 1 ---
+    #[test]
+    fn lex_char_single_ascii() {
+        // `\a` — single character after `\` (spec §2.5 first example)
+        assert_eq!(lex_one("\\a"), TokenKind::Char('a'));
+    }
 
     // --- string test 1 ---
     #[test]
