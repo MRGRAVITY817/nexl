@@ -73,6 +73,21 @@ pub enum TokenKind {
     /// Preserved as a token so the reader can attach comments to adjacent
     /// AST nodes for round-trip formatting.
     Comment(String),
+
+    // --- Structural delimiters (consumed by the reader) ---
+
+    /// `(` — opens a list.
+    LParen,
+    /// `)` — closes a list.
+    RParen,
+    /// `[` — opens a vector.
+    LBracket,
+    /// `]` — closes a vector.
+    RBracket,
+    /// `{` — opens a map.
+    LBrace,
+    /// `}` — closes a map or set.
+    RBrace,
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +217,22 @@ impl<'src> Lexer<'src> {
             self.advance(); // consume ';'
             let text = self.collect_while(|c| c != '\n');
             return Ok(Token { kind: TokenKind::Comment(text), span: self.span_from(start) });
+        }
+
+        // Structural delimiters
+        let delim_kind = match ch {
+            '(' => Some(TokenKind::LParen),
+            ')' => Some(TokenKind::RParen),
+            '[' => Some(TokenKind::LBracket),
+            ']' => Some(TokenKind::RBracket),
+            '{' => Some(TokenKind::LBrace),
+            '}' => Some(TokenKind::RBrace),
+            _ => None,
+        };
+        if let Some(kind) = delim_kind {
+            let start = self.pos;
+            self.advance();
+            return Ok(Token { kind, span: self.span_from(start) });
         }
 
         let start = self.pos;

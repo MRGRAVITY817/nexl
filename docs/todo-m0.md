@@ -37,8 +37,8 @@
 - [x] Form comments with nesting (`#_`, `#_ #_`)
 
 ### nexl-reader — Reader (S-expression → AST)
-- [ ] Recursive descent S-expression parser
-- [ ] Source spans on every node
+- [x] Recursive descent S-expression parser
+- [x] Source spans on every node
 - [ ] Round-trip formatting preservation (whitespace/comment tokens)
 - [ ] `#_` nesting: `#_ #_ a b` discards both `a` and `b`
 
