@@ -43,8 +43,8 @@
 - [x] `#_` nesting: `#_ #_ a b` discards both `a` and `b`
 
 ### AST Pretty-Printer
-- [ ] S-expression → formatted string
-- [ ] Configurable indentation
+- [x] S-expression → formatted string
+- [x] Configurable indentation
 
 ### Test Suite
 - [ ] Unit tests for each token type

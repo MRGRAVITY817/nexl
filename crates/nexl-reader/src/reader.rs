@@ -872,4 +872,17 @@ mod tests {
         assert!(matches!(nodes[0].kind, NodeKind::Discard(_)));
         assert_eq!(nodes[0].leading_comments, vec![Comment(" skip".into())]);
     }
+
+    // ── 39. roundtrip_simple_list ─────────────────────────────────────────
+    // Parse → pretty-print → re-parse; the two AST kinds must be equal.
+    // Spans are not compared because they differ between parses.
+    #[test]
+    fn roundtrip_simple_list() {
+        use nexl_ast::PrettyPrinter;
+        let src = "(+ 1 2)";
+        let nodes1 = read(src, fid()).expect("first parse");
+        let printed = PrettyPrinter::default_config().print(&nodes1[0]);
+        let nodes2 = read(&printed, fid()).expect("second parse");
+        assert_eq!(nodes1[0].kind, nodes2[0].kind);
+    }
 }

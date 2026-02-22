@@ -210,17 +210,17 @@ mod tests {
 
     #[test]
     fn atom_float_unsuffixed() {
-        let a = Atom::Float { value: 3.14, suffix: None };
+        let a = Atom::Float { value: 2.5, suffix: None };
         match a {
-            Atom::Float { value, suffix: None } => assert!((value - 3.14).abs() < 1e-10),
+            Atom::Float { value, suffix: None } => assert!((value - 2.5).abs() < 1e-10),
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
     fn atom_float_f32_suffix() {
-        let a = Atom::Float { value: 3.14, suffix: Some(FloatSuffix::F32) };
-        assert_eq!(a, Atom::Float { value: 3.14, suffix: Some(FloatSuffix::F32) });
+        let a = Atom::Float { value: 2.5, suffix: Some(FloatSuffix::F32) };
+        assert_eq!(a, Atom::Float { value: 2.5, suffix: Some(FloatSuffix::F32) });
     }
 
     #[test]
