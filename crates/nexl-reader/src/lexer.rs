@@ -60,6 +60,14 @@ pub enum TokenKind {
     Bool(bool),
     /// The unit value `unit` — the sole inhabitant of type `Unit` (ADR-001).
     Unit,
+    /// Quote prefix `'` — reader shorthand for `(quote x)` (spec §2.8).
+    Quote,
+    /// Deref prefix `@` — reader shorthand for `(deref x)` (spec §2.8).
+    Deref,
+    /// Discard prefix `#_` — the following form is skipped by the reader (spec §2.8).
+    Discard,
+    /// Set-literal open `#{` — begins a set collection (spec §2.9).
+    SetOpen,
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +154,42 @@ impl<'src> Lexer<'src> {
 
         if is_symbol_start(ch) {
             return self.lex_symbol();
+        }
+
+        // Single-char reader macros
+        if ch == '\'' {
+            let start = self.pos;
+            self.advance();
+            return Ok(Token { kind: TokenKind::Quote, span: self.span_from(start) });
+        }
+        if ch == '@' {
+            let start = self.pos;
+            self.advance();
+            return Ok(Token { kind: TokenKind::Deref, span: self.span_from(start) });
+        }
+
+        // Hash-dispatched reader macros: `#_` and `#{`
+        if ch == '#' {
+            let start = self.pos;
+            self.advance(); // consume '#'
+            match self.peek() {
+                Some('_') => {
+                    self.advance();
+                    return Ok(Token { kind: TokenKind::Discard, span: self.span_from(start) });
+                }
+                Some('{') => {
+                    self.advance();
+                    return Ok(Token { kind: TokenKind::SetOpen, span: self.span_from(start) });
+                }
+                other => {
+                    let label = other.map_or_else(|| "end of file".into(), |c| format!("`{c}`"));
+                    return Err(Box::new(self.error_at(
+                        start,
+                        format!("unrecognized dispatch macro `#` followed by {label}"),
+                        None,
+                    )));
+                }
+            }
         }
 
         let start = self.pos;
@@ -1027,6 +1071,76 @@ mod tests {
     // Small helpers to reduce boilerplate in string tests.
     fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
     fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
+
+    // --- reader macro test 1 ---
+    #[test]
+    fn lex_quote() {
+        // `'` — quote prefix (spec §2.8)
+        assert_eq!(lex_one("'"), TokenKind::Quote);
+    }
+
+    // --- reader macro test 2 ---
+    #[test]
+    fn lex_deref() {
+        // `@` — deref prefix, shorthand for `(deref x)` (spec §2.8)
+        assert_eq!(lex_one("@"), TokenKind::Deref);
+    }
+
+    // --- reader macro test 3 ---
+    #[test]
+    fn lex_discard() {
+        // `#_` — discard prefix; following form is skipped (spec §2.8)
+        assert_eq!(lex_one("#_"), TokenKind::Discard);
+    }
+
+    // --- reader macro test 4 ---
+    #[test]
+    fn lex_set_open() {
+        // `#{` — set-literal open (spec §2.9: `#{1 2 3}`)
+        assert_eq!(lex_one("#{"), TokenKind::SetOpen);
+    }
+
+    // --- reader macro test 5 ---
+    #[test]
+    fn lex_quote_span_correct() {
+        // `  '  ` — quote at byte 2, length 1
+        let tokens = lex("  '  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 1);
+    }
+
+    // --- reader macro test 6 ---
+    #[test]
+    fn lex_discard_span_correct() {
+        // `  #_  ` — discard at byte 2, length 2
+        let tokens = lex("  #_  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 2);
+    }
+
+    // --- reader macro test 7 ---
+    #[test]
+    fn lex_set_open_span_correct() {
+        // `  #{  ` — set-open at byte 2, length 2
+        let tokens = lex("  #{  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 2);
+    }
+
+    // --- reader macro test 8 ---
+    #[test]
+    fn lex_hash_alone_is_error() {
+        // `#` at EOF — unrecognized dispatch macro
+        let err = lex("#").unwrap_err();
+        assert!(
+            err.message.contains("unrecognized dispatch macro"),
+            "expected 'unrecognized dispatch macro' in message, got: {}",
+            err.message,
+        );
+    }
 
     // --- bool/unit test 1 ---
     #[test]

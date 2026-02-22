@@ -32,7 +32,7 @@
 - [x] Keywords (`:foo`, `:bar/baz`)
 - [x] Symbols
 - [x] Booleans (`true`, `false`) and `unit`
-- [ ] Reader macros: `'` (quote), `#{}` (set), `#_` (discard), `@` (deref)
+- [x] Reader macros: `'` (quote), `#{}` (set), `#_` (discard), `@` (deref)
 - [ ] Line comments (`;`)
 - [ ] Form comments with nesting (`#_`, `#_ #_`)
 
