@@ -68,6 +68,11 @@ pub enum TokenKind {
     Discard,
     /// Set-literal open `#{` — begins a set collection (spec §2.9).
     SetOpen,
+    /// Line comment — text from `;` to end of line, not including the newline.
+    ///
+    /// Preserved as a token so the reader can attach comments to adjacent
+    /// AST nodes for round-trip formatting.
+    Comment(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +195,13 @@ impl<'src> Lexer<'src> {
                     )));
                 }
             }
+        }
+
+        if ch == ';' {
+            let start = self.pos;
+            self.advance(); // consume ';'
+            let text = self.collect_while(|c| c != '\n');
+            return Ok(Token { kind: TokenKind::Comment(text), span: self.span_from(start) });
         }
 
         let start = self.pos;
@@ -1071,6 +1083,50 @@ mod tests {
     // Small helpers to reduce boilerplate in string tests.
     fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
     fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
+
+    // --- comment test 1 ---
+    #[test]
+    fn lex_comment_simple() {
+        // `; hello` — text after `;` to end of line (spec §2.1)
+        assert_eq!(lex_one("; hello"), TokenKind::Comment(" hello".into()));
+    }
+
+    // --- comment test 2 ---
+    #[test]
+    fn lex_comment_empty() {
+        // `;` at EOF — bare semicolon, no text after it
+        assert_eq!(lex_one(";"), TokenKind::Comment("".into()));
+    }
+
+    // --- comment test 3 ---
+    #[test]
+    fn lex_comment_span_correct() {
+        // "  ; hi  " — comment starts at byte 2, "; hi  " is 6 bytes
+        let tokens = lex("  ; hi  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 6); // `;` + ` hi  ` = 6 bytes
+    }
+
+    // --- comment test 4 ---
+    #[test]
+    fn lex_comment_does_not_consume_next_line() {
+        // `; a\n42` — comment stops before `\n`; the integer is a separate token
+        let tokens = lex("; a\n42").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Comment(" a".into()));
+        assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
+    }
+
+    // --- comment test 5 ---
+    #[test]
+    fn lex_comment_inline() {
+        // `42 ; remark` — integer then inline comment
+        let tokens = lex("42 ; remark").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Int(42, None));
+        assert_eq!(tokens[1].kind, TokenKind::Comment(" remark".into()));
+    }
 
     // --- reader macro test 1 ---
     #[test]

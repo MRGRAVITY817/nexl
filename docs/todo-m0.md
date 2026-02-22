@@ -33,7 +33,7 @@
 - [x] Symbols
 - [x] Booleans (`true`, `false`) and `unit`
 - [x] Reader macros: `'` (quote), `#{}` (set), `#_` (discard), `@` (deref)
-- [ ] Line comments (`;`)
+- [x] Line comments (`;`)
 - [ ] Form comments with nesting (`#_`, `#_ #_`)
 
 ### nexl-reader — Reader (S-expression → AST)
