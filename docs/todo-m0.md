@@ -34,7 +34,7 @@
 - [x] Booleans (`true`, `false`) and `unit`
 - [x] Reader macros: `'` (quote), `#{}` (set), `#_` (discard), `@` (deref)
 - [x] Line comments (`;`)
-- [ ] Form comments with nesting (`#_`, `#_ #_`)
+- [x] Form comments with nesting (`#_`, `#_ #_`)
 
 ### nexl-reader — Reader (S-expression → AST)
 - [ ] Recursive descent S-expression parser

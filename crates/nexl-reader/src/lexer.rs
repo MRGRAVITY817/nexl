@@ -1084,6 +1084,51 @@ mod tests {
     fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
     fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
 
+    // --- form comment test 4 ---
+    #[test]
+    fn lex_discard_with_comment_between() {
+        // `#_ ; skip\nfoo` — inline comment between #_ and its target is preserved;
+        // the reader sees [Discard, Comment, Symbol] and knows to skip `foo`
+        let tokens = lex("#_ ; skip\nfoo").unwrap();
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].kind, TokenKind::Discard);
+        assert_eq!(tokens[1].kind, TokenKind::Comment(" skip".into()));
+        assert_eq!(tokens[2].kind, TokenKind::Symbol { ns: None, name: "foo".into() });
+    }
+
+    // --- form comment test 3 ---
+    #[test]
+    fn lex_discard_chain_with_forms() {
+        // `#_ #_ a b` — spec §2.1 example; lexer produces four tokens,
+        // reader will interpret the two Discards as discarding both `a` and `b`
+        let tokens = lex("#_ #_ a b").unwrap();
+        assert_eq!(tokens.len(), 4);
+        assert_eq!(tokens[0].kind, TokenKind::Discard);
+        assert_eq!(tokens[1].kind, TokenKind::Discard);
+        assert_eq!(tokens[2].kind, TokenKind::Symbol { ns: None, name: "a".into() });
+        assert_eq!(tokens[3].kind, TokenKind::Symbol { ns: None, name: "b".into() });
+    }
+
+    // --- form comment test 2 ---
+    #[test]
+    fn lex_discard_chain() {
+        // `#_ #_` — two separate Discard tokens; reader handles the nesting semantics
+        let tokens = lex("#_ #_").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Discard);
+        assert_eq!(tokens[1].kind, TokenKind::Discard);
+    }
+
+    // --- form comment test 1 ---
+    #[test]
+    fn lex_discard_followed_by_symbol() {
+        // `#_ foo` — baseline: Discard token + the form it guards (spec §2.1)
+        let tokens = lex("#_ foo").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Discard);
+        assert_eq!(tokens[1].kind, TokenKind::Symbol { ns: None, name: "foo".into() });
+    }
+
     // --- comment test 1 ---
     #[test]
     fn lex_comment_simple() {
