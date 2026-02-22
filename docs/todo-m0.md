@@ -30,7 +30,7 @@
 - [x] Escape sequences: `\\`, `\n`, `\t`, `\"`, `\{`, `{{`, `}}`
 - [x] Character literals (`\a`, `\newline`, `\u{1F600}`)
 - [x] Keywords (`:foo`, `:bar/baz`)
-- [ ] Symbols
+- [x] Symbols
 - [ ] Booleans (`true`, `false`) and `unit`
 - [ ] Reader macros: `'` (quote), `#{}` (set), `#_` (discard), `@` (deref)
 - [ ] Line comments (`;`)

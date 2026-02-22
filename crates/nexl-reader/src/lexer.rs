@@ -52,6 +52,10 @@ pub enum TokenKind {
     /// `ns` is `Some("http")` for `:http/ok`, `None` otherwise.
     /// `auto_ns` is `true` for the `::name` form (resolves to the current module namespace).
     Keyword { ns: Option<String>, name: String, auto_ns: bool },
+    /// Symbol (identifier), e.g. `add`, `http-client`, `my-module/my-fn`.
+    ///
+    /// `ns` is `Some("my-module")` for qualified symbols, `None` otherwise.
+    Symbol { ns: Option<String>, name: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +138,10 @@ impl<'src> Lexer<'src> {
 
         if ch == ':' {
             return self.lex_keyword();
+        }
+
+        if is_symbol_start(ch) {
+            return self.lex_symbol();
         }
 
         let start = self.pos;
@@ -520,6 +528,31 @@ impl<'src> Lexer<'src> {
 
         let span = self.span_from(start);
         Ok(Token { kind: TokenKind::Keyword { ns, name, auto_ns }, span })
+    }
+
+    // --- symbol lexing ---
+
+    /// Lex a symbol (identifier), e.g. `add`, `http-client`, `my-module/my-fn`.
+    ///
+    /// The first character must not yet have been consumed and must satisfy
+    /// `is_symbol_start`. Handles plain and qualified (`ns/name`) forms.
+    fn lex_symbol(&mut self) -> Result<Token, Box<Diagnostic>> {
+        let start = self.pos;
+        let first = self.collect_while(is_symbol_cont);
+
+        // Check for qualified form `ns/name`
+        let (ns, name) = if self.peek() == Some('/')
+            && self.peek_ahead(1).is_some_and(is_symbol_start)
+        {
+            self.advance(); // consume '/'
+            let name = self.collect_while(is_symbol_cont);
+            (Some(first), name)
+        } else {
+            (None, first)
+        };
+
+        let span = self.span_from(start);
+        Ok(Token { kind: TokenKind::Symbol { ns, name }, span })
     }
 
     // --- character literal lexing ---
@@ -981,6 +1014,78 @@ mod tests {
     // Small helpers to reduce boilerplate in string tests.
     fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
     fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
+
+    // --- symbol test 1 ---
+    #[test]
+    fn lex_symbol_simple() {
+        // `add` — plain unqualified symbol (spec §2.7)
+        assert_eq!(lex_one("add"), TokenKind::Symbol { ns: None, name: "add".into() });
+    }
+
+    // --- symbol test 2 ---
+    #[test]
+    fn lex_symbol_with_hyphen() {
+        // `http-client` — hyphen in name (spec §2.7 example)
+        assert_eq!(lex_one("http-client"), TokenKind::Symbol { ns: None, name: "http-client".into() });
+    }
+
+    // --- symbol test 3 ---
+    #[test]
+    fn lex_symbol_with_question_mark() {
+        // `valid?` — `?` suffix (spec §2.7 example)
+        assert_eq!(lex_one("valid?"), TokenKind::Symbol { ns: None, name: "valid?".into() });
+    }
+
+    // --- symbol test 4 ---
+    #[test]
+    fn lex_symbol_with_bang() {
+        // `fetch!` — `!` suffix (spec §2.7 example)
+        assert_eq!(lex_one("fetch!"), TokenKind::Symbol { ns: None, name: "fetch!".into() });
+    }
+
+    // --- symbol test 5 ---
+    #[test]
+    fn lex_symbol_qualified() {
+        // `my-module/my-fn` — qualified symbol (spec §2.7 example)
+        assert_eq!(
+            lex_one("my-module/my-fn"),
+            TokenKind::Symbol { ns: Some("my-module".into()), name: "my-fn".into() },
+        );
+    }
+
+    // --- symbol test 6 ---
+    #[test]
+    fn lex_symbol_operator() {
+        // `+` — single-char operator is a valid symbol (Appendix D: `+` is symbol-start)
+        assert_eq!(lex_one("+"), TokenKind::Symbol { ns: None, name: "+".into() });
+    }
+
+    // --- symbol test 7 ---
+    #[test]
+    fn lex_symbol_leading_minus_not_number() {
+        // `-foo` — leading `-` not followed by a digit is a symbol, not a number
+        assert_eq!(lex_one("-foo"), TokenKind::Symbol { ns: None, name: "-foo".into() });
+    }
+
+    // --- symbol test 8 ---
+    #[test]
+    fn lex_symbol_span_correct() {
+        // "  add  " — symbol starts at byte 2, `add` is 3 bytes
+        let tokens = lex("  add  ").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].span.start, 2);
+        assert_eq!(tokens[0].span.len, 3);
+    }
+
+    // --- symbol test 9 ---
+    #[test]
+    fn lex_symbol_adjacent_tokens() {
+        // `foo 42` — symbol followed by an integer
+        let tokens = lex("foo 42").unwrap();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokenKind::Symbol { ns: None, name: "foo".into() });
+        assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
+    }
 
     // --- keyword test 8 ---
     #[test]
