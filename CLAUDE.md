@@ -38,6 +38,29 @@ See `docs/crate-map.md` for the full dependency graph.
 - Clippy: `cargo clippy --all-targets`
 - Format: `cargo fmt`
 
+## TDD Approach — Beck Augmented Coding Loop (ALWAYS follow)
+
+We follow Kent Beck's Augmented Coding pattern: the human owns the test plan;
+the AI executes one test at a time; no one skips the Red step.
+
+### The loop (per task)
+1. **Test plan** — Before writing any test code, enumerate every test case as a
+   numbered list (name + what it exercises + which spec example or ADR drives it).
+   Present this list to the human. **Wait for approval before writing a single test.**
+2. **Red** — Write exactly one test from the plan. Add minimum stubs to compile.
+   Run `cargo test` and confirm *this test* fails. If it passes without implementation,
+   the test is wrong — fix it first.
+3. **Green** — Write the minimum implementation to pass this one test. Confirm green.
+4. **Refactor** — Tidy up without breaking anything. Then move to the next test.
+5. Repeat steps 2–4 for each remaining test in the plan.
+
+### Rules
+- The test plan list is the human's primary review artifact. Never skip it.
+- Tests are written **before** implementation, one at a time — not in bulk.
+- Every spec example becomes a test case. Every ADR consequence is a test candidate.
+- A task is not done until all planned tests are green AND `cargo clippy` is clean.
+- Never mark a todo item `[x]` if tests were written after the implementation.
+
 ## Code Style
 - Use `thiserror` for error enums, `miette` for diagnostics
 - Every public type needs a doc comment

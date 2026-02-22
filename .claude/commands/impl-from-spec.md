@@ -9,11 +9,21 @@ $ARGUMENTS — What to implement (e.g. "integer literal lexing from §2", "chara
 2. Read the relevant section(s) of `nexl-spec.md` using line ranges from the index in `CLAUDE.md`. Also check Appendix D (formal grammar) if the feature involves syntax.
 3. Check `decisions/` for any ADRs related to this feature.
 4. Read the existing code in the target crate to understand current types, patterns, and conventions.
-5. Present a brief implementation plan: which files to create/modify, what types and functions are needed, and how tests will be structured. Wait for approval before proceeding.
-6. Implement the feature:
-   - Follow existing code patterns and the style rules in `CLAUDE.md`.
-   - Add doc comments on all public items.
-   - Write unit tests covering: normal cases, edge cases, and error cases from the spec.
-   - If the spec includes code examples, turn them into test cases.
-7. Run `cargo test -p nexl-{crate}` and `cargo clippy -p nexl-{crate}`. Fix any issues.
+5. Present a brief implementation plan: which files to create/modify and what types and
+   functions are needed. Wait for approval before proceeding.
+
+6. **Write the test plan.**
+   Before writing any test code, print a numbered list of every test case you intend
+   to write: name, what it exercises, and which spec example or ADR consequence drives
+   it (see `next-task.md` for the format). **Stop and wait for user approval.**
+
+7. **Beck loop — one test at a time.**
+   For each test in the approved plan, in order:
+   a. **Red**: Write exactly that one test. Add minimum stubs to compile. Run
+      `cargo test -p nexl-{crate}` and confirm it fails.
+   b. **Green**: Write the minimum implementation to pass this test. Confirm it passes.
+   c. **Refactor**: Tidy up. Tests stay green. Move to the next test.
+
+8. After all tests pass: run `cargo clippy -p nexl-{crate}` and fix all warnings.
+9. Update `docs/todo-m{N}.md` if this completes a checklist item.
 8. Update `docs/todo-m{N}.md` if this completes a checklist item.
