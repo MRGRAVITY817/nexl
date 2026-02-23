@@ -43,6 +43,7 @@ fn eval_list(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "def" => eval_def(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => eval_let(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => eval_do(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "if" => eval_if(items, env),
         NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
         _ => todo!("function application not yet implemented"),
     }
@@ -109,4 +110,22 @@ fn eval_do(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
         last = eval(expr, env)?;
     }
     Ok(last)
+}
+
+fn eval_if(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+    if items.len() != 4 {
+        return Err(EvalError::Arity);
+    }
+
+    let cond = eval(&items[1], env)?;
+    let cond_bool = match cond {
+        Value::Bool(b) => b,
+        _ => return Err(EvalError::InvalidConditionType),
+    };
+
+    if cond_bool {
+        eval(&items[2], env)
+    } else {
+        eval(&items[3], env)
+    }
 }

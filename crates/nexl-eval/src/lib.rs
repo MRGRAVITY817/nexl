@@ -89,6 +89,9 @@ pub enum EvalError {
     /// Wrong arity for a special form.
     #[error("wrong number of arguments")]
     Arity,
+    /// Condition to `if` was not Bool.
+    #[error("condition must be Bool")]
+    InvalidConditionType,
 }
 
 #[cfg(test)]
@@ -548,6 +551,144 @@ mod tests {
         let result = eval(&expr, &env).unwrap();
         assert_eq!(result, Value::Int(42));
         assert_eq!(env.get("x"), Some(Value::Int(1))); // env state unchanged by final expr
+    }
+
+    // --- if form tests ---
+
+    #[test]
+    fn if_true_branch_taken() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "if".into() }),
+            lit(Atom::Bool(true)),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn if_false_branch_taken() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "if".into() }),
+            lit(Atom::Bool(false)),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(2));
+    }
+
+    #[test]
+    fn if_evaluates_condition_once() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "def".into() }),
+                lit(Atom::Symbol { ns: None, name: "count".into() }),
+                lit(Atom::Int { value: 0, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "if".into() }),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "do".into() }),
+                    list(vec![
+                        lit(Atom::Symbol { ns: None, name: "def".into() }),
+                        lit(Atom::Symbol { ns: None, name: "count".into() }),
+                        lit(Atom::Int { value: 1, suffix: None }),
+                    ]),
+                    lit(Atom::Bool(true)),
+                ]),
+                lit(Atom::Int { value: 10, suffix: None }),
+                lit(Atom::Int { value: 20, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "count".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(1)); // condition ran once
+    }
+
+    #[test]
+    fn if_short_circuits_then_branch() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "if".into() }),
+            lit(Atom::Bool(true)),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Symbol { ns: None, name: "missing".into() }), // should not be evaluated
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn if_short_circuits_else_branch() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "if".into() }),
+            lit(Atom::Bool(false)),
+            lit(Atom::Symbol { ns: None, name: "missing".into() }), // should not be evaluated
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(2));
+    }
+
+    #[test]
+    fn if_condition_must_be_bool_error() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "if".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 10, suffix: None }),
+            lit(Atom::Int { value: 20, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidConditionType);
+    }
+
+    #[test]
+    fn if_arity_error_on_missing_branch() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "if".into() }),
+            lit(Atom::Bool(true)),
+            lit(Atom::Int { value: 1, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn if_allows_non_bool_branches() {
+        let env = Rc::new(Env::new());
+        let expr1 = list(vec![
+            lit(Atom::Symbol { ns: None, name: "if".into() }),
+            lit(Atom::Bool(true)),
+            lit(Atom::Str("yes".into())),
+            lit(Atom::Int { value: 0, suffix: None }),
+        ]);
+        let expr2 = list(vec![
+            lit(Atom::Symbol { ns: None, name: "if".into() }),
+            lit(Atom::Bool(false)),
+            lit(Atom::Int { value: 0, suffix: None }),
+            lit(Atom::Str("no".into())),
+        ]);
+
+        let r1 = eval(&expr1, &env).unwrap();
+        let r2 = eval(&expr2, &env).unwrap();
+        assert_eq!(r1, Value::Str(Rc::from("yes")));
+        assert_eq!(r2, Value::Str(Rc::from("no")));
     }
 
     #[test]

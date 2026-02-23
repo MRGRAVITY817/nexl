@@ -22,7 +22,7 @@
 - [x] `def` form — bind name in current env
 - [x] `let` form — sequential bindings in a new scope
 - [x] `do` form — evaluate forms in sequence, return last
-- [ ] `if` form — Bool-only conditional (ADR-004); error on non-Bool condition
+- [x] `if` form — Bool-only conditional (ADR-004); error on non-Bool condition
 - [ ] `fn` form — anonymous function with closure capture
 - [ ] `defn` form — named function (sugar for def + fn)
 - [ ] Function application — call a Value::Function with arguments
