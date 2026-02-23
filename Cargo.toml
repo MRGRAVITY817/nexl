@@ -4,6 +4,7 @@ members = [
     "crates/nexl-ast",
     "crates/nexl-reader",
     "crates/nexl-errors",
+    "crates/nexl-runtime",
 ]
 
 [workspace.package]

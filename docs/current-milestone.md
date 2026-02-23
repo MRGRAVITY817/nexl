@@ -1,21 +1,22 @@
-# Current Milestone: M0 — Project Foundation
+# Current Milestone: M1 — Tree-Walk Interpreter + Core Forms
 
-**Goal:** Rust workspace builds, lexer tokenizes all of §2, reader produces AST.
+**Goal:** Evaluate basic Nexl programs in a tree-walk interpreter. No types yet.
 
-**Crates:** `nexl-ast`, `nexl-reader`, `nexl-errors`
+**Crates:** `nexl-eval`, `nexl-runtime`
 
 **Spec sections to reference:**
-- §2 Lexical Grammar (lines 51–164 of `nexl-spec.md`)
-- Appendix D Formal Grammar (lines 3809–end)
+- §4 Core Forms (lines 308–1148 of `nexl-spec.md`)
+- §2 Lexical Grammar (lines 51–164) — for literal evaluation
 
 **Acceptance criteria:**
-- `cargo test` passes across all three crates
-- Lexer handles every token type from §2
-- Reader produces a span-annotated AST from S-expressions
-- All `.nxl` files in `examples/` parse without errors
-- AST pretty-printer can round-trip simple programs
+- `cargo test` passes across all crates
+- All M1 value types are representable and display correctly
+- Core forms (`def`, `let`, `if`, `do`, `fn`, `defn`) evaluate correctly
+- Arithmetic and comparison builtins work (Int-only and Float-only)
+- `loop`/`recur` evaluates with TCO
+- Fibonacci example from milestones.md runs correctly
 
-**When done:** Update this file to point to M1.
+**When done:** Update this file to point to M2.
 
-See `docs/todo-m0.md` for the task checklist.
+See `docs/todo-m1.md` for the task checklist.
 See `milestones.md` for the full plan.
