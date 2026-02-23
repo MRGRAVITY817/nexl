@@ -11,7 +11,7 @@
 - [x] `Display` impl (REPL output format for all variants)
 - [x] `type_name()` method for error messages
 - [x] `PartialEq` (derived)
-- [ ] `Value::Function` variant — closure representation (Rc<Function>)
+- [x] `Value::Function` variant — closure representation (Rc<Function>)
 
 ### nexl-eval — Tree-Walk Evaluator
 - [ ] Add `nexl-eval` crate to workspace

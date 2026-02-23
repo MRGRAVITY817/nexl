@@ -1,11 +1,24 @@
 use std::rc::Rc;
 
+/// A runtime function closure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Function {
+    /// Optional name (present for `defn`, absent for anonymous `fn`).
+    pub name: Option<Rc<str>>,
+    /// Required positional parameter count.
+    pub arity: u32,
+    /// Whether the function accepts a variadic rest parameter.
+    pub variadic: bool,
+    /// Captured values from the defining environment.
+    pub captures: Vec<Value>,
+}
+
 /// A runtime value produced by the Nexl tree-walk interpreter.
 ///
 /// This is distinct from the reader's `Atom` type: `Atom` is a *source-level*
 /// representation with suffix annotations and raw text; `Value` is the
 /// *evaluated* form that the interpreter operates on.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     /// 64-bit signed integer.
     Int(i64),
@@ -31,6 +44,33 @@ pub enum Value {
     },
     /// Exact rational number, stored in lowest terms.
     Ratio(i64, i64),
+
+    /// Function value — captures an environment and callable body.
+    Function(Rc<Function>),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
+            (Value::Char(a), Value::Char(b)) => a == b,
+            (
+                Value::Keyword { ns: ans, name: aname },
+                Value::Keyword { ns: bns, name: bname },
+            ) => ans == bns && aname == bname,
+            (
+                Value::Symbol { ns: ans, name: aname },
+                Value::Symbol { ns: bns, name: bname },
+            ) => ans == bns && aname == bname,
+            (Value::Ratio(an, ad), Value::Ratio(bn, bd)) => an == bn && ad == bd,
+            (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 impl Value {
@@ -46,6 +86,7 @@ impl Value {
             Value::Keyword { .. } => "Keyword",
             Value::Symbol { .. }  => "Symbol",
             Value::Ratio(_, _)    => "Ratio",
+            Value::Function(_)    => "Function",
         }
     }
 }
@@ -92,6 +133,14 @@ impl std::fmt::Display for Value {
                 None => write!(f, "{name}"),
             },
             Value::Ratio(n, d) => write!(f, "{n}/{d}"),
+            Value::Function(func) => {
+                let name = func.name.as_deref().unwrap_or("<anon>");
+                if func.variadic {
+                    write!(f, "fn {name}/{}/+", func.arity)
+                } else {
+                    write!(f, "fn {name}/{}", func.arity)
+                }
+            }
         }
     }
 }
@@ -99,6 +148,15 @@ impl std::fmt::Display for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fn_val(name: Option<&str>, arity: u32, variadic: bool) -> Value {
+        Value::Function(Rc::new(Function {
+            name: name.map(Rc::from),
+            arity,
+            variadic,
+            captures: vec![],
+        }))
+    }
 
     #[test]
     fn value_int_roundtrip() {
@@ -217,6 +275,54 @@ mod tests {
     fn value_symbol_qualified() {
         let v = Value::Symbol { ns: Some(Rc::from("math")), name: Rc::from("sqrt") };
         assert_eq!(v.to_string(), "math/sqrt");
+    }
+
+    #[test]
+    fn function_display_named_arity() {
+        let v = fn_val(Some("add"), 2, false);
+        assert_eq!(v.to_string(), "fn add/2");
+    }
+
+    #[test]
+    fn function_display_anonymous() {
+        let v = fn_val(None, 1, false);
+        assert_eq!(v.to_string(), "fn <anon>/1");
+    }
+
+    #[test]
+    fn function_display_variadic() {
+        let v = fn_val(Some("printf"), 1, true);
+        assert_eq!(v.to_string(), "fn printf/1/+");
+    }
+
+    #[test]
+    fn function_type_name_function() {
+        let v = fn_val(Some("add"), 2, false);
+        assert_eq!(v.type_name(), "Function");
+    }
+
+    #[test]
+    fn function_equality_is_identity() {
+        let f1 = fn_val(None, 1, false);
+        let f1_clone = f1.clone();
+        let f2 = fn_val(None, 1, false);
+
+        assert_eq!(f1, f1_clone);
+        assert_ne!(f1, f2);
+    }
+
+    #[test]
+    fn function_captures_preserved() {
+        let captured = vec![Value::Int(10), Value::Str(Rc::from("hi"))];
+        let func = Value::Function(Rc::new(Function {
+            name: Some(Rc::from("adder")),
+            arity: 1,
+            variadic: false,
+            captures: captured.clone(),
+        }));
+
+        let Value::Function(rc_func) = func else { panic!("not a function") };
+        assert_eq!(rc_func.captures, captured);
     }
 
     #[test]
