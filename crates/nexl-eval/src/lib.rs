@@ -433,6 +433,123 @@ mod tests {
         assert_eq!(err, EvalError::InvalidBindingTarget);
     }
 
+    // --- do form tests ---
+
+    #[test]
+    fn do_returns_last_expression() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+            lit(Atom::Int { value: 3, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn do_evaluates_in_order() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "def".into() }),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 7, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(7));
+        assert_eq!(env.get("x"), Some(Value::Int(7)));
+    }
+
+    #[test]
+    fn do_single_expression_passthrough() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+            lit(Atom::Int { value: 11, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(11));
+    }
+
+    #[test]
+    fn do_allows_zero_body_is_error() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn do_propagates_errors_early() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+            lit(Atom::Symbol { ns: None, name: "missing".into() }), // error
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "def".into() }),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 1, suffix: None }),
+            ]),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::UnboundSymbol("missing".into()));
+        assert_eq!(env.get("x"), None);
+    }
+
+    #[test]
+    fn do_uses_same_scope() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "def".into() }),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 4, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "def".into() }),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 6, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(6));
+        assert_eq!(env.get("x"), Some(Value::Int(6)));
+    }
+
+    #[test]
+    fn do_ignores_intermediate_results() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "def".into() }),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 1, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }), // 1
+            lit(Atom::Int { value: 42, suffix: None }),       // should be result
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(42));
+        assert_eq!(env.get("x"), Some(Value::Int(1))); // env state unchanged by final expr
+    }
+
     #[test]
     fn def_error_on_symbol_arity() {
         let env = Rc::new(Env::new());

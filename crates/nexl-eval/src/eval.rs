@@ -42,6 +42,7 @@ fn eval_list(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
     match &head.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "def" => eval_def(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => eval_let(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => eval_do(items, env),
         NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
         _ => todo!("function application not yet implemented"),
     }
@@ -94,6 +95,18 @@ fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
     let mut last = Value::Unit;
     for expr in &items[2..] {
         last = eval(expr, &child_env)?;
+    }
+    Ok(last)
+}
+
+fn eval_do(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+    if items.len() < 2 {
+        return Err(EvalError::Arity);
+    }
+
+    let mut last = Value::Unit;
+    for expr in &items[1..] {
+        last = eval(expr, env)?;
     }
     Ok(last)
 }
