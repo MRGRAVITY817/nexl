@@ -26,7 +26,7 @@
 - [x] `fn` form — anonymous function with closure capture
 - [x] `defn` form — named function (sugar for def + fn)
 - [x] Function application — call a Value::Function with arguments
-- [ ] `loop` / `recur` — tail-recursive loop with TCO
+- [x] `loop` / `recur` — tail-recursive loop with TCO
 - [ ] `var` / `set!` — mutable locals within function scope
 
 ### nexl-runtime — Built-in Functions

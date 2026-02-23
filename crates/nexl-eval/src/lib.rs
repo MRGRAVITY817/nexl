@@ -111,6 +111,9 @@ pub enum EvalError {
     /// Condition to `if` was not Bool.
     #[error("condition must be Bool")]
     InvalidConditionType,
+    /// `recur` used outside of a loop.
+    #[error("recur outside loop")]
+    InvalidRecur,
 }
 
 #[cfg(test)]
@@ -285,6 +288,128 @@ mod tests {
         let result = eval(&expr, &env).unwrap();
         assert_eq!(result, Value::Int(1));
         assert_eq!(env.get("counter"), Some(Value::Int(1)));
+    }
+
+    // --- loop / recur tests ---
+
+    #[test]
+    fn loop_returns_initial_body_when_no_recur() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "loop".into() }),
+            vector(vec![]),
+            lit(Atom::Int { value: 42, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn loop_recur_updates_bindings() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "loop".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "first".into() }),
+                lit(Atom::Bool(true)),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "if".into() }),
+                lit(Atom::Symbol { ns: None, name: "first".into() }),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "recur".into() }),
+                    lit(Atom::Bool(false)),
+                ]),
+                lit(Atom::Int { value: 99, suffix: None }),
+            ]),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(99));
+    }
+
+    #[test]
+    fn loop_recur_multiple_bindings() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "loop".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "flag".into() }),
+                lit(Atom::Bool(true)),
+                lit(Atom::Symbol { ns: None, name: "val".into() }),
+                lit(Atom::Int { value: 1, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "if".into() }),
+                lit(Atom::Symbol { ns: None, name: "flag".into() }),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "recur".into() }),
+                    lit(Atom::Bool(false)),
+                    lit(Atom::Int { value: 3, suffix: None }),
+                ]),
+                lit(Atom::Symbol { ns: None, name: "val".into() }),
+            ]),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn loop_recur_arity_mismatch_errors() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "loop".into() }),
+            vector(vec![lit(Atom::Symbol { ns: None, name: "x".into() }), lit(Atom::Int { value: 0, suffix: None })]),
+            list(vec![lit(Atom::Symbol { ns: None, name: "recur".into() })]),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn recur_outside_loop_errors() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "recur".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidRecur);
+    }
+
+    #[test]
+    fn loop_bindings_shadow_outer_not_mutate() {
+        let env = Rc::new(Env::new());
+        env.define("x", Value::Int(1));
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "loop".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 2, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(2));
+        assert_eq!(env.get("x"), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn loop_allows_empty_bindings_and_body_runs() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "loop".into() }),
+            vector(vec![]),
+            lit(Atom::Int { value: 7, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(7));
     }
 
     fn lit(atom: Atom) -> Node {

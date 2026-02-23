@@ -5,36 +5,54 @@ use nexl_runtime::{value::Function, Value};
 
 use crate::{Env, EvalError};
 
+#[derive(Debug)]
+enum EvalReturn {
+    Value(Value),
+    Recur(Vec<Value>),
+}
+
+struct LoopFrame<'a> {
+    names: &'a [Rc<str>],
+}
+
 /// Evaluate a Nexl AST node within the given environment.
 pub fn eval(node: &Node, env: &Rc<Env>) -> Result<Value, EvalError> {
+    match eval_with_loop(node, env, None)? {
+        EvalReturn::Value(v) => Ok(v),
+        EvalReturn::Recur(_) => Err(EvalError::InvalidRecur),
+    }
+}
+
+fn eval_with_loop<'a>(node: &Node, env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
     match &node.kind {
         NodeKind::Atom(atom) => eval_atom(atom, env),
-        NodeKind::List(items) => eval_list(items, env),
+        NodeKind::List(items) => eval_list(items, env, loop_state),
         _ => todo!("non-atom evaluation not yet implemented"),
     }
 }
 
-fn eval_atom(atom: &Atom, env: &Rc<Env>) -> Result<Value, EvalError> {
-    match atom {
-        Atom::Int { value, .. } => Ok(Value::Int(*value as i64)),
-        Atom::Float { value, .. } => Ok(Value::Float(*value)),
-        Atom::Ratio { numer, denom } => Ok(Value::Ratio(*numer, *denom)),
-        Atom::Bool(b) => Ok(Value::Bool(*b)),
-        Atom::Char(c) => Ok(Value::Char(*c)),
-        Atom::Str(s) => Ok(Value::Str(Rc::from(s.as_str()))),
-        Atom::Unit => Ok(Value::Unit),
-        Atom::Keyword { ns, name } => Ok(Value::Keyword {
+fn eval_atom(atom: &Atom, env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    let v = match atom {
+        Atom::Int { value, .. } => Value::Int(*value as i64),
+        Atom::Float { value, .. } => Value::Float(*value),
+        Atom::Ratio { numer, denom } => Value::Ratio(*numer, *denom),
+        Atom::Bool(b) => Value::Bool(*b),
+        Atom::Char(c) => Value::Char(*c),
+        Atom::Str(s) => Value::Str(Rc::from(s.as_str())),
+        Atom::Unit => Value::Unit,
+        Atom::Keyword { ns, name } => Value::Keyword {
             ns: ns.as_ref().map(|s| Rc::from(s.as_str())),
             name: Rc::from(name.as_str()),
-        }),
+        },
         Atom::Symbol { ns: None, name } => env
             .get(name)
-            .ok_or_else(|| EvalError::UnboundSymbol(name.clone())),
-        Atom::Symbol { ns: Some(_), name } => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
-    }
+            .ok_or_else(|| EvalError::UnboundSymbol(name.clone()))?,
+        Atom::Symbol { ns: Some(_), name } => return Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
+    };
+    Ok(EvalReturn::Value(v))
 }
 
-fn eval_list(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+fn eval_list<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
     if items.is_empty() {
         return Err(EvalError::Arity);
     }
@@ -42,16 +60,18 @@ fn eval_list(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
     match &head.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "def" => eval_def(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => eval_let(items, env),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => eval_do(items, env),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "if" => eval_if(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => eval_do(items, env, loop_state),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "if" => eval_if(items, env, loop_state),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "fn" => eval_fn(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "defn" => eval_defn(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "loop" => eval_loop(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "recur" => eval_recur(items, env, loop_state),
         NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
-        _ => eval_apply(items, env),
+        _ => eval_apply(items, env, loop_state),
     }
 }
 
-fn eval_def(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+fn eval_def(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     if items.len() != 3 {
         return Err(EvalError::Arity);
     }
@@ -63,10 +83,10 @@ fn eval_def(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
 
     let value = eval(&items[2], env)?;
     env.define(name, value);
-    Ok(Value::Unit)
+    Ok(EvalReturn::Value(Value::Unit))
 }
 
-fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     if items.len() < 3 {
         return Err(EvalError::Arity);
     }
@@ -90,49 +110,61 @@ fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
             NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
             _ => return Err(EvalError::InvalidBindingTarget),
         };
-        let value = eval(value_node, &child_env)?;
+        let value = match eval_with_loop(value_node, &child_env, None)? {
+            EvalReturn::Value(v) => v,
+            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        };
         child_env.define(name, value);
     }
 
     // body expressions
     let mut last = Value::Unit;
     for expr in &items[2..] {
-        last = eval(expr, &child_env)?;
+        match eval_with_loop(expr, &child_env, None)? {
+            EvalReturn::Value(v) => last = v,
+            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        }
     }
-    Ok(last)
+    Ok(EvalReturn::Value(last))
 }
 
-fn eval_do(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+fn eval_do<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
     if items.len() < 2 {
         return Err(EvalError::Arity);
     }
 
     let mut last = Value::Unit;
     for expr in &items[1..] {
-        last = eval(expr, env)?;
+        match eval_with_loop(expr, env, loop_state)? {
+            EvalReturn::Value(v) => last = v,
+            recur @ EvalReturn::Recur(_) => return Ok(recur),
+        }
     }
-    Ok(last)
+    Ok(EvalReturn::Value(last))
 }
 
-fn eval_if(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+fn eval_if<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
     if items.len() != 4 {
         return Err(EvalError::Arity);
     }
 
-    let cond = eval(&items[1], env)?;
+    let cond = match eval_with_loop(&items[1], env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        EvalReturn::Recur(values) => return Ok(EvalReturn::Recur(values)),
+    };
     let cond_bool = match cond {
         Value::Bool(b) => b,
         _ => return Err(EvalError::InvalidConditionType),
     };
 
     if cond_bool {
-        eval(&items[2], env)
+        eval_with_loop(&items[2], env, loop_state)
     } else {
-        eval(&items[3], env)
+        eval_with_loop(&items[3], env, loop_state)
     }
 }
 
-fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     if items.len() < 3 {
         return Err(EvalError::Arity);
     }
@@ -183,10 +215,10 @@ fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
         body: items[2..].to_vec(),
     };
 
-    Ok(Value::Function(Rc::new(func)))
+    Ok(EvalReturn::Value(Value::Function(Rc::new(func))))
 }
 
-fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     if items.len() < 4 {
         return Err(EvalError::Arity);
     }
@@ -218,10 +250,10 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
     fn_items.push(items[params_idx].clone());
     fn_items.extend_from_slice(&items[body_start..]);
 
-    let fn_value = eval_list(&fn_items, env)?;
+    let fn_value = eval_list(&fn_items, env, None)?;
 
     let fn_value_named = match fn_value {
-        Value::Function(f) => Value::Function(Rc::new(Function {
+        EvalReturn::Value(Value::Function(f)) => Value::Function(Rc::new(Function {
             name: Some(Rc::from(name.as_str())),
             params: f.params.clone(),
             rest: f.rest.clone(),
@@ -230,16 +262,96 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
             captures: f.captures.clone(),
             body: f.body.clone(),
         })),
-        _ => fn_value,
+        EvalReturn::Value(other) => other,
+        EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
     };
 
     env.define(name, fn_value_named);
-    Ok(Value::Unit)
+    Ok(EvalReturn::Value(Value::Unit))
 }
 
-fn eval_apply(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+fn eval_loop(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    if items.len() < 3 {
+        return Err(EvalError::Arity);
+    }
+
+    let bindings_node = &items[1];
+    let bindings = match &bindings_node.kind {
+        NodeKind::Vector(items) => items,
+        _ => return Err(EvalError::Arity),
+    };
+    if bindings.len() % 2 != 0 {
+        return Err(EvalError::Arity);
+    }
+
+    let loop_env = Rc::new(Env::child(Rc::clone(env)));
+    let mut names: Vec<Rc<str>> = Vec::new();
+
+    for pair in bindings.chunks_exact(2) {
+        let (name_node, value_node) = (&pair[0], &pair[1]);
+        let name: Rc<str> = match &name_node.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => Rc::from(name.as_str()),
+            _ => return Err(EvalError::InvalidBindingTarget),
+        };
+        let value = match eval_with_loop(value_node, &loop_env, None)? {
+            EvalReturn::Value(v) => v,
+            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        };
+        loop_env.define(name.clone(), value);
+        names.push(name);
+    }
+
+    let body = &items[2..];
+    let frame = LoopFrame { names: &names };
+
+    'lo: loop {
+        let mut last = Value::Unit;
+        for expr in body {
+            match eval_with_loop(expr, &loop_env, Some(&frame))? {
+                EvalReturn::Value(v) => last = v,
+                EvalReturn::Recur(values) => {
+                    if values.len() != names.len() {
+                        return Err(EvalError::Arity);
+                    }
+                    for (name, val) in names.iter().zip(values.into_iter()) {
+                        loop_env.define(name.clone(), val);
+                    }
+                    continue 'lo;
+                }
+            }
+        }
+        return Ok(EvalReturn::Value(last));
+    }
+}
+
+fn eval_recur<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
+    let frame = match loop_state {
+        Some(f) => f,
+        None => return Err(EvalError::InvalidRecur),
+    };
+
+    if items.len() - 1 != frame.names.len() {
+        return Err(EvalError::Arity);
+    }
+
+    let mut values = Vec::new();
+    for arg in &items[1..] {
+        let v = match eval_with_loop(arg, env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
+        };
+        values.push(v);
+    }
+
+    Ok(EvalReturn::Recur(values))
+}
+
+fn eval_apply<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
     let head = &items[0];
-    let callee = eval(head, env)?;
+    let callee = match eval_with_loop(head, env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
+    };
 
     let Value::Function(func) = callee else {
         return Err(EvalError::InvalidCallable);
@@ -261,7 +373,10 @@ fn eval_apply(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
 
     // bind required params
     for (idx, param) in func.params.iter().enumerate() {
-        let arg_val = eval(&items[idx + 1], env)?;
+        let arg_val = match eval_with_loop(&items[idx + 1], env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
+        };
         call_env.define(param.clone(), arg_val);
     }
 
@@ -277,7 +392,10 @@ fn eval_apply(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
 
     let mut last = Value::Unit;
     for expr in &func.body {
-        last = eval(expr, &call_env)?;
+        match eval_with_loop(expr, &call_env, loop_state)? {
+            EvalReturn::Value(v) => last = v,
+            EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
+        }
     }
-    Ok(last)
+    Ok(EvalReturn::Value(last))
 }
