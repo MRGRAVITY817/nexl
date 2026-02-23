@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn eval_int_literal() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Int { value: 42, suffix: None });
         let v = eval(&node, &env).unwrap();
         assert_eq!(v, Value::Int(42));
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn eval_float_literal() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Float { value: 2.5, suffix: None });
         let v = eval(&node, &env).unwrap();
         assert_eq!(v, Value::Float(2.5));
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn eval_ratio_literal_simplified() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Ratio { numer: 1, denom: 3 });
         let v = eval(&node, &env).unwrap();
         assert_eq!(v, Value::Ratio(1, 3));
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn eval_bool_true_false() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let t = lit(Atom::Bool(true));
         let f = lit(Atom::Bool(false));
         assert_eq!(eval(&t, &env).unwrap(), Value::Bool(true));
@@ -142,28 +142,28 @@ mod tests {
 
     #[test]
     fn eval_char_literal() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Char('a'));
         assert_eq!(eval(&node, &env).unwrap(), Value::Char('a'));
     }
 
     #[test]
     fn eval_str_literal() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Str("hello".to_string()));
         assert_eq!(eval(&node, &env).unwrap(), Value::Str(Rc::from("hello")));
     }
 
     #[test]
     fn eval_unit_literal() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Unit);
         assert_eq!(eval(&node, &env).unwrap(), Value::Unit);
     }
 
     #[test]
     fn eval_keyword_literal_bare() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Keyword { ns: None, name: "foo".to_string() });
         let v = eval(&node, &env).unwrap();
         assert_eq!(v, Value::Keyword { ns: None, name: Rc::from("foo") });
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn eval_keyword_literal_ns() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Keyword { ns: Some("http".to_string()), name: "ok".to_string() });
         let v = eval(&node, &env).unwrap();
         assert_eq!(v, Value::Keyword { ns: Some(Rc::from("http")), name: Rc::from("ok") });
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn eval_symbol_lookup_local() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         env.define("x", int(7));
         let node = lit(Atom::Symbol { ns: None, name: "x".to_string() });
         assert_eq!(eval(&node, &env).unwrap(), Value::Int(7));
@@ -189,14 +189,14 @@ mod tests {
     fn eval_symbol_lookup_parent() {
         let parent = Rc::new(Env::new());
         parent.define("x", int(9));
-        let child = Env::child(parent.clone());
+        let child = Rc::new(Env::child(parent.clone()));
         let node = lit(Atom::Symbol { ns: None, name: "x".to_string() });
         assert_eq!(eval(&node, &child).unwrap(), Value::Int(9));
     }
 
     #[test]
     fn eval_symbol_unbound_error() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Symbol { ns: None, name: "missing".to_string() });
         let err = eval(&node, &env).unwrap_err();
         assert_eq!(err, EvalError::UnboundSymbol("missing".into()));
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn eval_does_not_mutate_env_on_literal() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let before = env.get("x");
         let node = lit(Atom::Int { value: 1, suffix: None });
         let _ = eval(&node, &env).unwrap();
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn eval_preserves_ratio_signs() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let node = lit(Atom::Ratio { numer: -1, denom: 4 });
         assert_eq!(eval(&node, &env).unwrap(), Value::Ratio(-1, 4));
     }
@@ -224,9 +224,13 @@ mod tests {
         Node { kind: NodeKind::List(items), span: meta::span::Span::synthetic(), leading_comments: vec![], trailing_comment: None }
     }
 
+    fn vector(items: Vec<Node>) -> Node {
+        Node { kind: NodeKind::Vector(items), span: meta::span::Span::synthetic(), leading_comments: vec![], trailing_comment: None }
+    }
+
     #[test]
     fn def_binds_in_current_env() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let expr = list(vec![
             lit(Atom::Symbol { ns: None, name: "def".into() }),
             lit(Atom::Symbol { ns: None, name: "x".into() }),
@@ -239,7 +243,7 @@ mod tests {
 
     #[test]
     fn def_overwrites_existing_local() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         env.define("x", Value::Int(1));
         let expr = list(vec![
             lit(Atom::Symbol { ns: None, name: "def".into() }),
@@ -254,7 +258,7 @@ mod tests {
     fn def_does_not_touch_parent() {
         let parent = Rc::new(Env::new());
         parent.define("x", Value::Int(1));
-        let child = Env::child(parent.clone());
+        let child = Rc::new(Env::child(parent.clone()));
 
         let expr = list(vec![
             lit(Atom::Symbol { ns: None, name: "def".into() }),
@@ -269,7 +273,7 @@ mod tests {
 
     #[test]
     fn def_returns_unit() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let expr = list(vec![
             lit(Atom::Symbol { ns: None, name: "def".into() }),
             lit(Atom::Symbol { ns: None, name: "x".into() }),
@@ -281,7 +285,7 @@ mod tests {
 
     #[test]
     fn def_eval_order_value_first() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         env.define("y", Value::Int(2));
         let expr = list(vec![
             lit(Atom::Symbol { ns: None, name: "def".into() }),
@@ -292,9 +296,32 @@ mod tests {
         assert_eq!(env.get("x"), Some(Value::Int(2)));
     }
 
+    // --- let form tests ---
+
+    #[test]
+    fn let_returns_last_body_value() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 2, suffix: None }),
+                lit(Atom::Symbol { ns: None, name: "y".into() }),
+                lit(Atom::Int { value: 3, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+            lit(Atom::Symbol { ns: None, name: "y".into() }),
+            lit(Atom::Int { value: 99, suffix: None }),
+        ]);
+
+        // Body should evaluate in order; result is last expression
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(99));
+    }
+
     #[test]
     fn def_error_on_symbol_arity() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let expr = list(vec![lit(Atom::Symbol { ns: None, name: "def".into() })]);
         let err = eval(&expr, &env).unwrap_err();
         assert_eq!(err, EvalError::Arity);
@@ -303,7 +330,7 @@ mod tests {
 
     #[test]
     fn def_error_on_non_symbol_name() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let expr = list(vec![
             lit(Atom::Symbol { ns: None, name: "def".into() }),
             lit(Atom::Int { value: 1, suffix: None }),
@@ -316,7 +343,7 @@ mod tests {
 
     #[test]
     fn def_error_on_namespace_symbol() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let expr = list(vec![
             lit(Atom::Symbol { ns: None, name: "def".into() }),
             lit(Atom::Symbol { ns: Some("ns".into()), name: "x".into() }),
@@ -329,7 +356,7 @@ mod tests {
 
     #[test]
     fn lookup_local_binding() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         env.define("x", int(1));
         assert_eq!(env.get("x"), Some(int(1)));
     }
@@ -339,7 +366,7 @@ mod tests {
         let parent = Rc::new(Env::new());
         parent.define("x", int(2));
 
-        let child = Env::child(parent.clone());
+        let child = Rc::new(Env::child(parent.clone()));
         assert_eq!(child.get("x"), Some(int(2)));
     }
 
@@ -348,7 +375,7 @@ mod tests {
         let parent = Rc::new(Env::new());
         parent.define("x", int(2));
 
-        let child = Env::child(parent.clone());
+        let child = Rc::new(Env::child(parent.clone()));
         child.define("x", int(5));
 
         assert_eq!(child.get("x"), Some(int(5)));
@@ -357,7 +384,7 @@ mod tests {
 
     #[test]
     fn set_updates_local() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         env.define("x", int(1));
 
         env.set("x", int(3)).unwrap();
@@ -369,7 +396,7 @@ mod tests {
         let parent = Rc::new(Env::new());
         parent.define("x", int(1));
 
-        let child = Env::child(parent.clone());
+        let child = Rc::new(Env::child(parent.clone()));
         child.set("x", int(9)).unwrap();
 
         assert_eq!(parent.get("x"), Some(int(9)));
@@ -378,14 +405,14 @@ mod tests {
 
     #[test]
     fn set_errors_unbound() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         let err = env.set("missing", int(1)).unwrap_err();
         assert_eq!(err, EnvError::Unbound("missing".to_string()));
     }
 
     #[test]
     fn define_overwrites_local() {
-        let env = Env::new();
+        let env = Rc::new(Env::new());
         env.define("x", int(1));
         env.define("x", int(2));
 
@@ -397,7 +424,7 @@ mod tests {
         let parent = Rc::new(Env::new());
         parent.define("p", int(1));
 
-        let child = Env::child(parent.clone());
+        let child = Rc::new(Env::child(parent.clone()));
         child.define("c", int(2));
 
         assert_eq!(parent.get("p"), Some(int(1)));
