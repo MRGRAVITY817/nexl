@@ -9,6 +9,7 @@ use crate::{Env, EvalError};
 pub fn eval(node: &Node, env: &Env) -> Result<Value, EvalError> {
     match &node.kind {
         NodeKind::Atom(atom) => eval_atom(atom, env),
+        NodeKind::List(items) => eval_list(items, env),
         _ => todo!("non-atom evaluation not yet implemented"),
     }
 }
@@ -31,4 +32,31 @@ fn eval_atom(atom: &Atom, env: &Env) -> Result<Value, EvalError> {
             .ok_or_else(|| EvalError::UnboundSymbol(name.clone())),
         Atom::Symbol { ns: Some(_), name } => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
     }
+}
+
+fn eval_list(items: &[Node], env: &Env) -> Result<Value, EvalError> {
+    if items.is_empty() {
+        return Err(EvalError::Arity);
+    }
+    let head = &items[0];
+    match &head.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "def" => eval_def(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
+        _ => todo!("function application not yet implemented"),
+    }
+}
+
+fn eval_def(items: &[Node], env: &Env) -> Result<Value, EvalError> {
+    if items.len() != 3 {
+        return Err(EvalError::Arity);
+    }
+    let name_node = &items[1];
+    let name = match &name_node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => return Err(EvalError::InvalidBindingTarget),
+    };
+
+    let value = eval(&items[2], env)?;
+    env.define(name, value);
+    Ok(Value::Unit)
 }

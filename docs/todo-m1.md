@@ -19,7 +19,7 @@
 - [x] `eval(node: &Node, env: &mut Env) -> Result<Value, EvalError>` signature
 - [x] Atom evaluation: Int/Float/Ratio/Bool/Char/Str/Unit literals → Value
 - [x] Atom evaluation: Keyword/Symbol lookup → Value
-- [ ] `def` form — bind name in current env
+- [x] `def` form — bind name in current env
 - [ ] `let` form — sequential bindings in a new scope
 - [ ] `do` form — evaluate forms in sequence, return last
 - [ ] `if` form — Bool-only conditional (ADR-004); error on non-Bool condition

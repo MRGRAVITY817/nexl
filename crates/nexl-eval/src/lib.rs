@@ -83,6 +83,12 @@ pub enum EvalError {
     /// Unsupported feature placeholder.
     #[error("unsupported qualified symbol: {0}")]
     UnsupportedQualifiedSymbol(String),
+    /// `def`/`let` target was not a symbol.
+    #[error("invalid binding target")]
+    InvalidBindingTarget,
+    /// Wrong arity for a special form.
+    #[error("wrong number of arguments")]
+    Arity,
 }
 
 #[cfg(test)]
@@ -210,6 +216,115 @@ mod tests {
         let env = Env::new();
         let node = lit(Atom::Ratio { numer: -1, denom: 4 });
         assert_eq!(eval(&node, &env).unwrap(), Value::Ratio(-1, 4));
+    }
+
+    // --- def form tests ---
+
+    fn list(items: Vec<Node>) -> Node {
+        Node { kind: NodeKind::List(items), span: meta::span::Span::synthetic(), leading_comments: vec![], trailing_comment: None }
+    }
+
+    #[test]
+    fn def_binds_in_current_env() {
+        let env = Env::new();
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "def".into() }),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+            lit(Atom::Int { value: 3, suffix: None }),
+        ]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Unit);
+        assert_eq!(env.get("x"), Some(Value::Int(3)));
+    }
+
+    #[test]
+    fn def_overwrites_existing_local() {
+        let env = Env::new();
+        env.define("x", Value::Int(1));
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "def".into() }),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+            lit(Atom::Int { value: 5, suffix: None }),
+        ]);
+        eval(&expr, &env).unwrap();
+        assert_eq!(env.get("x"), Some(Value::Int(5)));
+    }
+
+    #[test]
+    fn def_does_not_touch_parent() {
+        let parent = Rc::new(Env::new());
+        parent.define("x", Value::Int(1));
+        let child = Env::child(parent.clone());
+
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "def".into() }),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+            lit(Atom::Int { value: 7, suffix: None }),
+        ]);
+        eval(&expr, &child).unwrap();
+
+        assert_eq!(child.get("x"), Some(Value::Int(7)));
+        assert_eq!(parent.get("x"), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn def_returns_unit() {
+        let env = Env::new();
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "def".into() }),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+        ]);
+        let v = eval(&expr, &env).unwrap();
+        assert_eq!(v, Value::Unit);
+    }
+
+    #[test]
+    fn def_eval_order_value_first() {
+        let env = Env::new();
+        env.define("y", Value::Int(2));
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "def".into() }),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+            lit(Atom::Symbol { ns: None, name: "y".into() }),
+        ]);
+        let _ = eval(&expr, &env).unwrap();
+        assert_eq!(env.get("x"), Some(Value::Int(2)));
+    }
+
+    #[test]
+    fn def_error_on_symbol_arity() {
+        let env = Env::new();
+        let expr = list(vec![lit(Atom::Symbol { ns: None, name: "def".into() })]);
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+        assert_eq!(env.get("x"), None);
+    }
+
+    #[test]
+    fn def_error_on_non_symbol_name() {
+        let env = Env::new();
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "def".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidBindingTarget);
+        assert_eq!(env.get("x"), None);
+    }
+
+    #[test]
+    fn def_error_on_namespace_symbol() {
+        let env = Env::new();
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "def".into() }),
+            lit(Atom::Symbol { ns: Some("ns".into()), name: "x".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+        ]);
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidBindingTarget);
+        assert_eq!(env.get("x"), None);
     }
 
     #[test]
