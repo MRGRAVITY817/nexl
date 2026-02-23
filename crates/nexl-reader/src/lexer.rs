@@ -88,6 +88,30 @@ pub enum TokenKind {
     LBrace,
     /// `}` — closes a map or set.
     RBrace,
+
+    // --- Operator/separator tokens ---
+
+    /// `.` — module path separator in qualified names, e.g. `examples.basics`
+    /// (spec §D.3: `qualified-name = symbol , { "." , symbol }`).
+    Dot,
+    /// `|` — variant separator in `deftype` bodies and effect-row composition,
+    /// e.g. `| Red | Green` and `[FileSystem | r]` (spec §D.3, §6.7).
+    Pipe,
+    /// `&` — rest-args marker in param lists and patterns,
+    /// e.g. `[x & rest]` (spec §D.3 param-list).
+    Amp,
+    /// `:` — standalone type-annotation separator, e.g. `[x : Int]`
+    /// (spec §D.3: `param-decl = symbol , ":" , type-expr`).
+    /// Distinct from `Keyword`, which requires a name to follow immediately.
+    Colon,
+    /// `` ` `` — quasiquote prefix; expands to `(quasiquote x)` (spec §D.2).
+    Quasiquote,
+    /// `~` — unquote prefix inside a quasiquote; expands to `(unquote x)`
+    /// (spec §D.2).
+    Unquote,
+    /// `~@` — unquote-splice prefix; expands to `(unquote-splice x)`
+    /// (spec §D.2).
+    UnquoteSplice,
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +243,35 @@ impl<'src> Lexer<'src> {
             return Ok(Token { kind: TokenKind::Comment(text), span: self.span_from(start) });
         }
 
+        // Quasiquote / unquote / unquote-splice (spec §D.2)
+        if ch == '`' {
+            let start = self.pos;
+            self.advance();
+            return Ok(Token { kind: TokenKind::Quasiquote, span: self.span_from(start) });
+        }
+        if ch == '~' {
+            let start = self.pos;
+            self.advance();
+            if self.peek() == Some('@') {
+                self.advance();
+                return Ok(Token { kind: TokenKind::UnquoteSplice, span: self.span_from(start) });
+            }
+            return Ok(Token { kind: TokenKind::Unquote, span: self.span_from(start) });
+        }
+
+        // Single-character operator/separator tokens (spec §D.3, §6.7)
+        let op_kind = match ch {
+            '.' => Some(TokenKind::Dot),
+            '|' => Some(TokenKind::Pipe),
+            '&' => Some(TokenKind::Amp),
+            _ => None,
+        };
+        if let Some(kind) = op_kind {
+            let start = self.pos;
+            self.advance();
+            return Ok(Token { kind, span: self.span_from(start) });
+        }
+
         // Structural delimiters
         let delim_kind = match ch {
             '(' => Some(TokenKind::LParen),
@@ -233,6 +286,19 @@ impl<'src> Lexer<'src> {
             let start = self.pos;
             self.advance();
             return Ok(Token { kind, span: self.span_from(start) });
+        }
+
+        // Standalone `/` is the division operator — a symbol whose name is "/".
+        // (Namespace-separator `/` is consumed inside `lex_symbol` after the
+        // namespace name has already been collected, so this branch only fires
+        // when `/` begins a new token.)
+        if ch == '/' {
+            let start = self.pos;
+            self.advance();
+            return Ok(Token {
+                kind: TokenKind::Symbol { ns: None, name: "/".into() },
+                span: self.span_from(start),
+            });
         }
 
         let start = self.pos;
@@ -597,13 +663,11 @@ impl<'src> Lexer<'src> {
             false
         };
 
-        // Must be followed by at least one symbol-start character
+        // Must be followed by at least one symbol-start character to be a keyword.
+        // If not, emit a standalone Colon token (used as type-annotation separator,
+        // e.g. `[x : Int]` — spec §D.3 param-decl).
         if !self.peek().is_some_and(is_symbol_start) {
-            return Err(Box::new(self.error_at(
-                start,
-                "keyword must have a name after `:`",
-                Some(codes::INVALID_KEYWORD.clone()),
-            )));
+            return Ok(Token { kind: TokenKind::Colon, span: self.span_from(start) });
         }
 
         let first_name = self.collect_while(is_symbol_cont);
@@ -829,8 +893,10 @@ pub(crate) fn is_symbol_start(c: char) -> bool {
 
 /// Returns `true` for characters that may continue a symbol or keyword name
 /// (Appendix D: `symbol-cont = symbol-start | digit`).
+/// Also accepts `#` for gensym suffixes like `tmp#` (spec §7.3) and `.`
+/// for module-path segments like `examples.basics` (spec §D.3 qualified-name).
 pub(crate) fn is_symbol_cont(c: char) -> bool {
-    is_symbol_start(c) || c.is_ascii_digit()
+    is_symbol_start(c) || c.is_ascii_digit() || c == '#' || c == '.'
 }
 
 // ---------------------------------------------------------------------------
@@ -1406,10 +1472,12 @@ mod tests {
 
     // --- keyword test 8 ---
     #[test]
-    fn lex_keyword_bare_colon_is_error() {
-        // `:` at EOF — grammar requires at least one symbol-start char
-        let err = lex(":").unwrap_err();
-        assert_eq!(err.code, Some(codes::INVALID_KEYWORD.clone()));
+    fn lex_bare_colon_produces_colon_token() {
+        // `:` not followed by a symbol-start emits a standalone Colon token
+        // (type-annotation separator, spec §D.3 param-decl, e.g. `[x : Int]`).
+        let tokens = lex(":").unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::Colon);
     }
 
     // --- keyword test 7 ---
@@ -1723,5 +1791,95 @@ mod tests {
         let err = lex("\"a\\qb\"").unwrap_err();
         assert_eq!(err.code, Some(codes::INVALID_ESCAPE.clone()));
         assert_eq!(err.labels[0].span.start, 2); // `\` is at byte 2
+    }
+
+    // --- delimiter test 1 ---
+    #[test]
+    fn lex_lparen() {
+        // `(` — opens a list (spec §2.9)
+        assert_eq!(lex_one("("), TokenKind::LParen);
+    }
+
+    // --- delimiter test 2 ---
+    #[test]
+    fn lex_rparen() {
+        assert_eq!(lex_one(")"), TokenKind::RParen);
+    }
+
+    // --- delimiter test 3 ---
+    #[test]
+    fn lex_lbracket() {
+        assert_eq!(lex_one("["), TokenKind::LBracket);
+    }
+
+    // --- delimiter test 4 ---
+    #[test]
+    fn lex_rbracket() {
+        assert_eq!(lex_one("]"), TokenKind::RBracket);
+    }
+
+    // --- delimiter test 5 ---
+    #[test]
+    fn lex_lbrace() {
+        assert_eq!(lex_one("{"), TokenKind::LBrace);
+    }
+
+    // --- delimiter test 6 ---
+    #[test]
+    fn lex_rbrace() {
+        assert_eq!(lex_one("}"), TokenKind::RBrace);
+    }
+
+    // --- delimiter test 7 ---
+    #[test]
+    fn lex_all_delimiters_sequence() {
+        // `()[]{}` → 6 delimiter tokens, each with span.len == 1
+        let tokens = lex("()[]{}").unwrap();
+        assert_eq!(tokens.len(), 6);
+        let expected = [
+            TokenKind::LParen,
+            TokenKind::RParen,
+            TokenKind::LBracket,
+            TokenKind::RBracket,
+            TokenKind::LBrace,
+            TokenKind::RBrace,
+        ];
+        for (i, (tok, exp)) in tokens.iter().zip(expected.iter()).enumerate() {
+            assert_eq!(&tok.kind, exp, "token {i} mismatch");
+            assert_eq!(tok.span.start, i as u32, "span.start for token {i}");
+            assert_eq!(tok.span.len, 1, "span.len for token {i}");
+        }
+    }
+
+    // --- whitespace test 1 ---
+    #[test]
+    fn lex_comma_whitespace() {
+        // `,42,` — commas are whitespace (spec §2.2), so only one Int token
+        assert_eq!(lex_one(",42,"), TokenKind::Int(42, None));
+    }
+
+    // --- whitespace test 2 ---
+    #[test]
+    fn lex_comma_between_tokens() {
+        // `[1,2,3]` — commas are whitespace (spec §2.2)
+        let tokens = lex("[1,2,3]").unwrap();
+        assert_eq!(tokens.len(), 5);
+        assert_eq!(tokens[0].kind, TokenKind::LBracket);
+        assert_eq!(tokens[1].kind, TokenKind::Int(1, None));
+        assert_eq!(tokens[2].kind, TokenKind::Int(2, None));
+        assert_eq!(tokens[3].kind, TokenKind::Int(3, None));
+        assert_eq!(tokens[4].kind, TokenKind::RBracket);
+    }
+
+    // --- unexpected char test ---
+    #[test]
+    fn lex_unexpected_char_error() {
+        // `%` — not a valid start character; lexer must emit an error
+        let err = lex("%").unwrap_err();
+        assert!(
+            err.message.contains("unexpected character"),
+            "expected 'unexpected character' in message, got: {}",
+            err.message,
+        );
     }
 }

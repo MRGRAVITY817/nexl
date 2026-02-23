@@ -47,9 +47,9 @@
 - [x] Configurable indentation
 
 ### Test Suite
-- [ ] Unit tests for each token type
-- [ ] Unit tests for reader (nested structures, edge cases)
-- [ ] Parse every `examples/*.nxl` file without errors
+- [x] Unit tests for each token type
+- [x] Unit tests for reader (nested structures, edge cases)
+- [x] Parse every `examples/*.nxl` file without errors
 - [ ] Golden tests for error messages (malformed input)
 
 ## Blocked

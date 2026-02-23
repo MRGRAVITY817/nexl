@@ -113,6 +113,18 @@ impl PrettyPrinter {
                 out.push_str("#_ ");
                 self.write_node(inner, out);
             }
+            NodeKind::Quasiquote(inner) => {
+                out.push('`');
+                self.write_node(inner, out);
+            }
+            NodeKind::Unquote(inner) => {
+                out.push('~');
+                self.write_node(inner, out);
+            }
+            NodeKind::UnquoteSplice(inner) => {
+                out.push_str("~@");
+                self.write_node(inner, out);
+            }
         }
     }
 

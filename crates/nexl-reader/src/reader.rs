@@ -102,6 +102,28 @@ impl<'src> Reader<'src> {
             TokenKind::Comment(_) => {
                 unreachable!("comments must be drained before dispatch")
             }
+            // Operator/separator tokens — treated as symbol atoms so they can
+            // appear as elements inside collections (e.g. `[x : Int]`, `| Red`).
+            TokenKind::Dot => Ok(Node::atom(Atom::Symbol { ns: None, name: ".".into() }, tok.span)),
+            TokenKind::Pipe => Ok(Node::atom(Atom::Symbol { ns: None, name: "|".into() }, tok.span)),
+            TokenKind::Amp => Ok(Node::atom(Atom::Symbol { ns: None, name: "&".into() }, tok.span)),
+            TokenKind::Colon => Ok(Node::atom(Atom::Symbol { ns: None, name: ":".into() }, tok.span)),
+            // Quasiquote / unquote / unquote-splice reader macros.
+            TokenKind::Quasiquote => {
+                let inner = self.require_form("`", tok.span)?;
+                let span = tok.span.merge(inner.span);
+                Ok(Node::new(NodeKind::Quasiquote(Box::new(inner)), span))
+            }
+            TokenKind::Unquote => {
+                let inner = self.require_form("~", tok.span)?;
+                let span = tok.span.merge(inner.span);
+                Ok(Node::new(NodeKind::Unquote(Box::new(inner)), span))
+            }
+            TokenKind::UnquoteSplice => {
+                let inner = self.require_form("~@", tok.span)?;
+                let span = tok.span.merge(inner.span);
+                Ok(Node::new(NodeKind::UnquoteSplice(Box::new(inner)), span))
+            }
         }
     }
 
@@ -884,5 +906,243 @@ mod tests {
         let printed = PrettyPrinter::default_config().print(&nodes1[0]);
         let nodes2 = read(&printed, fid()).expect("second parse");
         assert_eq!(nodes1[0].kind, nodes2[0].kind);
+    }
+
+    // ── Atom completeness ─────────────────────────────────────────────────────
+
+    // ── 11. parse_float_atom ──────────────────────────────────────────────────
+    #[test]
+    fn parse_float_atom() {
+        use nexl_ast::FloatSuffix;
+        let nodes = read("3.75", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Float { value: 3.75, suffix: None }));
+
+        let nodes = read("1.5f32", fid()).expect("parse failed");
+        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Float { value: 1.5, suffix: Some(FloatSuffix::F32) }));
+    }
+
+    // ── 13. parse_char_single ─────────────────────────────────────────────────
+    #[test]
+    fn parse_char_single() {
+        let nodes = read("\\a", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Char('a')));
+    }
+
+    // ── 14. parse_char_named ──────────────────────────────────────────────────
+    #[test]
+    fn parse_char_named() {
+        let nodes = read("\\newline", fid()).expect("parse failed");
+        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Char('\n')));
+    }
+
+    // ── 15. parse_char_unicode ────────────────────────────────────────────────
+    #[test]
+    fn parse_char_unicode() {
+        let nodes = read("\\u{1F600}", fid()).expect("parse failed");
+        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Char('😀')));
+    }
+
+    // ── 16. parse_qualified_symbol ────────────────────────────────────────────
+    #[test]
+    fn parse_qualified_symbol() {
+        let nodes = read("my-mod/my-fn", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].kind,
+            NodeKind::Atom(Atom::Symbol { ns: Some("my-mod".into()), name: "my-fn".into() }),
+        );
+    }
+
+    // ── 17. parse_auto_namespace_kw ───────────────────────────────────────────
+    // auto_ns is a lexer property only; the reader maps to Keyword { ns: None, name }.
+    // Namespace resolution happens in a later phase.
+    #[test]
+    fn parse_auto_namespace_kw() {
+        let nodes = read("::local", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].kind,
+            NodeKind::Atom(Atom::Keyword { ns: None, name: "local".into() }),
+        );
+    }
+
+    // ── 18. parse_empty_string ────────────────────────────────────────────────
+    #[test]
+    fn parse_empty_string() {
+        let nodes = read("\"\"", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Str("".into())));
+    }
+
+    // ── Collection edge cases ─────────────────────────────────────────────────
+
+    // ── 19. parse_empty_set ───────────────────────────────────────────────────
+    #[test]
+    fn parse_empty_set() {
+        let nodes = read("#{}", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, NodeKind::Set(vec![]));
+    }
+
+    // ── 20. parse_comma_in_map ────────────────────────────────────────────────
+    // Commas are whitespace (spec §2.2), so `{:a 1, :b 2}` has two pairs.
+    #[test]
+    fn parse_comma_in_map() {
+        let nodes = read("{:a 1, :b 2}", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        let NodeKind::Map(pairs) = &nodes[0].kind else { panic!("expected Map") };
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].0.kind, NodeKind::Atom(Atom::Keyword { ns: None, name: "a".into() }));
+        assert_eq!(pairs[1].0.kind, NodeKind::Atom(Atom::Keyword { ns: None, name: "b".into() }));
+    }
+
+    // ── 21. parse_deeply_nested ───────────────────────────────────────────────
+    #[test]
+    fn parse_deeply_nested() {
+        // `((((a))))` — four levels of list nesting; must unpack all four
+        let nodes = read("((((a))))", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        let NodeKind::List(l1) = &nodes[0].kind else { panic!("expected List at level 1") };
+        let NodeKind::List(l2) = &l1[0].kind else { panic!("expected List at level 2") };
+        let NodeKind::List(l3) = &l2[0].kind else { panic!("expected List at level 3") };
+        let NodeKind::List(l4) = &l3[0].kind else { panic!("expected List at level 4") };
+        assert_eq!(l4[0].kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "a".into() }));
+    }
+
+    // ── 22. parse_quote_wrapping_list ─────────────────────────────────────────
+    #[test]
+    fn parse_quote_wrapping_list() {
+        let nodes = read("'(1 2)", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        let NodeKind::Quote(inner) = &nodes[0].kind else { panic!("expected Quote") };
+        assert!(matches!(inner.kind, NodeKind::List(_)));
+    }
+
+    // ── 23. parse_deref_wrapping_compound ─────────────────────────────────────
+    #[test]
+    fn parse_deref_wrapping_compound() {
+        let nodes = read("@[1 2]", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        let NodeKind::Deref(inner) = &nodes[0].kind else { panic!("expected Deref") };
+        assert!(matches!(inner.kind, NodeKind::Vector(_)));
+    }
+
+    // ── 24. parse_mixed_nested ────────────────────────────────────────────────
+    #[test]
+    fn parse_mixed_nested() {
+        // `{:x [1 #{:k}]}` — Map -> Vector -> Set nesting
+        let nodes = read("{:x [1 #{:k}]}", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        let NodeKind::Map(pairs) = &nodes[0].kind else { panic!("expected Map") };
+        assert_eq!(pairs.len(), 1);
+        let NodeKind::Vector(items) = &pairs[0].1.kind else { panic!("expected Vector") };
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[1].kind, NodeKind::Set(_)));
+    }
+
+    // ── Error completeness ────────────────────────────────────────────────────
+
+    // ── 25. error_unclosed_set ────────────────────────────────────────────────
+    #[test]
+    fn error_unclosed_set() {
+        let err = read("#{1 2", fid()).expect_err("expected error");
+        assert_eq!(err.code, Some(codes::UNCLOSED_DELIMITER));
+        assert_eq!(err.labels[0].span.start, 0); // `#{` opens at byte 0
+    }
+
+    // ── 26. error_unclosed_map ────────────────────────────────────────────────
+    #[test]
+    fn error_unclosed_map() {
+        let err = read("{:a 1", fid()).expect_err("expected error");
+        assert_eq!(err.code, Some(codes::UNCLOSED_DELIMITER));
+        assert_eq!(err.labels[0].span.start, 0);
+    }
+
+    // ── 27. error_discard_at_eof ─────────────────────────────────────────────
+    #[test]
+    fn error_discard_at_eof() {
+        let err = read("#_", fid()).expect_err("expected error");
+        assert_eq!(err.code, Some(codes::UNCLOSED_DELIMITER));
+        assert!(
+            err.message.contains("#_"),
+            "expected '#_' in message, got: {}",
+            err.message,
+        );
+    }
+
+    // ── 28. error_quote_at_eof ────────────────────────────────────────────────
+    #[test]
+    fn error_quote_at_eof() {
+        let err = read("'", fid()).expect_err("expected error");
+        assert_eq!(err.code, Some(codes::UNCLOSED_DELIMITER));
+        assert!(
+            err.message.contains("'"),
+            "expected `'` in message, got: {}",
+            err.message,
+        );
+    }
+
+    // ── 29. error_deref_at_eof ────────────────────────────────────────────────
+    #[test]
+    fn error_deref_at_eof() {
+        let err = read("@", fid()).expect_err("expected error");
+        assert_eq!(err.code, Some(codes::UNCLOSED_DELIMITER));
+        assert!(
+            err.message.contains("@"),
+            "expected '@' in message, got: {}",
+            err.message,
+        );
+    }
+
+    // ── Example file smoke tests ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_example_01_basics() {
+        let src = include_str!("../../../examples/01-basics.nxl");
+        read(src, fid()).expect("01-basics.nxl should parse without errors");
+    }
+
+    #[test]
+    fn parse_example_02_adts() {
+        let src = include_str!("../../../examples/02-adts-and-patterns.nxl");
+        read(src, fid()).expect("02-adts-and-patterns.nxl should parse without errors");
+    }
+
+    #[test]
+    fn parse_example_03_effects() {
+        let src = include_str!("../../../examples/03-effects.nxl");
+        read(src, fid()).expect("03-effects.nxl should parse without errors");
+    }
+
+    #[test]
+    fn parse_example_04_protocols() {
+        let src = include_str!("../../../examples/04-protocols.nxl");
+        read(src, fid()).expect("04-protocols.nxl should parse without errors");
+    }
+
+    #[test]
+    fn parse_example_05_concurrency() {
+        let src = include_str!("../../../examples/05-concurrency.nxl");
+        read(src, fid()).expect("05-concurrency.nxl should parse without errors");
+    }
+
+    #[test]
+    fn parse_example_06_macros() {
+        let src = include_str!("../../../examples/06-macros.nxl");
+        read(src, fid()).expect("06-macros.nxl should parse without errors");
+    }
+
+    #[test]
+    fn parse_example_07_http_server() {
+        let src = include_str!("../../../examples/07-http-server.nxl");
+        read(src, fid()).expect("07-http-server.nxl should parse without errors");
+    }
+
+    #[test]
+    fn parse_example_08_inference() {
+        let src = include_str!("../../../examples/08-inference.nxl");
+        read(src, fid()).expect("08-inference.nxl should parse without errors");
     }
 }

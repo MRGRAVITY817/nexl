@@ -166,6 +166,12 @@ pub enum NodeKind {
     /// The discarded form is **not** included in semantic analysis, but is retained
     /// in the tree so that tooling and the pretty-printer can reproduce it faithfully.
     Discard(Box<Node>),
+    /// `` `x `` — quasiquote prefix; sugar for `(quasiquote x)` (spec §D.2).
+    Quasiquote(Box<Node>),
+    /// `~x` — unquote prefix inside a quasiquote; sugar for `(unquote x)` (spec §D.2).
+    Unquote(Box<Node>),
+    /// `~@x` — unquote-splice prefix; sugar for `(unquote-splice x)` (spec §D.2).
+    UnquoteSplice(Box<Node>),
 }
 
 // ---------------------------------------------------------------------------
