@@ -14,8 +14,8 @@
 - [x] `Value::Function` variant — closure representation (Rc<Function>)
 
 ### nexl-eval — Tree-Walk Evaluator
-- [ ] Add `nexl-eval` crate to workspace
-- [ ] `Env` type — lexical environment (name → Value, parent chain)
+- [x] Add `nexl-eval` crate to workspace
+- [x] `Env` type — lexical environment (name → Value, parent chain)
 - [ ] `eval(node: &Node, env: &mut Env) -> Result<Value, EvalError>` signature
 - [ ] Atom evaluation: Int/Float/Ratio/Bool/Char/Str/Unit literals → Value
 - [ ] Atom evaluation: Keyword/Symbol lookup → Value
@@ -36,7 +36,7 @@
 - [ ] String: `str` (concatenation/coercion), `count`
 
 ### Test Suite
-- [ ] Unit tests for `Env` (bind, lookup, scoping, parent chain)
+- [x] Unit tests for `Env` (bind, lookup, scoping, parent chain)
 - [ ] Unit tests for atom evaluation (each literal type)
 - [ ] Unit tests for each core form
 - [ ] Unit tests for arithmetic/comparison builtins

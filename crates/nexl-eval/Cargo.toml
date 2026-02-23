@@ -1,0 +1,10 @@
+[package]
+name = "nexl-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tree-walk evaluator for Nexl (M1)"
+
+[dependencies]
+nexl-runtime = { path = "../nexl-runtime" }
+thiserror = "1.0"
