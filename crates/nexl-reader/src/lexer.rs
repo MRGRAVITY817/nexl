@@ -303,7 +303,7 @@ impl<'src> Lexer<'src> {
 
         let start = self.pos;
         self.advance();
-        Err(Box::new(self.error_at(start, format!("unexpected character `{ch}`"), None)))
+        Err(Box::new(self.unexpected_character(start, ch)))
     }
 
     // --- number lexing ---
@@ -443,7 +443,7 @@ impl<'src> Lexer<'src> {
         })?;
 
         if denom == 0 {
-            return Err(Box::new(self.error_at(start, "ratio literal with zero denominator", None)));
+            return Err(Box::new(self.ratio_zero_denominator(start)));
         }
 
         let numer_clean: String = numer_raw.chars().filter(|&c| c != '_').collect();
@@ -465,22 +465,14 @@ impl<'src> Lexer<'src> {
                 "32" => return Ok(Some(FloatSuffix::F32)),
                 "64" => return Ok(Some(FloatSuffix::F64)),
                 _ => {
-                    return Err(Box::new(self.error_at(
-                        suffix_start,
-                        format!("unknown float suffix `f{w}`"),
-                        Some(codes::INVALID_NUMERIC_SUFFIX.clone()),
-                    )));
+                    return Err(Box::new(self.invalid_float_suffix(suffix_start, format!("f{w}"))));
                 }
             }
         }
         // Any other letter/underscore immediately after is unknown
         if self.peek().is_some_and(|c| c.is_alphabetic() || c == '_') {
             let bad = self.collect_while(|c| c.is_alphanumeric() || c == '_');
-            return Err(Box::new(self.error_at(
-                suffix_start,
-                format!("unknown suffix `{bad}`"),
-                Some(codes::INVALID_NUMERIC_SUFFIX.clone()),
-            )));
+            return Err(Box::new(self.invalid_float_suffix(suffix_start, bad)));
         }
         Ok(None)
     }
@@ -496,11 +488,7 @@ impl<'src> Lexer<'src> {
                     "16" => Ok(Some(IntSuffix::I16)),
                     "32" => Ok(Some(IntSuffix::I32)),
                     "64" => Ok(Some(IntSuffix::I64)),
-                    _ => Err(Box::new(self.error_at(
-                        suffix_start,
-                        format!("unknown integer suffix `i{w}`"),
-                        Some(codes::INVALID_NUMERIC_SUFFIX.clone()),
-                    ))),
+                    _ => Err(Box::new(self.invalid_int_suffix(suffix_start, format!("i{w}")))),
                 }
             }
             Some('u') => {
@@ -511,21 +499,13 @@ impl<'src> Lexer<'src> {
                     "16" => Ok(Some(IntSuffix::U16)),
                     "32" => Ok(Some(IntSuffix::U32)),
                     "64" => Ok(Some(IntSuffix::U64)),
-                    _ => Err(Box::new(self.error_at(
-                        suffix_start,
-                        format!("unknown integer suffix `u{w}`"),
-                        Some(codes::INVALID_NUMERIC_SUFFIX.clone()),
-                    ))),
+                    _ => Err(Box::new(self.invalid_int_suffix(suffix_start, format!("u{w}")))),
                 }
             }
             // Any other letter/underscore immediately after digits is an unknown suffix
             Some(c) if c.is_alphabetic() || c == '_' => {
                 let bad = self.collect_while(|c| c.is_alphanumeric() || c == '_');
-                Err(Box::new(self.error_at(
-                    suffix_start,
-                    format!("unknown suffix `{bad}`"),
-                    Some(codes::INVALID_NUMERIC_SUFFIX.clone()),
-                )))
+                Err(Box::new(self.invalid_int_suffix(suffix_start, bad)))
             }
             _ => Ok(None),
         }
@@ -549,11 +529,7 @@ impl<'src> Lexer<'src> {
         loop {
             match self.peek() {
                 None => {
-                    return Err(Box::new(self.error_at(
-                        start,
-                        "unterminated string literal",
-                        Some(codes::UNCLOSED_STRING.clone()),
-                    )));
+                    return Err(Box::new(self.unterminated_string(start)));
                 }
                 Some('"') => {
                     self.advance(); // consume closing `"`
@@ -572,18 +548,10 @@ impl<'src> Lexer<'src> {
                         Some(ch) => {
                             let bad_ch = ch;
                             self.advance();
-                            return Err(Box::new(self.error_at(
-                                bs_pos,
-                                format!("unknown escape sequence `\\{bad_ch}`"),
-                                Some(codes::INVALID_ESCAPE.clone()),
-                            )));
+                            return Err(Box::new(self.invalid_escape(bs_pos, bad_ch)));
                         }
                         None => {
-                            return Err(Box::new(self.error_at(
-                                start,
-                                "unterminated string literal",
-                                Some(codes::UNCLOSED_STRING.clone()),
-                            )));
+                            return Err(Box::new(self.unterminated_string(start)));
                         }
                     }
                 }
@@ -601,11 +569,7 @@ impl<'src> Lexer<'src> {
                         loop {
                             match self.peek() {
                                 None => {
-                                    return Err(Box::new(self.error_at(
-                                        start,
-                                        "unterminated string literal",
-                                        Some(codes::UNCLOSED_STRING.clone()),
-                                    )));
+                                    return Err(Box::new(self.unterminated_string(start)));
                                 }
                                 Some('}') => {
                                     self.advance(); // consume '}'
@@ -732,11 +696,7 @@ impl<'src> Lexer<'src> {
 
         let first = match self.peek() {
             None => {
-                return Err(Box::new(self.error_at(
-                    start,
-                    "character literal is empty",
-                    Some(codes::INVALID_CHAR_LITERAL.clone()),
-                )));
+                return Err(Box::new(self.empty_char_literal(start)));
             }
             Some(ch) => ch,
         };
@@ -863,6 +823,72 @@ impl<'src> Lexer<'src> {
             d.code = Some(c);
         }
         d.push_label(Label::new(span, "here"));
+        d
+    }
+
+    fn unterminated_string(&self, start: usize) -> Diagnostic {
+        let span = self.span_from(start);
+        let mut d = Diagnostic::new(Severity::Error, "unterminated string literal");
+        d.code = Some(codes::UNCLOSED_STRING.clone());
+        d.push_label(Label::new(span, "string starts here"));
+        d.set_help("add a closing '\"' to terminate the string");
+        d
+    }
+
+    fn invalid_escape(&self, start: usize, bad: char) -> Diagnostic {
+        let mut d = Diagnostic::new(
+            Severity::Error,
+            format!("unknown escape sequence `\\{bad}`"),
+        );
+        d.code = Some(codes::INVALID_ESCAPE.clone());
+        d.push_label(Label::new(self.span_from(start), "invalid escape here"));
+        d.set_help("valid escapes: \\\\n, \\\\t, \\\\r, \\\\\\\\, \\\\\\\" , \\\\{");
+        d
+    }
+
+    fn invalid_float_suffix(&self, start: usize, suffix: impl Into<String>) -> Diagnostic {
+        let suffix = suffix.into();
+        let mut d = Diagnostic::new(
+            Severity::Error,
+            format!("unknown float suffix `{suffix}`"),
+        );
+        d.code = Some(codes::INVALID_NUMERIC_SUFFIX.clone());
+        d.push_label(Label::new(self.span_from(start), "numeric suffix starts here"));
+        d.set_help("valid float suffixes: f32 or f64; or omit the suffix");
+        d
+    }
+
+    fn invalid_int_suffix(&self, start: usize, suffix: impl Into<String>) -> Diagnostic {
+        let suffix = suffix.into();
+        let mut d = Diagnostic::new(
+            Severity::Error,
+            format!("unknown suffix `{suffix}`"),
+        );
+        d.code = Some(codes::INVALID_NUMERIC_SUFFIX.clone());
+        d.push_label(Label::new(self.span_from(start), "numeric suffix starts here"));
+        d.set_help("valid integer suffixes: i8, i16, i32, i64, u8, u16, u32, u64; or omit the suffix");
+        d
+    }
+
+    fn empty_char_literal(&self, start: usize) -> Diagnostic {
+        let mut d = Diagnostic::new(Severity::Error, "character literal is empty");
+        d.code = Some(codes::INVALID_CHAR_LITERAL.clone());
+        d.push_label(Label::new(self.span_from(start), "character starts here"));
+        d.set_help("add a character after the backslash, e.g. `\\a` or `\\u{1F600}`");
+        d
+    }
+
+    fn ratio_zero_denominator(&self, start: usize) -> Diagnostic {
+        let mut d = Diagnostic::new(Severity::Error, "ratio literal with zero denominator");
+        d.push_label(Label::new(self.span_from(start), "ratio starts here"));
+        d.set_help("the denominator of a ratio must be non-zero");
+        d
+    }
+
+    fn unexpected_character(&self, start: usize, ch: char) -> Diagnostic {
+        let mut d = Diagnostic::new(Severity::Error, format!("unexpected character `{ch}`"));
+        d.push_label(Label::new(self.span_from(start), "unexpected here"));
+        d.set_help("this character cannot start any token; remove it or use a valid token");
         d
     }
 }

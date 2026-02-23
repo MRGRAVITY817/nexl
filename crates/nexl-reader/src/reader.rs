@@ -256,6 +256,7 @@ impl<'src> Reader<'src> {
                             discard_span,
                             "this `#_` expects a following form",
                         ));
+                        d.set_help("add the form to discard, or remove the `#_`");
                         return Err(Box::new(d));
                     }
                     Some(t) if is_close(t) => {
@@ -291,7 +292,13 @@ impl<'src> Reader<'src> {
                     format!("expected a form after `{prefix}`, found end of file"),
                 );
                 d.code = Some(codes::UNCLOSED_DELIMITER);
-                d.push_label(Label::new(prefix_span, "this prefix expects a following form"));
+                d.push_label(Label::new(prefix_span, format!("this `{prefix}` expects a following form")));
+                let help = match prefix {
+                    "'" => "add the quoted form, e.g. `'x`, or remove the `'`".to_string(),
+                    "@" => "add the form to dereference, e.g. `@value`, or remove the `@`".to_string(),
+                    _ => format!("add a form after `{prefix}`, or remove the `{prefix}`"),
+                };
+                d.set_help(help);
                 Err(Box::new(d))
             }
             Some(t) if is_close(t) => {
@@ -377,12 +384,19 @@ impl<'src> Reader<'src> {
             TokenKind::RBrace => "}",
             _ => unreachable!("unmatched_delimiter called with non-close token"),
         };
+        let opener = match delim {
+            ")" => "(",
+            "]" => "[",
+            "}" => "{",
+            _ => "?",
+        };
         let mut d = Diagnostic::new(
             Severity::Error,
             format!("unexpected `{delim}` — no matching opener"),
         );
         d.code = Some(codes::UNMATCHED_DELIMITER);
-        d.push_label(Label::new(tok.span, "unmatched delimiter"));
+        d.push_label(Label::new(tok.span, "unmatched closing delimiter"));
+        d.set_help(format!("remove this `{delim}` or add a matching opening `{opener}` earlier"));
         Box::new(d)
     }
 
@@ -392,7 +406,21 @@ impl<'src> Reader<'src> {
             format!("unclosed `{opener}` — expected matching closer before end of file"),
         );
         d.code = Some(codes::UNCLOSED_DELIMITER);
-        d.push_label(Label::new(open_span, "unclosed delimiter opened here"));
+        let label_msg = match opener {
+            "(" => "list opened here",
+            "[" => "vector opened here",
+            "{" => "map opened here",
+            "#{" => "set opened here",
+            _ => "unclosed delimiter opened here",
+        };
+        let closer = match opener {
+            "(" => ")",
+            "[" => "]",
+            "{" | "#{" => "}",
+            _ => "closing delimiter",
+        };
+        d.push_label(Label::new(open_span, label_msg));
+        d.set_help(format!("add a closing `{closer}` before end of file"));
         Box::new(d)
     }
 
