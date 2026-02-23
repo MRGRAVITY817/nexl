@@ -320,6 +320,120 @@ mod tests {
     }
 
     #[test]
+    fn let_bindings_are_sequential() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 2, suffix: None }),
+                lit(Atom::Symbol { ns: None, name: "y".into() }),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "y".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(2));
+    }
+
+    #[test]
+    fn let_shadows_parent_only_locally() {
+        let parent = Rc::new(Env::new());
+        parent.define("x", Value::Int(1));
+
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 5, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &parent).unwrap();
+        assert_eq!(result, Value::Int(5));
+        assert_eq!(parent.get("x"), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn let_no_leak_to_parent() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 10, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(10));
+        assert_eq!(env.get("x"), None);
+    }
+
+    #[test]
+    fn let_allows_empty_bindings() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![]),
+            lit(Atom::Int { value: 7, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(7));
+        assert_eq!(env.get("x"), None);
+    }
+
+    #[test]
+    fn let_errors_on_non_vector_bindings_form() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn let_errors_on_odd_binding_pairs() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 1, suffix: None }),
+                lit(Atom::Symbol { ns: None, name: "y".into() }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn let_errors_on_non_symbol_binding_target() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Int { value: 1, suffix: None }),
+                lit(Atom::Int { value: 2, suffix: None }),
+            ]),
+            lit(Atom::Int { value: 0, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidBindingTarget);
+    }
+
+    #[test]
     fn def_error_on_symbol_arity() {
         let env = Rc::new(Env::new());
         let expr = list(vec![lit(Atom::Symbol { ns: None, name: "def".into() })]);
