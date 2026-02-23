@@ -1,16 +1,23 @@
 use std::rc::Rc;
+use meta::Node;
 
 /// A runtime function closure.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     /// Optional name (present for `defn`, absent for anonymous `fn`).
     pub name: Option<Rc<str>>,
+    /// Positional parameter names (required args).
+    pub params: Vec<Rc<str>>,
+    /// Optional variadic rest parameter name.
+    pub rest: Option<Rc<str>>,
     /// Required positional parameter count.
     pub arity: u32,
     /// Whether the function accepts a variadic rest parameter.
     pub variadic: bool,
-    /// Captured values from the defining environment.
-    pub captures: Vec<Value>,
+    /// Captured bindings from the defining environment (name, value).
+    pub captures: Vec<(Rc<str>, Value)>,
+    /// Body expressions to evaluate when called (in order).
+    pub body: Vec<Node>,
 }
 
 /// A runtime value produced by the Nexl tree-walk interpreter.
@@ -152,9 +159,12 @@ mod tests {
     fn fn_val(name: Option<&str>, arity: u32, variadic: bool) -> Value {
         Value::Function(Rc::new(Function {
             name: name.map(Rc::from),
+            params: vec![],
+            rest: None,
             arity,
             variadic,
             captures: vec![],
+            body: vec![Node::atom(meta::Atom::Unit, meta::span::Span::synthetic())],
         }))
     }
 
@@ -316,13 +326,20 @@ mod tests {
         let captured = vec![Value::Int(10), Value::Str(Rc::from("hi"))];
         let func = Value::Function(Rc::new(Function {
             name: Some(Rc::from("adder")),
+            params: vec![],
+            rest: None,
             arity: 1,
             variadic: false,
-            captures: captured.clone(),
+            captures: captured
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (Rc::from(format!("c{i}").as_str()), v.clone()))
+                .collect(),
+            body: vec![Node::atom(meta::Atom::Unit, meta::span::Span::synthetic())],
         }));
 
         let Value::Function(rc_func) = func else { panic!("not a function") };
-        assert_eq!(rc_func.captures, captured);
+        assert_eq!(rc_func.captures.len(), captured.len());
     }
 
     #[test]

@@ -6,3 +6,4 @@ license.workspace = true
 description = "Runtime value representation for the Nexl interpreter"
 
 [dependencies]
+meta = { package = "nexl-ast", path = "../nexl-ast" }

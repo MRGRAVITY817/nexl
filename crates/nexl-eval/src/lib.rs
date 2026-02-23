@@ -59,9 +59,20 @@ impl Env {
         Err(EnvError::Unbound(name.to_string()))
     }
 
-    /// Snapshot the values in the current frame for closure capture.
-    pub fn capture_values(&self) -> Vec<Value> {
-        self.bindings.borrow().values().cloned().collect()
+    /// Snapshot the full visible environment for closure capture (nearest wins).
+    pub fn capture_closure(&self) -> Vec<(Rc<str>, Value)> {
+        let mut map = HashMap::new();
+        self.fill_closure_map(&mut map);
+        map.into_iter().collect()
+    }
+
+    fn fill_closure_map(&self, map: &mut HashMap<Rc<str>, Value>) {
+        if let Some(parent) = &self.parent {
+            parent.fill_closure_map(map);
+        }
+        for (k, v) in self.bindings.borrow().iter() {
+            map.insert(k.clone(), v.clone());
+        }
     }
 }
 
@@ -88,6 +99,9 @@ pub enum EvalError {
     /// Unsupported feature placeholder.
     #[error("unsupported qualified symbol: {0}")]
     UnsupportedQualifiedSymbol(String),
+    /// Attempted to call a non-function value.
+    #[error("invalid callable")]
+    InvalidCallable,
     /// `def`/`let` target was not a symbol.
     #[error("invalid binding target")]
     InvalidBindingTarget,
@@ -107,6 +121,170 @@ mod tests {
 
     fn int(n: i64) -> Value {
         Value::Int(n)
+    }
+
+    // --- function application tests ---
+
+    #[test]
+    fn apply_invokes_closure_body() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![lit(Atom::Symbol { ns: None, name: "x".into() })]),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+            ]),
+            lit(Atom::Int { value: 5, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(5));
+    }
+
+    #[test]
+    fn apply_passes_multiple_args() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![
+                    lit(Atom::Symbol { ns: None, name: "x".into() }),
+                    lit(Atom::Symbol { ns: None, name: "y".into() }),
+                ]),
+                lit(Atom::Symbol { ns: None, name: "y".into() }),
+            ]),
+            lit(Atom::Int { value: 2, suffix: None }),
+            lit(Atom::Int { value: 3, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn apply_arity_mismatch_too_few() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![
+                    lit(Atom::Symbol { ns: None, name: "x".into() }),
+                    lit(Atom::Symbol { ns: None, name: "y".into() }),
+                ]),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+            ]),
+            lit(Atom::Int { value: 1, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn apply_arity_mismatch_too_many() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![lit(Atom::Symbol { ns: None, name: "x".into() })]),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+            ]),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn apply_variadic_allows_extra() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![
+                    lit(Atom::Symbol { ns: None, name: "x".into() }),
+                    lit(Atom::Symbol { ns: None, name: "&".into() }),
+                    lit(Atom::Symbol { ns: None, name: "r".into() }),
+                ]),
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+            ]),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+            lit(Atom::Int { value: 3, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn apply_closure_sees_captured() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Int { value: 7, suffix: None }),
+                lit(Atom::Symbol { ns: None, name: "f".into() }),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                    vector(vec![]),
+                    lit(Atom::Symbol { ns: None, name: "x".into() }),
+                ]),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "f".into() }),
+            ]),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(7));
+    }
+
+    #[test]
+    fn apply_non_function_head_error() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidCallable);
+    }
+
+    #[test]
+    fn apply_head_evaluated_once() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "do".into() }),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "def".into() }),
+                lit(Atom::Symbol { ns: None, name: "counter".into() }),
+                lit(Atom::Int { value: 0, suffix: None }),
+            ]),
+            list(vec![
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "do".into() }),
+                    list(vec![
+                        lit(Atom::Symbol { ns: None, name: "def".into() }),
+                        lit(Atom::Symbol { ns: None, name: "counter".into() }),
+                        lit(Atom::Int { value: 1, suffix: None }),
+                    ]),
+                    list(vec![
+                        lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                        vector(vec![]),
+                        lit(Atom::Symbol { ns: None, name: "counter".into() }),
+                    ]),
+                ]),
+            ]),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(1));
+        assert_eq!(env.get("counter"), Some(Value::Int(1)));
     }
 
     fn lit(atom: Atom) -> Node {
@@ -797,7 +975,7 @@ mod tests {
         let result = eval(&expr, &env).unwrap();
         match result {
             Value::Function(func) => {
-                assert!(func.captures.contains(&Value::Int(10)));
+                assert!(func.captures.contains(&(Rc::from("x"), Value::Int(10))));
             }
             other => panic!("expected function, got {:?}", other),
         }
@@ -984,7 +1162,7 @@ mod tests {
         eval(&expr, &env).unwrap();
         let binding = env.get("foo").unwrap();
         match binding {
-            Value::Function(func) => assert!(func.captures.contains(&Value::Int(9))),
+            Value::Function(func) => assert!(func.captures.contains(&(Rc::from("y"), Value::Int(9)))),
             other => panic!("expected function, got {:?}", other),
         }
     }

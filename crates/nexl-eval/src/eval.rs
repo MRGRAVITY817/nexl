@@ -47,7 +47,7 @@ fn eval_list(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "fn" => eval_fn(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "defn" => eval_defn(items, env),
         NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
-        _ => todo!("function application not yet implemented"),
+        _ => eval_apply(items, env),
     }
 }
 
@@ -138,22 +138,25 @@ fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
     }
 
     let params_node = &items[1];
-    let params = match &params_node.kind {
+    let params_nodes = match &params_node.kind {
         NodeKind::Vector(items) => items,
         _ => return Err(EvalError::Arity),
     };
 
-    let mut arity: u32 = 0;
+    let mut params: Vec<Rc<str>> = Vec::new();
+    let mut rest: Option<Rc<str>> = None;
     let mut variadic = false;
 
-    let mut iter = params.iter().peekable();
+    let mut iter = params_nodes.iter().peekable();
     while let Some(param) = iter.next() {
         match &param.kind {
             NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "&" => {
                 variadic = true;
-                let rest = iter.next().ok_or(EvalError::Arity)?;
-                match &rest.kind {
-                    NodeKind::Atom(Atom::Symbol { ns: None, name: _ }) => { /* ok */ }
+                let rest_node = iter.next().ok_or(EvalError::Arity)?;
+                match &rest_node.kind {
+                    NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+                        rest = Some(Rc::from(name.as_str()));
+                    }
                     _ => return Err(EvalError::InvalidBindingTarget),
                 }
                 if iter.peek().is_some() {
@@ -161,21 +164,23 @@ fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
                 }
                 break;
             }
-            NodeKind::Atom(Atom::Symbol { ns: None, name: _ }) => {
-                if variadic {
-                    return Err(EvalError::Arity);
-                }
-                arity += 1;
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+                params.push(Rc::from(name.as_str()));
             }
             _ => return Err(EvalError::InvalidBindingTarget),
         }
     }
 
+    let arity: u32 = params.len() as u32;
+
     let func = Function {
         name: None,
+        params,
+        rest,
         arity,
         variadic,
-        captures: env.capture_values(),
+        captures: env.capture_closure(),
+        body: items[2..].to_vec(),
     };
 
     Ok(Value::Function(Rc::new(func)))
@@ -218,13 +223,61 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
     let fn_value_named = match fn_value {
         Value::Function(f) => Value::Function(Rc::new(Function {
             name: Some(Rc::from(name.as_str())),
+            params: f.params.clone(),
+            rest: f.rest.clone(),
             arity: f.arity,
             variadic: f.variadic,
             captures: f.captures.clone(),
+            body: f.body.clone(),
         })),
         _ => fn_value,
     };
 
     env.define(name, fn_value_named);
     Ok(Value::Unit)
+}
+
+fn eval_apply(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+    let head = &items[0];
+    let callee = eval(head, env)?;
+
+    let Value::Function(func) = callee else {
+        return Err(EvalError::InvalidCallable);
+    };
+
+    let required = func.arity as usize;
+    let provided = items.len() - 1;
+
+    if (!func.variadic && provided != required) || (func.variadic && provided < required) {
+        return Err(EvalError::Arity);
+    }
+
+    let call_env = Rc::new(Env::new());
+
+    // load captures
+    for (name, value) in &func.captures {
+        call_env.define(name.clone(), value.clone());
+    }
+
+    // bind required params
+    for (idx, param) in func.params.iter().enumerate() {
+        let arg_val = eval(&items[idx + 1], env)?;
+        call_env.define(param.clone(), arg_val);
+    }
+
+    // bind rest if variadic
+    if func.variadic {
+        if let Some(rest_name) = &func.rest {
+            // collect but we don't yet model vectors; bind Unit placeholder
+            call_env.define(rest_name.clone(), Value::Unit);
+        }
+    } else if provided != required {
+        return Err(EvalError::Arity);
+    }
+
+    let mut last = Value::Unit;
+    for expr in &func.body {
+        last = eval(expr, &call_env)?;
+    }
+    Ok(last)
 }
