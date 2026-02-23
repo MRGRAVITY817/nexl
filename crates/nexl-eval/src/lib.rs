@@ -58,6 +58,11 @@ impl Env {
         }
         Err(EnvError::Unbound(name.to_string()))
     }
+
+    /// Snapshot the values in the current frame for closure capture.
+    pub fn capture_values(&self) -> Vec<Value> {
+        self.bindings.borrow().values().cloned().collect()
+    }
 }
 
 impl Default for Env {
@@ -689,6 +694,164 @@ mod tests {
         let r2 = eval(&expr2, &env).unwrap();
         assert_eq!(r1, Value::Str(Rc::from("yes")));
         assert_eq!(r2, Value::Str(Rc::from("no")));
+    }
+
+    // --- fn form tests ---
+
+    #[test]
+    fn fn_returns_function_value() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            vector(vec![lit(Atom::Symbol { ns: None, name: "x".into() })]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        match result {
+            Value::Function(func) => {
+                assert_eq!(func.name, None);
+                assert_eq!(func.arity, 1);
+                assert!(!func.variadic);
+            }
+            other => panic!("expected function, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fn_empty_params_allowed() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            vector(vec![]),
+            lit(Atom::Int { value: 42, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        match result {
+            Value::Function(func) => {
+                assert_eq!(func.arity, 0);
+                assert!(!func.variadic);
+            }
+            other => panic!("expected function, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fn_variadic_sets_flag() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "&".into() }),
+                lit(Atom::Symbol { ns: None, name: "rest".into() }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "rest".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        match result {
+            Value::Function(func) => {
+                assert_eq!(func.arity, 0);
+                assert!(func.variadic);
+            }
+            other => panic!("expected function, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fn_mixed_params_variadic_arity_counts_required() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "x".into() }),
+                lit(Atom::Symbol { ns: None, name: "y".into() }),
+                lit(Atom::Symbol { ns: None, name: "&".into() }),
+                lit(Atom::Symbol { ns: None, name: "rest".into() }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        match result {
+            Value::Function(func) => {
+                assert_eq!(func.arity, 2);
+                assert!(func.variadic);
+            }
+            other => panic!("expected function, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fn_captures_lexical_env_values() {
+        let env = Rc::new(Env::new());
+        env.define("x", Value::Int(10));
+
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            vector(vec![]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        match result {
+            Value::Function(func) => {
+                assert!(func.captures.contains(&Value::Int(10)));
+            }
+            other => panic!("expected function, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fn_params_must_be_symbols() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            vector(vec![lit(Atom::Int { value: 1, suffix: None })]),
+            lit(Atom::Int { value: 0, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidBindingTarget);
+    }
+
+    #[test]
+    fn fn_params_cannot_be_qualified() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            vector(vec![lit(Atom::Symbol { ns: Some("ns".into()), name: "x".into() })]),
+            lit(Atom::Int { value: 0, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidBindingTarget);
+    }
+
+    #[test]
+    fn fn_param_list_must_be_vector() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 0, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn fn_requires_body_expr() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "fn".into() }),
+            vector(vec![lit(Atom::Symbol { ns: None, name: "x".into() })]),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
     }
 
     #[test]

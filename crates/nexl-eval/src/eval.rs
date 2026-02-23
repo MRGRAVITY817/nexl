@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use meta::{Atom, Node, NodeKind};
-use nexl_runtime::Value;
+use nexl_runtime::{value::Function, Value};
 
 use crate::{Env, EvalError};
 
@@ -44,6 +44,7 @@ fn eval_list(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => eval_let(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => eval_do(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "if" => eval_if(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "fn" => eval_fn(items, env),
         NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
         _ => todo!("function application not yet implemented"),
     }
@@ -128,4 +129,53 @@ fn eval_if(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
     } else {
         eval(&items[3], env)
     }
+}
+
+fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+    if items.len() < 3 {
+        return Err(EvalError::Arity);
+    }
+
+    let params_node = &items[1];
+    let params = match &params_node.kind {
+        NodeKind::Vector(items) => items,
+        _ => return Err(EvalError::Arity),
+    };
+
+    let mut arity: u32 = 0;
+    let mut variadic = false;
+
+    let mut iter = params.iter().peekable();
+    while let Some(param) = iter.next() {
+        match &param.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "&" => {
+                variadic = true;
+                let rest = iter.next().ok_or(EvalError::Arity)?;
+                match &rest.kind {
+                    NodeKind::Atom(Atom::Symbol { ns: None, name: _ }) => { /* ok */ }
+                    _ => return Err(EvalError::InvalidBindingTarget),
+                }
+                if iter.peek().is_some() {
+                    return Err(EvalError::Arity);
+                }
+                break;
+            }
+            NodeKind::Atom(Atom::Symbol { ns: None, name: _ }) => {
+                if variadic {
+                    return Err(EvalError::Arity);
+                }
+                arity += 1;
+            }
+            _ => return Err(EvalError::InvalidBindingTarget),
+        }
+    }
+
+    let func = Function {
+        name: None,
+        arity,
+        variadic,
+        captures: env.capture_values(),
+    };
+
+    Ok(Value::Function(Rc::new(func)))
 }
