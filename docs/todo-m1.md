@@ -16,9 +16,9 @@
 ### nexl-eval — Tree-Walk Evaluator
 - [x] Add `nexl-eval` crate to workspace
 - [x] `Env` type — lexical environment (name → Value, parent chain)
-- [ ] `eval(node: &Node, env: &mut Env) -> Result<Value, EvalError>` signature
-- [ ] Atom evaluation: Int/Float/Ratio/Bool/Char/Str/Unit literals → Value
-- [ ] Atom evaluation: Keyword/Symbol lookup → Value
+- [x] `eval(node: &Node, env: &mut Env) -> Result<Value, EvalError>` signature
+- [x] Atom evaluation: Int/Float/Ratio/Bool/Char/Str/Unit literals → Value
+- [x] Atom evaluation: Keyword/Symbol lookup → Value
 - [ ] `def` form — bind name in current env
 - [ ] `let` form — sequential bindings in a new scope
 - [ ] `do` form — evaluate forms in sequence, return last
