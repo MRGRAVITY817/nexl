@@ -45,6 +45,7 @@ fn eval_list(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => eval_do(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "if" => eval_if(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "fn" => eval_fn(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "defn" => eval_defn(items, env),
         NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
         _ => todo!("function application not yet implemented"),
     }
@@ -178,4 +179,52 @@ fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
     };
 
     Ok(Value::Function(Rc::new(func)))
+}
+
+fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<Value, EvalError> {
+    if items.len() < 4 {
+        return Err(EvalError::Arity);
+    }
+
+    let name_node = &items[1];
+    let name = match &name_node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => return Err(EvalError::InvalidBindingTarget),
+    };
+
+    // Optional docstring at position 2 when it's a Str literal
+    let (params_idx, body_start) = match &items[2].kind {
+        NodeKind::Atom(Atom::Str(_)) => (3, 4),
+        _ => (2, 3),
+    };
+
+    if body_start > items.len() - 1 {
+        return Err(EvalError::Arity);
+    }
+
+    // Build an equivalent (fn [params] body...) form
+    let mut fn_items = Vec::new();
+    fn_items.push(Node {
+        kind: NodeKind::Atom(Atom::Symbol { ns: None, name: "fn".into() }),
+        span: items[0].span,
+        leading_comments: vec![],
+        trailing_comment: None,
+    });
+    fn_items.push(items[params_idx].clone());
+    fn_items.extend_from_slice(&items[body_start..]);
+
+    let fn_value = eval_list(&fn_items, env)?;
+
+    let fn_value_named = match fn_value {
+        Value::Function(f) => Value::Function(Rc::new(Function {
+            name: Some(Rc::from(name.as_str())),
+            arity: f.arity,
+            variadic: f.variadic,
+            captures: f.captures.clone(),
+        })),
+        _ => fn_value,
+    };
+
+    env.define(name, fn_value_named);
+    Ok(Value::Unit)
 }

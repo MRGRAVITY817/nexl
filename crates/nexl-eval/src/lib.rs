@@ -854,6 +854,141 @@ mod tests {
         assert_eq!(err, EvalError::Arity);
     }
 
+    // --- defn form tests ---
+
+    #[test]
+    fn defn_binds_function_in_env() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "defn".into() }),
+            lit(Atom::Symbol { ns: None, name: "foo".into() }),
+            vector(vec![lit(Atom::Symbol { ns: None, name: "x".into() })]),
+            lit(Atom::Symbol { ns: None, name: "x".into() }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Unit);
+
+        let binding = env.get("foo").expect("foo bound");
+        match binding {
+            Value::Function(func) => {
+                assert_eq!(func.name, Some(Rc::from("foo")));
+            }
+            other => panic!("expected function, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn defn_returns_unit() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "defn".into() }),
+            lit(Atom::Symbol { ns: None, name: "foo".into() }),
+            vector(vec![]),
+            lit(Atom::Int { value: 1, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Unit);
+    }
+
+    #[test]
+    fn defn_overwrites_existing_binding_locally() {
+        let env = Rc::new(Env::new());
+        env.define("foo", Value::Int(1));
+
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "defn".into() }),
+            lit(Atom::Symbol { ns: None, name: "foo".into() }),
+            vector(vec![]),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+
+        eval(&expr, &env).unwrap();
+        let binding = env.get("foo").unwrap();
+        match binding {
+            Value::Function(func) => assert_eq!(func.name, Some(Rc::from("foo"))),
+            other => panic!("expected function, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn defn_accepts_docstring_ignored_in_runtime() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "defn".into() }),
+            lit(Atom::Symbol { ns: None, name: "foo".into() }),
+            lit(Atom::Str("doc".into())),
+            vector(vec![]),
+            lit(Atom::Int { value: 3, suffix: None }),
+        ]);
+
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Unit);
+        assert!(matches!(env.get("foo"), Some(Value::Function(_))));
+    }
+
+    #[test]
+    fn defn_param_list_must_be_vector() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "defn".into() }),
+            lit(Atom::Symbol { ns: None, name: "foo".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 0, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn defn_param_must_be_unqualified_symbol() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "defn".into() }),
+            lit(Atom::Symbol { ns: None, name: "foo".into() }),
+            vector(vec![lit(Atom::Str("not-a-symbol".into()))]),
+            lit(Atom::Int { value: 0, suffix: None }),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::InvalidBindingTarget);
+    }
+
+    #[test]
+    fn defn_requires_body_expr() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "defn".into() }),
+            lit(Atom::Symbol { ns: None, name: "foo".into() }),
+            vector(vec![lit(Atom::Symbol { ns: None, name: "x".into() })]),
+        ]);
+
+        let err = eval(&expr, &env).unwrap_err();
+        assert_eq!(err, EvalError::Arity);
+    }
+
+    #[test]
+    fn defn_captures_lexical_env() {
+        let env = Rc::new(Env::new());
+        env.define("y", Value::Int(9));
+
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "defn".into() }),
+            lit(Atom::Symbol { ns: None, name: "foo".into() }),
+            vector(vec![]),
+            lit(Atom::Symbol { ns: None, name: "y".into() }),
+        ]);
+
+        eval(&expr, &env).unwrap();
+        let binding = env.get("foo").unwrap();
+        match binding {
+            Value::Function(func) => assert!(func.captures.contains(&Value::Int(9))),
+            other => panic!("expected function, got {:?}", other),
+        }
+    }
+
     #[test]
     fn def_error_on_symbol_arity() {
         let env = Rc::new(Env::new());
