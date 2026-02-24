@@ -18,10 +18,10 @@
 - [x] `Scheme` — polymorphic type (forall quantifier for let-generalization)
 
 ### nexl-types — Unification
-- [ ] `unify(a, b, subst)` — Robinson unification of two types
-- [ ] Occurs check (prevents infinite types)
-- [ ] Error recovery: continue after first unification failure
-- [ ] Type error representation with source spans
+- [x] `unify(a, b, subst)` — Robinson unification of two types
+- [x] Occurs check (prevents infinite types)
+- [x] Error recovery: continue after first unification failure
+- [x] Type error representation with source spans
 
 ### nexl-infer — Bidirectional Inference Engine
 - [ ] Add `nexl-infer` crate to workspace
@@ -55,7 +55,7 @@
 ### Test Suite
 - [x] Unit tests for `Type` construction and display
 - [x] Unit tests for substitution and occurs check
-- [ ] Unit tests for unification (success and failure cases)
+- [x] Unit tests for unification (success and failure cases)
 - [ ] Unit tests for literal type synthesis
 - [ ] Unit tests for each core form inference
 - [ ] Unit tests for let-generalization (polymorphism)
