@@ -11,7 +11,7 @@
 ## Evaluation (`nexl-eval`)
 - [x] Evaluate vector literals `[1 2 3]` → `Value::Vec`
 - [x] Evaluate map literals `{:a 1 :b 2}` → `Value::Map`
-- [ ] Evaluate set literals `#{1 2 3}` → `Value::Set`
+- [x] Evaluate set literals `#{1 2 3}` → `Value::Set`
 
 ## Type Inference (`nexl-infer`)
 - [ ] Infer vector literals as `(Vec a)` (homogeneous elements)
