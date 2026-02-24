@@ -56,6 +56,7 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("let") => synth_let(items, env, state),
         Some("do") => synth_do(items, env, state),
         Some("if") => synth_if(items, env, state),
+        Some("fn") => synth_fn(items, env, state),
         _ => unimplemented!("synth_list: {:?}", items.first().map(|n| &n.kind)),
     }
 }
@@ -87,6 +88,60 @@ fn head_sym(items: &[Node]) -> Option<&str> {
         Some(Node { kind: NodeKind::Atom(Atom::Symbol { ns: None, name }), .. }) => Some(name),
         _ => None,
     }
+}
+
+/// Synthesize the type of a `(fn [params...] body)` form.
+///
+/// Each parameter receives a fresh type variable.  The body is inferred in
+/// an environment extended with those bindings.  Returns
+/// `(Fn [param-types...] -> body-type)` with the substitution applied (spec §4.3).
+fn synth_fn(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // Structure: (fn <params-vec> <body>) — exactly 3 elements.
+    if items.len() != 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "fn expects (fn [params...] body), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let param_nodes = match &items[1].kind {
+        NodeKind::Vector(elems) => elems,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "fn parameter list must be a vector".to_string(),
+            }));
+        }
+    };
+
+    // Allocate a fresh type var for each parameter and extend the environment.
+    let mut param_types: Vec<Type> = Vec::new();
+    let mut body_env = env.clone();
+
+    for param in param_nodes {
+        let name = match &param.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "fn parameter names must be unqualified symbols".to_string(),
+                }));
+            }
+        };
+        let tv = state.fresh_var();
+        param_types.push(tv.clone());
+        body_env = body_env.extend(name, Scheme::mono(tv));
+    }
+
+    // Infer the body type in the extended environment.
+    let ret_ty = synth(&items[2], &body_env, state)?;
+
+    // Apply the accumulated substitution so any param vars that were unified
+    // during body inference are resolved in the returned type.
+    let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
+    let ret_ty = state.subst.apply(&ret_ty);
+
+    Ok(Type::Fn { params: param_types, ret: Box::new(ret_ty) })
 }
 
 /// Synthesize the type of an `(if cond then else)` form.
@@ -321,6 +376,13 @@ mod tests {
     use nexl_ast::NodeKind;
     use super::{InferState, check, infer_def, synth};
     use crate::Env;
+
+    /// Build `(fn [param...] body)` as a List node.
+    fn fn_node(params: Vec<&str>, body: Node) -> Node {
+        let head = sym_node("fn");
+        let pvec = Node::new(NodeKind::Vector(params.iter().map(|p| sym_node(p)).collect()), syn_span());
+        Node::new(NodeKind::List(vec![head, pvec, body]), syn_span())
+    }
 
     /// Build `(if cond then else)` as a List node.
     fn if_node(cond: Node, then: Node, else_: Node) -> Node {
@@ -672,6 +734,130 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
             "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // fn form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (fn) --
+    #[test]
+    fn infer_fn_no_params() {
+        // (fn [] 42) → (Fn [] -> Int)
+        let (env, mut state) = empty();
+        let node = fn_node(vec![], int_node(42));
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Fn { params: vec![], ret: Box::new(Type::Int) });
+    }
+
+    // -- Test 2 (fn) --
+    #[test]
+    fn infer_fn_body_is_constant() {
+        // (fn [x] 42) → (Fn [t?] -> Int); param stays as a free var
+        let (env, mut state) = empty();
+        let node = fn_node(vec!["x"], int_node(42));
+        let ty = synth(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Fn { params, ret } => {
+                assert_eq!(params.len(), 1);
+                assert!(matches!(params[0], Type::Var(_)), "param should be a free var");
+                assert_eq!(*ret, Type::Int);
+            }
+            other => panic!("expected Fn type, got {other:?}"),
+        }
+    }
+
+    // -- Test 3 (fn) --
+    #[test]
+    fn infer_fn_identity() {
+        // (fn [x] x) → (Fn [t?] -> t?) where param and ret are the same var
+        let (env, mut state) = empty();
+        let node = fn_node(vec!["x"], sym_node("x"));
+        let ty = synth(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Fn { params, ret } => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0], *ret, "param and return type must be the same var");
+            }
+            other => panic!("expected Fn type, got {other:?}"),
+        }
+    }
+
+    // -- Test 4 (fn) --
+    #[test]
+    fn infer_fn_two_params_returns_first() {
+        // (fn [x y] x) → (Fn [t0 t1] -> t0); two distinct vars, ret matches first
+        let (env, mut state) = empty();
+        let node = fn_node(vec!["x", "y"], sym_node("x"));
+        let ty = synth(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Fn { params, ret } => {
+                assert_eq!(params.len(), 2);
+                assert_ne!(params[0], params[1], "params should have distinct type vars");
+                assert_eq!(params[0], *ret, "return type should match first param");
+            }
+            other => panic!("expected Fn type, got {other:?}"),
+        }
+    }
+
+    // -- Test 5 (fn) --
+    #[test]
+    fn infer_fn_body_error() {
+        // (fn [x] unknown) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = fn_node(vec!["x"], sym_node("unknown"));
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 6 (fn) --
+    #[test]
+    fn infer_fn_malformed_wrong_arity() {
+        // (fn [x]) — missing body → MalformedForm
+        let (env, mut state) = empty();
+        let pvec = Node::new(NodeKind::Vector(vec![sym_node("x")]), syn_span());
+        let node = Node::new(NodeKind::List(vec![sym_node("fn"), pvec]), syn_span());
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 7 (fn) --
+    #[test]
+    fn infer_fn_malformed_params_not_vector() {
+        // (fn 42 body) — params not a Vector → MalformedForm
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("fn"), int_node(42), int_node(99)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 8 (fn) --
+    #[test]
+    fn infer_fn_malformed_param_not_symbol() {
+        // (fn [42] body) — param name not a symbol → MalformedForm
+        let (env, mut state) = empty();
+        let pvec = Node::new(NodeKind::Vector(vec![int_node(42)]), syn_span());
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("fn"), pvec, int_node(99)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
         );
     }
 

@@ -33,7 +33,7 @@
 - [x] Infer `let` form — sequential bindings with let-generalization
 - [x] Infer `do` form — check each expr, return type of last
 - [x] Infer `if` form — condition must be Bool, branches must unify
-- [ ] Infer `fn` form — fresh type vars for params, infer body
+- [x] Infer `fn` form — fresh type vars for params, infer body
 - [ ] Infer `defn` form — sugar for def + fn, same as fn
 - [ ] Infer function application — callee must be Fn, unify arg types
 - [ ] Infer `loop`/`recur` — loop vars typed from init, recur must match
