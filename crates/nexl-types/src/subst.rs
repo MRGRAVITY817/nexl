@@ -36,6 +36,10 @@ impl Subst {
                 params: params.iter().map(|p| self.apply(p)).collect(),
                 ret: Box::new(self.apply(ret)),
             },
+            Type::Adt { name, args } => Type::Adt {
+                name: name.clone(),
+                args: args.iter().map(|a| self.apply(a)).collect(),
+            },
             // Primitives and fixed-width types are unchanged.
             _ => ty.clone(),
         }

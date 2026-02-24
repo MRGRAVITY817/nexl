@@ -121,6 +121,7 @@ fn occurs_in(tv: TypeVar, ty: &Type) -> bool {
         Type::Fn { params, ret } => {
             params.iter().any(|p| occurs_in(tv, p)) || occurs_in(tv, ret)
         }
+        Type::Adt { args, .. } => args.iter().any(|a| occurs_in(tv, a)),
         _ => false,
     }
 }
@@ -134,6 +135,11 @@ fn occurs_in(tv: TypeVar, ty: &Type) -> bool {
 /// Returns `Ok(())` on success.  On failure the substitution is left in an
 /// **unspecified** state; callers should not rely on its contents after an
 /// error.
+///
+/// `TypeError` is intentionally unboxed — callers in nexl-infer propagate
+/// errors with `?` and the hot path succeeds, so boxing would add overhead
+/// on the success path.  The size trade-off is accepted.
+#[allow(clippy::result_large_err)]
 pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
     let a = normalize(subst.apply(a));
     let b = normalize(subst.apply(b));
@@ -222,6 +228,22 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
                 unify(p_a, p_b, subst)?;
             }
             unify(&ra, &rb, subst)
+        }
+
+        // Two ADT types: same name and same number of args → unify args pairwise.
+        (Type::Adt { name: na, args: aa }, Type::Adt { name: nb, args: ab }) => {
+            if na != nb || aa.len() != ab.len() {
+                return Err(TypeError::new(TypeErrorKind::Mismatch {
+                    expected: a.clone(),
+                    found: b.clone(),
+                }));
+            }
+            let aa = aa.clone();
+            let ab = ab.clone();
+            for (arg_a, arg_b) in aa.iter().zip(ab.iter()) {
+                unify(arg_a, arg_b, subst)?;
+            }
+            Ok(())
         }
 
         // Mismatch — two distinct concrete types.
@@ -553,6 +575,75 @@ mod tests {
         let msg = err.to_string();
         assert!(!msg.contains("byte"), "unexpected 'byte' in '{msg}'");
         assert!(!msg.contains('['), "unexpected '[' in '{msg}'");
+    }
+
+    // -----------------------------------------------------------------------
+    // ADT unification tests
+    // -----------------------------------------------------------------------
+
+    fn adt(name: &str, args: Vec<Type>) -> Type {
+        Type::Adt { name: name.to_string(), args }
+    }
+
+    // -- ADT Test 15 --
+    #[test]
+    fn unify_adt_same_concrete() {
+        // Color = Color succeeds (spec §5.7)
+        let mut s = Subst::empty();
+        assert!(unify(&adt("Color", vec![]), &adt("Color", vec![]), &mut s).is_ok());
+    }
+
+    // -- ADT Test 16 --
+    #[test]
+    fn unify_adt_same_name_unify_args() {
+        // (Option t0) = (Option Int) → t0 = Int
+        let mut s = Subst::empty();
+        let a = adt("Option", vec![tv(0)]);
+        let b = adt("Option", vec![Type::Int]);
+        unify(&a, &b, &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), Type::Int);
+    }
+
+    // -- ADT Test 17 --
+    #[test]
+    fn unify_adt_different_names() {
+        // Color ≠ (Option Int) → Mismatch
+        let mut s = Subst::empty();
+        let err = unify(&adt("Color", vec![]), &adt("Shape", vec![]), &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+    }
+
+    // -- ADT Test 18 --
+    #[test]
+    fn unify_adt_arg_mismatch() {
+        // (Option Int) ≠ (Option Str) → Mismatch
+        let mut s = Subst::empty();
+        let a = adt("Option", vec![Type::Int]);
+        let b = adt("Option", vec![Type::Str]);
+        let err = unify(&a, &b, &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+    }
+
+    // -- ADT Test 19 --
+    #[test]
+    fn unify_adt_var_resolves() {
+        // t0 = Color → t0 is bound to Color
+        let mut s = Subst::empty();
+        unify(&tv(0), &adt("Color", vec![]), &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), adt("Color", vec![]));
+    }
+
+    // -- ADT Test 20 --
+    #[test]
+    fn occurs_check_adt() {
+        // t0 = (Option t0) → InfiniteType
+        let mut s = Subst::empty();
+        let cyclic = adt("Option", vec![tv(0)]);
+        let err = unify(&tv(0), &cyclic, &mut s).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
+            "expected InfiniteType(t0), got {err:?}"
+        );
     }
 
     // -- Test 23 (error-messages) --

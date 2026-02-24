@@ -42,6 +42,19 @@ pub enum Type {
         params: Vec<Type>,
         ret: Box<Type>,
     },
+
+    /// Applied algebraic data type: a named type constructor applied to zero
+    /// or more type arguments.
+    ///
+    /// - `Color` → `Adt { name: "Color", args: [] }`
+    /// - `(Option Int)` → `Adt { name: "Option", args: [Int] }`
+    /// - `(Result Int Str)` → `Adt { name: "Result", args: [Int, Str] }`
+    ///
+    /// (spec §5.7)
+    Adt {
+        name: String,
+        args: Vec<Type>,
+    },
 }
 
 impl fmt::Display for Type {
@@ -78,8 +91,63 @@ impl fmt::Display for Type {
                 }
                 write!(f, "] -> {ret})")
             }
+            Type::Adt { name, args } => {
+                if args.is_empty() {
+                    write!(f, "{name}")
+                } else {
+                    write!(f, "({name}")?;
+                    for arg in args {
+                        write!(f, " {arg}")?;
+                    }
+                    write!(f, ")")
+                }
+            }
         }
     }
+}
+
+/// A single constructor in an ADT definition.
+///
+/// - Nullary: `Red` in `(deftype Color | Red | Green | Blue)` — `fields` is empty.
+/// - N-ary: `Some` in `(deftype Option [a] | (Some a))` — `fields` has one entry.
+///
+/// Field types are expressed relative to the type definition's parameter list
+/// and may contain `Type::Var` entries that correspond to the `TypeDef::params`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Constructor {
+    /// Constructor name (e.g. `"Red"`, `"Some"`, `"Ok"`).
+    pub name: String,
+    /// Positional field types.  Empty for nullary constructors.
+    pub fields: Vec<Type>,
+}
+
+impl Constructor {
+    /// Create a nullary constructor (no fields).
+    pub fn nullary(name: impl Into<String>) -> Self {
+        Self { name: name.into(), fields: vec![] }
+    }
+
+    /// Create an n-ary constructor with the given field types.
+    pub fn nary(name: impl Into<String>, fields: Vec<Type>) -> Self {
+        Self { name: name.into(), fields }
+    }
+}
+
+/// A type definition: name, type parameters, and a list of constructors.
+///
+/// Represents the result of parsing a `deftype` form (spec §5.7):
+/// - `(deftype Color | Red | Green | Blue)` — three nullary constructors, no params.
+/// - `(deftype Option [a] | None | (Some a))` — one param `a`, two constructors.
+/// - `(deftype Result [a e] | (Ok a) | (Err e))` — two params, two constructors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeDef {
+    /// The declared type name (e.g. `"Color"`, `"Option"`).
+    pub name: String,
+    /// Ordered list of universally-quantified type parameters.
+    /// Each entry is a `TypeVar` that may appear in constructor field types.
+    pub params: Vec<TypeVar>,
+    /// The constructors, in declaration order.
+    pub constructors: Vec<Constructor>,
 }
 
 /// Monotonically increasing source of fresh [`TypeVar`]s.
@@ -133,6 +201,9 @@ impl Type {
                 for p in params { p.collect_free_vars(result); }
                 ret.collect_free_vars(result);
             }
+            Type::Adt { args, .. } => {
+                for arg in args { arg.collect_free_vars(result); }
+            }
             _ => {}
         }
     }
@@ -179,6 +250,199 @@ impl Scheme {
 mod tests {
     use super::*;
     use crate::Subst;
+
+    // -----------------------------------------------------------------------
+    // ADT type tests
+    // -----------------------------------------------------------------------
+
+    // -- ADT Test 1 --
+    #[test]
+    fn adt_construction_no_args() {
+        let ty = Type::Adt { name: "Color".to_string(), args: vec![] };
+        assert_eq!(ty, Type::Adt { name: "Color".to_string(), args: vec![] });
+    }
+
+    // -- ADT Test 2 --
+    #[test]
+    fn adt_construction_with_args() {
+        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
+        assert_eq!(ty, Type::Adt { name: "Option".to_string(), args: vec![Type::Int] });
+    }
+
+    // -- ADT Test 3 --
+    #[test]
+    fn adt_display_no_args() {
+        let ty = Type::Adt { name: "Color".to_string(), args: vec![] };
+        assert_eq!(ty.to_string(), "Color");
+    }
+
+    // -- ADT Test 4 --
+    #[test]
+    fn adt_display_one_arg() {
+        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
+        assert_eq!(ty.to_string(), "(Option Int)");
+    }
+
+    // -- ADT Test 5 --
+    #[test]
+    fn adt_display_two_args() {
+        let ty = Type::Adt {
+            name: "Result".to_string(),
+            args: vec![Type::Int, Type::Str],
+        };
+        assert_eq!(ty.to_string(), "(Result Int Str)");
+    }
+
+    // -- ADT Test 6 --
+    #[test]
+    fn adt_display_nested() {
+        let inner = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
+        let outer = Type::Adt { name: "Option".to_string(), args: vec![inner] };
+        assert_eq!(outer.to_string(), "(Option (Option Int))");
+    }
+
+    // -- ADT Test 7 --
+    #[test]
+    fn adt_equality_same() {
+        let a = Type::Adt { name: "Color".to_string(), args: vec![] };
+        let b = Type::Adt { name: "Color".to_string(), args: vec![] };
+        assert_eq!(a, b);
+    }
+
+    // -- ADT Test 8 --
+    #[test]
+    fn adt_equality_different_name() {
+        let a = Type::Adt { name: "Color".to_string(), args: vec![] };
+        let b = Type::Adt { name: "Shape".to_string(), args: vec![] };
+        assert_ne!(a, b);
+    }
+
+    // -- ADT Test 9 --
+    #[test]
+    fn adt_equality_different_args() {
+        let a = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
+        let b = Type::Adt { name: "Option".to_string(), args: vec![Type::Str] };
+        assert_ne!(a, b);
+    }
+
+    // -- ADT Test 10 --
+    #[test]
+    fn adt_free_vars_concrete() {
+        // (Option Int) has no free type variables.
+        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
+        assert!(ty.free_vars().is_empty());
+    }
+
+    // -- ADT Test 11 --
+    #[test]
+    fn adt_free_vars_with_var() {
+        // (Option t0) has free var {t0}.
+        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Var(TypeVar(0))] };
+        let fvs = ty.free_vars();
+        assert_eq!(fvs.len(), 1);
+        assert!(fvs.contains(&TypeVar(0)));
+    }
+
+    // -- ADT Test 12 --
+    #[test]
+    fn adt_free_vars_multiple() {
+        // (Result t0 t1) has free vars {t0, t1}.
+        let ty = Type::Adt {
+            name: "Result".to_string(),
+            args: vec![Type::Var(TypeVar(0)), Type::Var(TypeVar(1))],
+        };
+        let fvs = ty.free_vars();
+        assert_eq!(fvs.len(), 2);
+        assert!(fvs.contains(&TypeVar(0)));
+        assert!(fvs.contains(&TypeVar(1)));
+    }
+
+    // -- ADT Test 13 --
+    #[test]
+    fn subst_apply_adt() {
+        // subst {t0→Int} applied to (Option t0) → (Option Int)
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Int);
+        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Var(TypeVar(0))] };
+        let result = s.apply(&ty);
+        assert_eq!(result, Type::Adt { name: "Option".to_string(), args: vec![Type::Int] });
+    }
+
+    // -- ADT Test 14 --
+    #[test]
+    fn subst_apply_adt_no_match() {
+        // subst {t0→Int} leaves (Option t1) unchanged.
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Int);
+        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Var(TypeVar(1))] };
+        let result = s.apply(&ty);
+        assert_eq!(result, Type::Adt { name: "Option".to_string(), args: vec![Type::Var(TypeVar(1))] });
+    }
+
+    // -----------------------------------------------------------------------
+    // TypeDef and Constructor tests
+    // -----------------------------------------------------------------------
+
+    // -- ADT Test 21 --
+    #[test]
+    fn typedef_simple_enum() {
+        // (deftype Color | Red | Green | Blue)
+        let td = TypeDef {
+            name: "Color".to_string(),
+            params: vec![],
+            constructors: vec![
+                Constructor::nullary("Red"),
+                Constructor::nullary("Green"),
+                Constructor::nullary("Blue"),
+            ],
+        };
+        assert_eq!(td.name, "Color");
+        assert!(td.params.is_empty());
+        assert_eq!(td.constructors.len(), 3);
+        assert_eq!(td.constructors[0].name, "Red");
+        assert_eq!(td.constructors[1].name, "Green");
+        assert_eq!(td.constructors[2].name, "Blue");
+    }
+
+    // -- ADT Test 22 --
+    #[test]
+    fn typedef_parameterized() {
+        // (deftype Option [a] | None | (Some a))
+        // params: [t0], constructors: [None(nullary), Some(fields: [t0])]
+        let t0 = TypeVar(0);
+        let td = TypeDef {
+            name: "Option".to_string(),
+            params: vec![t0],
+            constructors: vec![
+                Constructor::nullary("None"),
+                Constructor::nary("Some", vec![Type::Var(t0)]),
+            ],
+        };
+        assert_eq!(td.name, "Option");
+        assert_eq!(td.params, vec![t0]);
+        assert_eq!(td.constructors.len(), 2);
+        assert_eq!(td.constructors[0].name, "None");
+        assert!(td.constructors[0].fields.is_empty());
+        assert_eq!(td.constructors[1].name, "Some");
+        assert_eq!(td.constructors[1].fields, vec![Type::Var(t0)]);
+    }
+
+    // -- ADT Test 23 --
+    #[test]
+    fn constructor_nullary() {
+        let c = Constructor::nullary("Red");
+        assert_eq!(c.name, "Red");
+        assert!(c.fields.is_empty());
+    }
+
+    // -- ADT Test 24 --
+    #[test]
+    fn constructor_with_field() {
+        let t0 = TypeVar(0);
+        let c = Constructor::nary("Some", vec![Type::Var(t0)]);
+        assert_eq!(c.name, "Some");
+        assert_eq!(c.fields, vec![Type::Var(t0)]);
+    }
 
     // -- Test 1 --
     #[test]
