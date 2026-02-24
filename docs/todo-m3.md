@@ -22,60 +22,60 @@
 - [x] `Subst::apply` and `free_vars` for Record and Tuple
 
 ### nexl-infer — deftype Form
-- [ ] Parse `(deftype Name | Ctor1 | (Ctor2 a))` — sum type declarations
-- [ ] Parse `(deftype Name {:field Type})` — record type declarations
-- [ ] Parse `(deftype Name [a] | ...)` — parameterized ADTs
-- [ ] Register type definition and constructors in typing environment
-- [ ] Nullary constructors as polymorphic constants: `None : (Option a)`
-- [ ] N-ary constructors as functions: `Some : (Fn [a] -> (Option a))`
-- [ ] Record constructors: `Point : (Fn [{:x Float :y Float}] -> Point)`
+- [x] Parse `(deftype Name | Ctor1 | (Ctor2 a))` — sum type declarations
+- [x] Parse `(deftype Name {:field Type})` — record type declarations
+- [x] Parse `(deftype Name [a] | ...)` — parameterized ADTs
+- [x] Register type definition and constructors in typing environment
+- [x] Nullary constructors as polymorphic constants: `None : (Option a)`
+- [x] N-ary constructors as functions: `Some : (Fn [a] -> (Option a))`
+- [x] Record constructors: `Point : (Fn [{:x Float :y Float}] -> Point)`
 
 ### nexl-infer — Constructor Application & Field Access
-- [ ] Infer constructor application: `(Some 42)` → `(Option Int)`
-- [ ] Infer nullary constructor usage: `None` → `(Option a)` (fresh var)
-- [ ] Infer record construction: `(Point {:x 1.0 :y 2.0})` → `Point`
-- [ ] Infer keyword field access: `(:x point)` → `Float`
+- [x] Infer constructor application: `(Some 42)` → `(Option Int)`
+- [x] Infer nullary constructor usage: `None` → `(Option a)` (fresh var)
+- [x] Infer record construction: `(Point {:x 1.0 :y 2.0})` → `Point`
+- [x] Infer keyword field access: `(:x point)` → `Float`
 
 ### nexl-ast — Pattern AST
-- [ ] `Pattern` enum: Wildcard, Var, Literal, Constructor, Record, Tuple, Or, As
-- [ ] Pattern parser: AST nodes → Pattern (from match arm position)
+- [x] `Pattern` enum: Wildcard, Var, Literal, Constructor, Record, Tuple, Or, As
+- [x] Pattern parser: AST nodes → Pattern (from match arm position)
 
 ### nexl-infer — match Form
-- [ ] Parse `(match expr arm1 arm2 ...)` — extract scrutinee + pattern/body pairs
-- [ ] Infer scrutinee type
-- [ ] Check each pattern against scrutinee type
-- [ ] Unify all arm body types to a common return type
-- [ ] `:when` guard — guard must be Bool
-- [ ] Wildcard and variable patterns
-- [ ] Literal patterns (Int, Str, Bool, Keyword)
-- [ ] Constructor patterns: `(Some x)`, `None`
-- [ ] Nested patterns
+- [x] Parse `(match expr arm1 arm2 ...)` — extract scrutinee + pattern/body pairs
+- [x] Infer scrutinee type
+- [x] Check each pattern against scrutinee type
+- [x] Unify all arm body types to a common return type
+- [x] `:when` guard — guard must be Bool
+- [x] Wildcard and variable patterns
+- [x] Literal patterns (Int, Str, Bool, Keyword)
+- [x] Constructor patterns: `(Some x)`, `None`
+- [x] Nested patterns
 
 ### nexl-infer — Exhaustiveness Checking
-- [ ] Missing patterns → compile error
-- [ ] Redundant patterns → warning
-- [ ] Exhaustiveness for simple enums (Color, Bool)
-- [ ] Exhaustiveness for parameterized ADTs (Option, Result)
+- [x] Missing patterns → compile error
+- [x] Redundant patterns → warning
+- [x] Exhaustiveness for simple enums (Color, Bool)
+- [x] Exhaustiveness for parameterized ADTs (Option, Result)
 
 ### nexl-infer — let Destructuring
-- [ ] Constructor patterns in let: `(let [(Some v) maybe-val] ...)`
-- [ ] Record destructuring: `(let [{:keys [x y]} point] ...)`
-- [ ] Tuple destructuring: `(let [[a b] pair] ...)`
-- [ ] Non-exhaustive let pattern → compile error
+- [x] Constructor patterns in let: `(let [(Some v) maybe-val] ...)`
+- [x] Record destructuring: `(let [{:keys [x y]} point] ...)`
+- [x] Tuple destructuring: `(let [[a b] pair] ...)`
+- [x] Non-exhaustive let pattern → compile error
 
 ### Built-in ADTs
-- [ ] `Option` type definition (ADR-005)
-- [ ] `Result` type definition (ADR-005)
+- [x] `Option` type definition (ADR-005)
+- [x] `Result` type definition (ADR-005)
 
 ### Test Suite
-- [ ] Unit tests for ADT type construction, display, unification
-- [ ] Unit tests for Record and Tuple types
-- [ ] Unit tests for deftype form parsing and env registration
-- [ ] Unit tests for constructor application inference
-- [ ] Unit tests for match form inference
-- [ ] Unit tests for exhaustiveness checking
-- [ ] Unit tests for let destructuring
-- [ ] Integration test: deftype + match end-to-end
+- [x] Unit tests for ADT type construction, display, unification
+- [x] Unit tests for Record and Tuple types
+- [x] Unit tests for deftype form parsing and env registration
+- [x] Unit tests for constructor application inference
+- [x] Unit tests for match form inference
+- [x] Unit tests for exhaustiveness checking
+- [x] Unit tests for let destructuring
+- [x] Integration test: deftype + match end-to-end
 
 ## Blocked
 (none)

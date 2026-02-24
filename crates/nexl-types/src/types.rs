@@ -141,12 +141,18 @@ pub struct Constructor {
 impl Constructor {
     /// Create a nullary constructor (no fields).
     pub fn nullary(name: impl Into<String>) -> Self {
-        Self { name: name.into(), fields: vec![] }
+        Self {
+            name: name.into(),
+            fields: vec![],
+        }
     }
 
     /// Create an n-ary constructor with the given field types.
     pub fn nary(name: impl Into<String>, fields: Vec<Type>) -> Self {
-        Self { name: name.into(), fields }
+        Self {
+            name: name.into(),
+            fields,
+        }
     }
 }
 
@@ -213,13 +219,19 @@ impl Type {
 
     fn collect_free_vars(&self, result: &mut HashSet<TypeVar>) {
         match self {
-            Type::Var(tv) => { result.insert(*tv); }
+            Type::Var(tv) => {
+                result.insert(*tv);
+            }
             Type::Fn { params, ret } => {
-                for p in params { p.collect_free_vars(result); }
+                for p in params {
+                    p.collect_free_vars(result);
+                }
                 ret.collect_free_vars(result);
             }
             Type::Adt { args, .. } => {
-                for arg in args { arg.collect_free_vars(result); }
+                for arg in args {
+                    arg.collect_free_vars(result);
+                }
             }
             Type::Record { fields, .. } => {
                 for (_, field_ty) in fields {
@@ -266,7 +278,10 @@ impl Scheme {
 
         let mut subst = Subst::empty();
         for &tv in &self.forall {
-            let fresh = supply.fresh();
+            let mut fresh = supply.fresh();
+            while fresh == tv {
+                fresh = supply.fresh();
+            }
             subst.insert(tv, Type::Var(fresh));
         }
         subst.apply(&self.body)
@@ -285,28 +300,52 @@ mod tests {
     // -- ADT Test 1 --
     #[test]
     fn adt_construction_no_args() {
-        let ty = Type::Adt { name: "Color".to_string(), args: vec![] };
-        assert_eq!(ty, Type::Adt { name: "Color".to_string(), args: vec![] });
+        let ty = Type::Adt {
+            name: "Color".to_string(),
+            args: vec![],
+        };
+        assert_eq!(
+            ty,
+            Type::Adt {
+                name: "Color".to_string(),
+                args: vec![]
+            }
+        );
     }
 
     // -- ADT Test 2 --
     #[test]
     fn adt_construction_with_args() {
-        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
-        assert_eq!(ty, Type::Adt { name: "Option".to_string(), args: vec![Type::Int] });
+        let ty = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Int],
+        };
+        assert_eq!(
+            ty,
+            Type::Adt {
+                name: "Option".to_string(),
+                args: vec![Type::Int]
+            }
+        );
     }
 
     // -- ADT Test 3 --
     #[test]
     fn adt_display_no_args() {
-        let ty = Type::Adt { name: "Color".to_string(), args: vec![] };
+        let ty = Type::Adt {
+            name: "Color".to_string(),
+            args: vec![],
+        };
         assert_eq!(ty.to_string(), "Color");
     }
 
     // -- ADT Test 4 --
     #[test]
     fn adt_display_one_arg() {
-        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
+        let ty = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Int],
+        };
         assert_eq!(ty.to_string(), "(Option Int)");
     }
 
@@ -323,32 +362,56 @@ mod tests {
     // -- ADT Test 6 --
     #[test]
     fn adt_display_nested() {
-        let inner = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
-        let outer = Type::Adt { name: "Option".to_string(), args: vec![inner] };
+        let inner = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Int],
+        };
+        let outer = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![inner],
+        };
         assert_eq!(outer.to_string(), "(Option (Option Int))");
     }
 
     // -- ADT Test 7 --
     #[test]
     fn adt_equality_same() {
-        let a = Type::Adt { name: "Color".to_string(), args: vec![] };
-        let b = Type::Adt { name: "Color".to_string(), args: vec![] };
+        let a = Type::Adt {
+            name: "Color".to_string(),
+            args: vec![],
+        };
+        let b = Type::Adt {
+            name: "Color".to_string(),
+            args: vec![],
+        };
         assert_eq!(a, b);
     }
 
     // -- ADT Test 8 --
     #[test]
     fn adt_equality_different_name() {
-        let a = Type::Adt { name: "Color".to_string(), args: vec![] };
-        let b = Type::Adt { name: "Shape".to_string(), args: vec![] };
+        let a = Type::Adt {
+            name: "Color".to_string(),
+            args: vec![],
+        };
+        let b = Type::Adt {
+            name: "Shape".to_string(),
+            args: vec![],
+        };
         assert_ne!(a, b);
     }
 
     // -- ADT Test 9 --
     #[test]
     fn adt_equality_different_args() {
-        let a = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
-        let b = Type::Adt { name: "Option".to_string(), args: vec![Type::Str] };
+        let a = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Int],
+        };
+        let b = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Str],
+        };
         assert_ne!(a, b);
     }
 
@@ -356,7 +419,10 @@ mod tests {
     #[test]
     fn adt_free_vars_concrete() {
         // (Option Int) has no free type variables.
-        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Int] };
+        let ty = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Int],
+        };
         assert!(ty.free_vars().is_empty());
     }
 
@@ -364,7 +430,10 @@ mod tests {
     #[test]
     fn adt_free_vars_with_var() {
         // (Option t0) has free var {t0}.
-        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Var(TypeVar(0))] };
+        let ty = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Var(TypeVar(0))],
+        };
         let fvs = ty.free_vars();
         assert_eq!(fvs.len(), 1);
         assert!(fvs.contains(&TypeVar(0)));
@@ -390,9 +459,18 @@ mod tests {
         // subst {t0→Int} applied to (Option t0) → (Option Int)
         let mut s = Subst::empty();
         s.insert(TypeVar(0), Type::Int);
-        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Var(TypeVar(0))] };
+        let ty = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Var(TypeVar(0))],
+        };
         let result = s.apply(&ty);
-        assert_eq!(result, Type::Adt { name: "Option".to_string(), args: vec![Type::Int] });
+        assert_eq!(
+            result,
+            Type::Adt {
+                name: "Option".to_string(),
+                args: vec![Type::Int]
+            }
+        );
     }
 
     // -- ADT Test 14 --
@@ -401,9 +479,18 @@ mod tests {
         // subst {t0→Int} leaves (Option t1) unchanged.
         let mut s = Subst::empty();
         s.insert(TypeVar(0), Type::Int);
-        let ty = Type::Adt { name: "Option".to_string(), args: vec![Type::Var(TypeVar(1))] };
+        let ty = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Var(TypeVar(1))],
+        };
         let result = s.apply(&ty);
-        assert_eq!(result, Type::Adt { name: "Option".to_string(), args: vec![Type::Var(TypeVar(1))] });
+        assert_eq!(
+            result,
+            Type::Adt {
+                name: "Option".to_string(),
+                args: vec![Type::Var(TypeVar(1))]
+            }
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -572,10 +659,30 @@ mod tests {
             applied,
             Type::Record {
                 name: "Point".to_string(),
-                fields: vec![
-                    ("x".to_string(), Type::Int),
-                    ("y".to_string(), Type::Float),
-                ],
+                fields: vec![("x".to_string(), Type::Int), ("y".to_string(), Type::Float),],
+            }
+        );
+    }
+
+    // -- Record Test 4 --
+    #[test]
+    fn record_subst_apply_nested_tuple_field() {
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Int);
+        s.insert(TypeVar(1), Type::Bool);
+        let ty = Type::Record {
+            name: "PairBox".to_string(),
+            fields: vec![(
+                "pair".to_string(),
+                Type::Tuple(vec![Type::Var(TypeVar(0)), Type::Var(TypeVar(1))]),
+            )],
+        };
+        let applied = s.apply(&ty);
+        assert_eq!(
+            applied,
+            Type::Record {
+                name: "PairBox".to_string(),
+                fields: vec![("pair".to_string(), Type::Tuple(vec![Type::Int, Type::Bool]),)],
             }
         );
     }
@@ -589,10 +696,45 @@ mod tests {
         assert_eq!(three.to_string(), "(Tuple Int Str Bool)");
     }
 
+    // -- Tuple Test 1b --
+    #[test]
+    fn tuple_display_eight() {
+        let eight = Type::Tuple(vec![
+            Type::Int,
+            Type::Bool,
+            Type::Str,
+            Type::Float,
+            Type::Unit,
+            Type::Never,
+            Type::Keyword,
+            Type::Symbol,
+        ]);
+        assert_eq!(
+            eight.to_string(),
+            "(Tuple Int Bool Str Float Unit Never Keyword Symbol)"
+        );
+    }
+
     // -- Tuple Test 2 --
     #[test]
     fn tuple_free_vars_from_elems() {
         let ty = Type::Tuple(vec![Type::Var(TypeVar(0)), Type::Var(TypeVar(1))]);
+        let vars = ty.free_vars();
+        assert_eq!(vars.len(), 2);
+        assert!(vars.contains(&TypeVar(0)));
+        assert!(vars.contains(&TypeVar(1)));
+    }
+
+    // -- Tuple Test 2b --
+    #[test]
+    fn tuple_free_vars_nested_record_fields() {
+        let ty = Type::Tuple(vec![
+            Type::Record {
+                name: "Box".to_string(),
+                fields: vec![("inner".to_string(), Type::Var(TypeVar(0)))],
+            },
+            Type::Var(TypeVar(1)),
+        ]);
         let vars = ty.free_vars();
         assert_eq!(vars.len(), 2);
         assert!(vars.contains(&TypeVar(0)));

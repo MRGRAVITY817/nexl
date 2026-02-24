@@ -1,33 +1,22 @@
-# Current Milestone: M3 — Algebraic Data Types + Pattern Matching
+# Current Milestone: M4 — Persistent Collections
 
-**Goal:** ADTs, records, destructuring, exhaustive match.
+**Goal:** Add persistent data structures (vectors, maps, sets) with type inference support and core operations.
 
-**Crates:** `nexl-types`, `nexl-infer`, `nexl-ast`
+**Crates:** `nexl-runtime`, `nexl-infer`, `nexl-types`
 
 **Spec sections to reference:**
-- §5.7 Algebraic Data Types (lines 1294–1378 of `nexl-spec.md`)
-- §5.3 Composite Types — Tuple (lines 1204–1218)
-- §4.9 `match` — Pattern Matching (lines 557–716)
-- §5.6 Row Polymorphism (lines 1262–1292)
+- §5.3 Composite Types (lines 1204–1218) — `Vec`, `Map`, `Set`, `List`, `Tuple`
+- §4 (core forms) for collection literals and operations
 
-**Key ADRs:**
-- ADR-005: Option and Result for absence and errors
+**Key ADRs:** none yet (consult `decisions/` as they appear)
 
 **Acceptance criteria:**
-- `cargo test` passes across all crates
-- `deftype` supports sum types, record types, and parameterized ADTs
-- Constructors work as functions: `Some : (Fn [a] -> (Option a))`
-- Nullary constructors as polymorphic constants: `None : (Option a)`
-- `match` form with exhaustiveness checking
-- Pattern forms: literal, wildcard, variable, constructor, nested
-- `:when` guards on match arms
-- Record construction and keyword field access
-- Tuple types (2–8 elements)
-- `Option` and `Result` as built-in ADTs (ADR-005)
-- Let destructuring with constructor, record, and tuple patterns
-- Error messages follow Principle 6
+- Persistent `Vec`, `Map`, and `Set` value forms and types
+- Inference for collection literals and common ops (lookup, assoc/update, membership)
+- Sequence destructuring for collections where specified in §4
+- Works with existing ADT/pattern machinery; `cargo test` passes
 
-**When done:** Update this file to point to M4.
+**When done:** Update this file to point to M5.
 
-See `docs/todo-m3.md` for the task checklist.
+See `docs/todo-m4.md` (to be created) for the task checklist.
 See `milestones.md` for the full plan.

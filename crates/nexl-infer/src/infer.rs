@@ -1,9 +1,16 @@
 //! Synthesis and checking modes for the bidirectional inference engine.
 
-use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, NodeKind};
-use nexl_types::{Scheme, Subst, Type, TypeError, TypeErrorKind, TypeVarSupply};
+#![allow(clippy::result_large_err)]
+
+use std::collections::{HashMap, HashSet};
+
+use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, NodeKind, Pattern, parse_pattern};
+use nexl_types::{
+    Constructor, Scheme, Subst, Type, TypeDef, TypeError, TypeErrorKind, TypeVar, TypeVarSupply,
+};
 
 use crate::Env;
+use crate::env::RecordDef;
 
 /// Mutable inference state shared across a whole inference session.
 ///
@@ -26,6 +33,8 @@ pub struct InferState {
     /// Sequential forms (`do`, `let` bindings, function arguments) push errors here
     /// instead of short-circuiting, so the caller sees all type errors at once.
     pub errors: Vec<TypeError>,
+    /// Non-fatal warnings accumulated during inference.
+    pub warnings: Vec<TypeError>,
 }
 
 impl InferState {
@@ -36,6 +45,7 @@ impl InferState {
             subst: Subst::empty(),
             recur_types: None,
             errors: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -47,6 +57,11 @@ impl InferState {
     /// Push a non-fatal error into the accumulated error list.
     pub fn push_error(&mut self, e: TypeError) {
         self.errors.push(e);
+    }
+
+    /// Push a non-fatal warning into the accumulated warning list.
+    pub fn push_warning(&mut self, w: TypeError) {
+        self.warnings.push(w);
     }
 }
 
@@ -67,7 +82,14 @@ impl Default for InferState {
 pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     let result = match &node.kind {
         NodeKind::Atom(atom) => synth_atom(atom, env, state),
-        NodeKind::List(items) => synth_list(items, env, state),
+        NodeKind::List(items) => {
+            if matches!(head_sym(items), Some("match")) {
+                synth_match(node, env, state)
+            } else {
+                synth_list(items, env, state)
+            }
+        }
+        NodeKind::Vector(items) => synth_tuple_literal(items, env, state),
         _ => unimplemented!("synth: {:?}", node.kind),
     };
     // Attach this node's span to any error that doesn't already carry one.
@@ -220,6 +242,15 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
         }));
     }
 
+    if let Some(name) = head_sym(items)
+        && env.lookup_record_def(name).is_some()
+    {
+        return synth_record_constructor(name, &items[1..], env, state);
+    }
+    if let Some(field) = head_keyword(items) {
+        return synth_keyword_access(field, &items[1..], env, state);
+    }
+
     let callee_node = &items[0];
     let arg_nodes = &items[1..];
 
@@ -244,17 +275,172 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
 
     // Unify the callee with the expected function shape.
     // Any arity or type mismatch surfaces here.
-    let expected_fn = Type::Fn { params: arg_types.clone(), ret: Box::new(ret_var.clone()) };
-    nexl_types::unify(&callee_ty, &expected_fn, &mut state.subst).map_err(|e| {
-        arithmetic_help(e, head_sym(items), &arg_types)
-    })?;
+    let expected_fn = Type::Fn {
+        params: arg_types.clone(),
+        ret: Box::new(ret_var.clone()),
+    };
+    nexl_types::unify(&callee_ty, &expected_fn, &mut state.subst)
+        .map_err(|e| arithmetic_help(e, head_sym(items), &arg_types))?;
 
     Ok(state.subst.apply(&ret_var))
 }
 
+fn synth_record_constructor(
+    name: &str,
+    arg_nodes: &[Node],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    if arg_nodes.len() != 1 {
+        return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+            expected: 1,
+            found: arg_nodes.len(),
+        }));
+    }
+
+    let scheme = match env.lookup(name) {
+        Some(scheme) => scheme,
+        None => {
+            return Err(TypeError::new(TypeErrorKind::UnboundVariable {
+                name: name.to_string(),
+            }));
+        }
+    };
+    let ctor_ty = scheme.instantiate(&mut state.supply);
+    let (param_ty, ret_ty) = match ctor_ty {
+        Type::Fn { params, ret } if params.len() == 1 => (params[0].clone(), *ret),
+        other => {
+            return Err(TypeError::new(TypeErrorKind::Mismatch {
+                expected: Type::Fn {
+                    params: vec![Type::Record {
+                        name: name.to_string(),
+                        fields: vec![],
+                    }],
+                    ret: Box::new(Type::Record {
+                        name: name.to_string(),
+                        fields: vec![],
+                    }),
+                },
+                found: other,
+            }));
+        }
+    };
+
+    check_record_literal(&arg_nodes[0], &param_ty, env, state)?;
+    Ok(state.subst.apply(&ret_ty))
+}
+
+fn check_record_literal(
+    node: &Node,
+    expected: &Type,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<(), TypeError> {
+    let (record_name, record_fields) = match expected {
+        Type::Record { name, fields } => (name, fields),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::Mismatch {
+                expected: expected.clone(),
+                found: Type::Keyword,
+            }));
+        }
+    };
+
+    let entries = match &node.kind {
+        NodeKind::Map(entries) => entries,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!(
+                    "record constructor expects a map literal for `{record_name}`"
+                ),
+            }));
+        }
+    };
+
+    let mut provided: HashMap<String, &Node> = HashMap::new();
+    for (key_node, val_node) in entries {
+        let key = match &key_node.kind {
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) => name.clone(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "record literal keys must be unqualified keywords".to_string(),
+                }));
+            }
+        };
+        provided.insert(key, val_node);
+    }
+
+    for (field_name, field_ty) in record_fields {
+        let value_node = match provided.remove(field_name) {
+            Some(node) => node,
+            None => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!("record literal missing field `:{field_name}`"),
+                }));
+            }
+        };
+        check(value_node, field_ty, env, state)?;
+    }
+
+    if !provided.is_empty() {
+        let extra = provided.keys().next().cloned().unwrap_or_default();
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!("record literal has unknown field `:{extra}`"),
+        }));
+    }
+
+    Ok(())
+}
+
+fn head_keyword(items: &[Node]) -> Option<&str> {
+    match items.first() {
+        Some(Node {
+            kind: NodeKind::Atom(Atom::Keyword { ns: None, name }),
+            ..
+        }) => Some(name),
+        _ => None,
+    }
+}
+
+fn synth_keyword_access(
+    field: &str,
+    arg_nodes: &[Node],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    if arg_nodes.len() != 1 {
+        return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+            expected: 1,
+            found: arg_nodes.len(),
+        }));
+    }
+
+    let arg_ty = synth(&arg_nodes[0], env, state)?;
+    let arg_ty = state.subst.apply(&arg_ty);
+    match arg_ty {
+        Type::Record { fields, .. } => {
+            for (name, ty) in fields {
+                if name == field {
+                    return Ok(ty);
+                }
+            }
+            Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!("record has no field `:{field}`"),
+            }))
+        }
+        other => Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!("keyword access expects a record, got {other}"),
+        })),
+    }
+}
+
 /// If `err` is a type mismatch from a known arithmetic operator applied to
 /// mixed Int-like and Float-like operands, attach an ADR-006 help suggestion.
-fn arithmetic_help(err: nexl_types::TypeError, callee: Option<&str>, args: &[Type]) -> nexl_types::TypeError {
+fn arithmetic_help(
+    err: nexl_types::TypeError,
+    callee: Option<&str>,
+    args: &[Type],
+) -> nexl_types::TypeError {
     if err.help.is_some() {
         return err;
     }
@@ -338,7 +524,10 @@ fn is_colon_node(node: &Node) -> bool {
 /// Return the name string if the first item in `items` is an unqualified symbol.
 fn head_sym(items: &[Node]) -> Option<&str> {
     match items.first() {
-        Some(Node { kind: NodeKind::Atom(Atom::Symbol { ns: None, name }), .. }) => Some(name),
+        Some(Node {
+            kind: NodeKind::Atom(Atom::Symbol { ns: None, name }),
+            ..
+        }) => Some(name),
         _ => None,
     }
 }
@@ -394,7 +583,10 @@ fn synth_fn(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, T
     let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
     let ret_ty = state.subst.apply(&ret_ty);
 
-    Ok(Type::Fn { params: param_types, ret: Box::new(ret_ty) })
+    Ok(Type::Fn {
+        params: param_types,
+        ret: Box::new(ret_ty),
+    })
 }
 
 /// Synthesize the type of an `(if cond then else)` form.
@@ -454,38 +646,75 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
     // Parse the binding vector.  Each binding is either:
     //   name expr           (2 elements — no annotation)
     //   name : Type expr    (4 elements — with annotation)
-    // Bindings of both kinds may be mixed freely.
+    //   pattern expr        (2 elements — destructuring pattern)
+    // Bindings of all kinds may be mixed freely.
     let mut current_env = env.clone();
     let mut i = 0;
     while i < bvec.len() {
-        // Every binding starts with a name symbol.
-        let name_node = &bvec[i];
-        let name = match &name_node.kind {
-            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
-            _ => {
-                return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                    description: "let binding name must be an unqualified symbol".to_string(),
-                }));
-            }
-        };
-        i += 1;
+        let binding_node = &bvec[i];
 
-        // Peek: if the next element is Symbol(":"), consume an annotation.
-        let annotation: Option<Type> = if bvec.get(i).is_some_and(is_colon_node) {
-            i += 1; // consume ":"
-            if i >= bvec.len() {
-                return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                    description: "expected type after `:` in let annotation".to_string(),
-                }));
+        // Name binding with optional annotation.
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &binding_node.kind {
+            if bvec.get(i + 1).is_some_and(is_colon_node) {
+                i += 1; // consume name
+                i += 1; // consume ":"
+                if i >= bvec.len() {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "expected type after `:` in let annotation".to_string(),
+                    }));
+                }
+                let ann = parse_type_expr(&bvec[i])?;
+                i += 1; // consume type
+                if i >= bvec.len() {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "let binding is missing its init expression".to_string(),
+                    }));
+                }
+                let expr_node = &bvec[i];
+                i += 1;
+                let ty = match synth(expr_node, &current_env, state) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        state.push_error(e);
+                        state.fresh_var()
+                    }
+                };
+                nexl_types::unify(&ann, &ty, &mut state.subst)?;
+                let scheme = generalize(&ty, &current_env, state);
+                current_env = current_env.extend(name.clone(), scheme);
+                continue;
             }
-            let ann = parse_type_expr(&bvec[i])?;
-            i += 1; // consume the type node
-            Some(ann)
-        } else {
-            None
-        };
 
-        // The init expression must follow.
+            // If the symbol is not a constructor name, treat it as a simple binding.
+            if current_env.lookup_ctor(name).is_none() {
+                i += 1; // consume name
+                if i >= bvec.len() {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "let binding is missing its init expression".to_string(),
+                    }));
+                }
+                let expr_node = &bvec[i];
+                i += 1;
+                let ty = match synth(expr_node, &current_env, state) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        state.push_error(e);
+                        state.fresh_var()
+                    }
+                };
+                let scheme = generalize(&ty, &current_env, state);
+                current_env = current_env.extend(name.clone(), scheme);
+                continue;
+            }
+        }
+
+        // Pattern binding (destructuring).
+        let pattern = parse_pattern(binding_node).map_err(|e| {
+            TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!("invalid let pattern: {}", e.description),
+            })
+        })?;
+        i += 1; // consume pattern
         if i >= bvec.len() {
             return Err(TypeError::new(TypeErrorKind::MalformedForm {
                 description: "let binding is missing its init expression".to_string(),
@@ -493,10 +722,6 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         }
         let expr_node = &bvec[i];
         i += 1;
-
-        // Synthesize, check annotation, generalize.
-        // On init-expression failure, collect the error and use a fresh var so
-        // subsequent bindings are still checked (Principle 6).
         let ty = match synth(expr_node, &current_env, state) {
             Ok(t) => t,
             Err(e) => {
@@ -504,11 +729,10 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
                 state.fresh_var()
             }
         };
-        if let Some(ann_ty) = annotation {
-            nexl_types::unify(&ann_ty, &ty, &mut state.subst)?;
-        }
-        let scheme = generalize(&ty, &current_env, state);
-        current_env = current_env.extend(name, scheme);
+        let resolved = state.subst.apply(&ty);
+        let pattern_env = check_pattern(&pattern, &resolved, &current_env, state)?;
+        check_exhaustive_let_pattern(&pattern, &resolved, &current_env, expr_node)?;
+        current_env = pattern_env;
     }
 
     // Synthesize the body in the fully-extended env.
@@ -519,9 +743,13 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
 fn synth_atom(atom: &Atom, env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     match atom {
         Atom::Int { suffix: None, .. } => Ok(Type::Int),
-        Atom::Int { suffix: Some(s), .. } => Ok(int_suffix_type(*s)),
+        Atom::Int {
+            suffix: Some(s), ..
+        } => Ok(int_suffix_type(*s)),
         Atom::Float { suffix: None, .. } => Ok(Type::Float),
-        Atom::Float { suffix: Some(s), .. } => Ok(float_suffix_type(*s)),
+        Atom::Float {
+            suffix: Some(s), ..
+        } => Ok(float_suffix_type(*s)),
         Atom::Ratio { .. } => Ok(Type::Ratio),
         Atom::Bool(_) => Ok(Type::Bool),
         Atom::Char(_) => Ok(Type::Char),
@@ -529,11 +757,38 @@ fn synth_atom(atom: &Atom, env: &Env, state: &mut InferState) -> Result<Type, Ty
         Atom::Keyword { .. } => Ok(Type::Keyword),
         Atom::Unit => Ok(Type::Unit),
         Atom::Symbol { ns: None, name } => synth_var(name, env, state),
-        Atom::Symbol { ns: Some(_), name: _ } => {
+        Atom::Symbol {
+            ns: Some(_),
+            name: _,
+        } => {
             // Qualified symbols (module-prefixed) are not yet supported.
             unimplemented!("qualified symbol lookup")
         }
     }
+}
+
+/// Synthesize a type for a tuple literal `[a b ...]` (2–8 elements).
+fn synth_tuple_literal(
+    items: &[Node],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    if items.len() < 2 || items.len() > 8 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!("tuple literal expects 2-8 elements, got {}", items.len()),
+        }));
+    }
+    let mut elem_types = Vec::with_capacity(items.len());
+    for item in items {
+        match synth(item, env, state) {
+            Ok(ty) => elem_types.push(ty),
+            Err(e) => {
+                state.push_error(e);
+                elem_types.push(state.fresh_var());
+            }
+        }
+    }
+    Ok(Type::Tuple(elem_types))
 }
 
 /// Map an integer suffix to its fixed-width type.
@@ -677,7 +932,10 @@ pub fn infer_defn(
     let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
     let ret_ty = state.subst.apply(&body_ty);
 
-    let fn_ty = Type::Fn { params: param_types, ret: Box::new(ret_ty) };
+    let fn_ty = Type::Fn {
+        params: param_types,
+        ret: Box::new(ret_ty),
+    };
     let new_env = env.extend(name.clone(), Scheme::mono(fn_ty.clone()));
     Ok((name, fn_ty, new_env))
 }
@@ -774,7 +1032,10 @@ fn parse_fn_type(items: &[Node], node: &Node) -> Result<Type, TypeError> {
         .collect::<Result<_, _>>()?;
     let ret = parse_type_expr(&items[3])?;
 
-    Ok(Type::Fn { params, ret: Box::new(ret) })
+    Ok(Type::Fn {
+        params,
+        ret: Box::new(ret),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -794,8 +1055,7 @@ fn generalize(ty: &Type, env: &Env, state: &InferState) -> Scheme {
     let ty = state.subst.apply(ty);
     let ty_free = ty.free_vars();
     let env_free = env.free_vars(&state.subst);
-    let forall: std::collections::HashSet<_> =
-        ty_free.difference(&env_free).copied().collect();
+    let forall: std::collections::HashSet<_> = ty_free.difference(&env_free).copied().collect();
     Scheme { forall, body: ty }
 }
 
@@ -912,35 +1172,862 @@ fn parse_def(node: &Node) -> Result<(String, Option<Type>, &Node), TypeError> {
 }
 
 // ---------------------------------------------------------------------------
+// deftype form (sum types only, for now)
+// ---------------------------------------------------------------------------
+
+/// A parsed `deftype` declaration (spec §5.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeftypeDecl {
+    /// Sum type declaration with named constructors.
+    Sum(TypeDef),
+    /// Record type declaration with named fields.
+    Record {
+        name: String,
+        params: Vec<TypeVar>,
+        fields: Vec<(String, Type)>,
+    },
+}
+
+/// Parse a `deftype` declaration.
+#[allow(dead_code)]
+pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "deftype must be a list".to_string(),
+            }));
+        }
+    };
+
+    if items.len() < 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "deftype expects (deftype Name ...), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let is_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "deftype"
+    );
+    if !is_head {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "first element of deftype form must be the symbol `deftype`".to_string(),
+        }));
+    }
+
+    let name = match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "deftype name must be an unqualified symbol".to_string(),
+            }));
+        }
+    };
+
+    let mut param_map: HashMap<String, TypeVar> = HashMap::new();
+    let mut params: Vec<TypeVar> = Vec::new();
+    let mut body_index = 2;
+
+    if let NodeKind::Vector(param_nodes) = &items[body_index].kind {
+        let mut supply = TypeVarSupply::new();
+        for param_node in param_nodes {
+            let param_name = match &param_node.kind {
+                NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+                _ => {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "deftype type params must be unqualified symbols".to_string(),
+                    }));
+                }
+            };
+            if param_map.contains_key(&param_name) {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!("duplicate type param `{param_name}`"),
+                }));
+            }
+            let tv = supply.fresh();
+            param_map.insert(param_name, tv);
+            params.push(tv);
+        }
+        body_index += 1;
+    }
+
+    if body_index >= items.len() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "deftype missing body".to_string(),
+        }));
+    }
+
+    match &items[body_index].kind {
+        NodeKind::Map(entries) => {
+            if items.len() != body_index + 1 {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "deftype record expects (deftype Name {fields})".to_string(),
+                }));
+            }
+            let mut fields = Vec::new();
+            for (key_node, val_node) in entries {
+                let field_name = match &key_node.kind {
+                    NodeKind::Atom(Atom::Keyword { ns: None, name }) => name.clone(),
+                    _ => {
+                        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                            description: "deftype record fields must be unqualified keywords"
+                                .to_string(),
+                        }));
+                    }
+                };
+                let field_ty = parse_type_expr_with_params(val_node, &param_map)?;
+                fields.push((field_name, field_ty));
+            }
+            Ok(DeftypeDecl::Record {
+                name,
+                params,
+                fields,
+            })
+        }
+        NodeKind::Atom(Atom::Symbol {
+            ns: None,
+            name: pipe,
+        }) if pipe == "|" => {
+            if items.len() < body_index + 2 {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!(
+                        "deftype expects (deftype Name | Ctor1 ...), got {} elements",
+                        items.len()
+                    ),
+                }));
+            }
+            let mut constructors = Vec::new();
+            let mut i = body_index;
+            while i < items.len() {
+                let is_pipe = matches!(
+                    &items[i].kind,
+                    NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "|"
+                );
+                if !is_pipe {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "deftype sum type expects `|` before each constructor"
+                            .to_string(),
+                    }));
+                }
+                i += 1;
+                if i >= items.len() {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "deftype sum type missing constructor after `|`".to_string(),
+                    }));
+                }
+
+                let ctor_node = &items[i];
+                let ctor = match &ctor_node.kind {
+                    NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+                        Constructor::nullary(name.clone())
+                    }
+                    NodeKind::List(ctor_items) => {
+                        if ctor_items.is_empty() {
+                            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                                description: "deftype constructor list must have a name"
+                                    .to_string(),
+                            }));
+                        }
+                        let ctor_name = match &ctor_items[0].kind {
+                            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+                            _ => {
+                                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                                    description:
+                                        "deftype constructor name must be an unqualified symbol"
+                                            .to_string(),
+                                }));
+                            }
+                        };
+                        let mut fields = Vec::new();
+                        for field_node in &ctor_items[1..] {
+                            fields.push(parse_type_expr_with_params(field_node, &param_map)?);
+                        }
+                        Constructor::nary(ctor_name, fields)
+                    }
+                    _ => {
+                        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                            description: "deftype constructor must be a symbol or list".to_string(),
+                        }));
+                    }
+                };
+                constructors.push(ctor);
+                i += 1;
+            }
+
+            Ok(DeftypeDecl::Sum(TypeDef {
+                name,
+                params,
+                constructors,
+            }))
+        }
+        _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "deftype expects a `|`-prefixed constructor list or a map literal"
+                .to_string(),
+        })),
+    }
+}
+
+/// Register a parsed `deftype` declaration in the environment.
+#[allow(dead_code)]
+pub fn register_deftype(env: &Env, decl: DeftypeDecl) -> Env {
+    match decl {
+        DeftypeDecl::Sum(td) => env.extend_type_def(td),
+        DeftypeDecl::Record {
+            name,
+            params,
+            fields,
+        } => env.extend_record_def(RecordDef {
+            name,
+            params,
+            fields,
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// match form (parsing only, for now)
+// ---------------------------------------------------------------------------
+
+fn synth_match(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    let (scrutinee, arms) = parse_match(node)?;
+    let scrutinee_ty = synth(scrutinee, env, state)?;
+    let mut result_ty: Option<Type> = None;
+    for arm in &arms {
+        let current = state.subst.apply(&scrutinee_ty);
+        let arm_env = check_pattern(&arm.pattern, &current, env, state)?;
+        if let Some(guard) = arm.guard {
+            check(guard, &Type::Bool, &arm_env, state)?;
+        }
+        let body_ty = synth(arm.body, &arm_env, state)?;
+        let body_ty = state.subst.apply(&body_ty);
+        if let Some(expected) = &result_ty {
+            nexl_types::unify(expected, &body_ty, &mut state.subst)?;
+            result_ty = Some(state.subst.apply(expected));
+        } else {
+            result_ty = Some(body_ty);
+        }
+    }
+    let resolved_scrutinee = state.subst.apply(&scrutinee_ty);
+    check_exhaustive(&resolved_scrutinee, &arms, env)?;
+    check_redundant_patterns(&resolved_scrutinee, &arms, env, state);
+    match result_ty {
+        Some(ty) => Ok(state.subst.apply(&ty)),
+        None => Ok(state.fresh_var()),
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+struct MatchArm<'a> {
+    pattern: Pattern,
+    guard: Option<&'a Node>,
+    body: &'a Node,
+}
+
+#[allow(dead_code)]
+fn is_when_node(node: &Node) -> bool {
+    matches!(
+        &node.kind,
+        NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "when"
+    )
+}
+
+#[allow(dead_code)]
+fn parse_match<'a>(node: &'a Node) -> Result<(&'a Node, Vec<MatchArm<'a>>), TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "match must be a list".to_string(),
+            }));
+        }
+    };
+
+    if items.len() < 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "match expects (match expr pattern body ... )".to_string(),
+        }));
+    }
+
+    let is_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "match"
+    );
+    if !is_head {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "first element of match form must be the symbol `match`".to_string(),
+        }));
+    }
+
+    let scrutinee = &items[1];
+    let mut arms = Vec::new();
+    let mut i = 2;
+    while i < items.len() {
+        let pattern_node = &items[i];
+        let pattern = parse_pattern(pattern_node).map_err(|e| {
+            TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!("invalid match pattern: {}", e.description),
+            })
+        })?;
+        i += 1;
+        if i >= items.len() {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "match arm missing body".to_string(),
+            }));
+        }
+
+        let (guard, body) = if is_when_node(&items[i]) {
+            if i + 2 >= items.len() {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "match arm with :when must include guard and body".to_string(),
+                }));
+            }
+            let guard = &items[i + 1];
+            let body = &items[i + 2];
+            i += 3;
+            (Some(guard), body)
+        } else {
+            let body = &items[i];
+            i += 1;
+            (None, body)
+        };
+
+        arms.push(MatchArm {
+            pattern,
+            guard,
+            body,
+        });
+    }
+
+    Ok((scrutinee, arms))
+}
+
+fn check_pattern(
+    pattern: &Pattern,
+    scrutinee_ty: &Type,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Env, TypeError> {
+    match pattern {
+        Pattern::Wildcard => Ok(env.clone()),
+        Pattern::Var(name) => {
+            if env.lookup_ctor(name).is_some() {
+                check_constructor_pattern(name, &[], scrutinee_ty, env, state)
+            } else {
+                Ok(env.extend(name.clone(), Scheme::mono(scrutinee_ty.clone())))
+            }
+        }
+        Pattern::Literal(atom) => {
+            let lit_ty = synth_atom(atom, env, state)?;
+            nexl_types::unify(scrutinee_ty, &lit_ty, &mut state.subst)?;
+            Ok(env.clone())
+        }
+        Pattern::Constructor { name, args } => {
+            check_constructor_pattern(name, args, scrutinee_ty, env, state)
+        }
+        Pattern::Tuple(items) => check_tuple_pattern(items, scrutinee_ty, env, state),
+        Pattern::Record { fields } => check_record_pattern(fields, scrutinee_ty, env, state),
+        _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "unsupported match pattern".to_string(),
+        })),
+    }
+}
+
+fn check_constructor_pattern(
+    name: &str,
+    args: &[Pattern],
+    scrutinee_ty: &Type,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Env, TypeError> {
+    let scheme = match env.lookup(name) {
+        Some(scheme) => scheme,
+        None => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!("unknown constructor `{name}`"),
+            }));
+        }
+    };
+    let ctor_ty = scheme.instantiate(&mut state.supply);
+    match ctor_ty {
+        Type::Fn { params, ret } => {
+            if params.len() != args.len() {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: params.len(),
+                    found: args.len(),
+                }));
+            }
+            nexl_types::unify(scrutinee_ty, &ret, &mut state.subst)?;
+            let mut current_env = env.clone();
+            for (pat, param_ty) in args.iter().zip(params.iter()) {
+                let param_ty = state.subst.apply(param_ty);
+                current_env = check_pattern(pat, &param_ty, &current_env, state)?;
+            }
+            Ok(current_env)
+        }
+        Type::Adt { .. } => {
+            if !args.is_empty() {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 0,
+                    found: args.len(),
+                }));
+            }
+            nexl_types::unify(scrutinee_ty, &ctor_ty, &mut state.subst)?;
+            Ok(env.clone())
+        }
+        other => Err(TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Adt {
+                name: name.to_string(),
+                args: vec![],
+            },
+            found: other,
+        })),
+    }
+}
+
+fn check_tuple_pattern(
+    items: &[Pattern],
+    scrutinee_ty: &Type,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Env, TypeError> {
+    let elems = match scrutinee_ty {
+        Type::Tuple(elems) => elems,
+        other => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!("tuple pattern expects a tuple type, got {other}"),
+            }));
+        }
+    };
+    if elems.len() != items.len() {
+        return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+            expected: elems.len(),
+            found: items.len(),
+        }));
+    }
+    let mut current_env = env.clone();
+    for (pat, elem_ty) in items.iter().zip(elems.iter()) {
+        let elem_ty = state.subst.apply(elem_ty);
+        current_env = check_pattern(pat, &elem_ty, &current_env, state)?;
+    }
+    Ok(current_env)
+}
+
+fn check_record_pattern(
+    fields: &[(String, Pattern)],
+    scrutinee_ty: &Type,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Env, TypeError> {
+    let record_fields = match scrutinee_ty {
+        Type::Record { fields, .. } => fields,
+        other => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!("record pattern expects a record type, got {other}"),
+            }));
+        }
+    };
+    let mut field_map: HashMap<&str, &Type> = HashMap::new();
+    for (name, ty) in record_fields {
+        field_map.insert(name.as_str(), ty);
+    }
+    let mut current_env = env.clone();
+    for (field_name, pat) in fields {
+        let field_ty = match field_map.get(field_name.as_str()) {
+            Some(ty) => *ty,
+            None => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!("record pattern has unknown field `:{field_name}`"),
+                }));
+            }
+        };
+        let field_ty = state.subst.apply(field_ty);
+        current_env = check_pattern(pat, &field_ty, &current_env, state)?;
+    }
+    Ok(current_env)
+}
+
+fn is_catch_all_pattern(pat: &Pattern, env: &Env) -> bool {
+    match pat {
+        Pattern::Wildcard => true,
+        Pattern::Var(name) => env.lookup_ctor(name).is_none(),
+        _ => false,
+    }
+}
+
+fn check_exhaustive(
+    scrutinee_ty: &Type,
+    arms: &[MatchArm<'_>],
+    env: &Env,
+) -> Result<(), TypeError> {
+    if arms
+        .iter()
+        .any(|arm| is_catch_all_pattern(&arm.pattern, env))
+    {
+        return Ok(());
+    }
+    match scrutinee_ty {
+        Type::Bool => {
+            let mut seen_true = false;
+            let mut seen_false = false;
+            for arm in arms {
+                if let Pattern::Literal(Atom::Bool(value)) = &arm.pattern {
+                    if *value {
+                        seen_true = true;
+                    } else {
+                        seen_false = true;
+                    }
+                }
+            }
+            if seen_true && seen_false {
+                Ok(())
+            } else {
+                let mut missing = Vec::new();
+                if !seen_true {
+                    missing.push("true");
+                }
+                if !seen_false {
+                    missing.push("false");
+                }
+                Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!("non-exhaustive match: missing {}", missing.join(", ")),
+                }))
+            }
+        }
+        Type::Adt { name, .. } => {
+            let type_def = match env.lookup_type_def(name) {
+                Some(def) => def,
+                None => return Ok(()),
+            };
+            let mut missing: HashSet<String> = type_def
+                .constructors
+                .iter()
+                .map(|ctor| ctor.name.clone())
+                .collect();
+            for arm in arms {
+                match &arm.pattern {
+                    Pattern::Constructor { name, .. } => {
+                        missing.remove(name);
+                    }
+                    Pattern::Var(name) if env.lookup_ctor(name).is_some() => {
+                        missing.remove(name);
+                    }
+                    _ => {}
+                }
+            }
+            if missing.is_empty() {
+                Ok(())
+            } else {
+                let mut missing: Vec<String> = missing.into_iter().collect();
+                missing.sort();
+                Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!("non-exhaustive match: missing {}", missing.join(", ")),
+                }))
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+fn check_exhaustive_let_pattern(
+    pattern: &Pattern,
+    scrutinee_ty: &Type,
+    env: &Env,
+    node: &Node,
+) -> Result<(), TypeError> {
+    let non_exhaustive = || {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: "non-exhaustive let pattern".to_string(),
+        })
+    };
+
+    match pattern {
+        Pattern::Literal(_) => Err(non_exhaustive()),
+        Pattern::Constructor { .. } => {
+            let arm = MatchArm {
+                pattern: pattern.clone(),
+                guard: None,
+                body: node,
+            };
+            check_exhaustive(scrutinee_ty, std::slice::from_ref(&arm), env)
+        }
+        Pattern::Var(name) if env.lookup_ctor(name).is_some() => {
+            let arm = MatchArm {
+                pattern: pattern.clone(),
+                guard: None,
+                body: node,
+            };
+            check_exhaustive(scrutinee_ty, std::slice::from_ref(&arm), env)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn warn_redundant(state: &mut InferState) {
+    state.push_warning(TypeError::new(TypeErrorKind::MalformedForm {
+        description: "redundant match arm".to_string(),
+    }));
+}
+
+fn check_redundant_patterns(
+    scrutinee_ty: &Type,
+    arms: &[MatchArm<'_>],
+    env: &Env,
+    state: &mut InferState,
+) {
+    let mut covered_all = false;
+    let mut covered_true = false;
+    let mut covered_false = false;
+    let adt_constructors: Option<HashSet<String>> = match scrutinee_ty {
+        Type::Adt { name, .. } => env.lookup_type_def(name).map(|def| {
+            def.constructors
+                .iter()
+                .map(|ctor| ctor.name.clone())
+                .collect()
+        }),
+        _ => None,
+    };
+    let mut covered_ctors: HashSet<String> = HashSet::new();
+
+    for arm in arms {
+        if covered_all {
+            warn_redundant(state);
+            continue;
+        }
+
+        if is_catch_all_pattern(&arm.pattern, env) {
+            let already_exhaustive = match scrutinee_ty {
+                Type::Bool => covered_true && covered_false,
+                Type::Adt { .. } => adt_constructors
+                    .as_ref()
+                    .map(|ctors| covered_ctors.len() == ctors.len())
+                    .unwrap_or(false),
+                _ => false,
+            };
+            if already_exhaustive {
+                warn_redundant(state);
+            } else {
+                covered_all = true;
+            }
+            continue;
+        }
+
+        match scrutinee_ty {
+            Type::Bool => {
+                if let Pattern::Literal(Atom::Bool(value)) = &arm.pattern {
+                    if *value {
+                        if covered_true {
+                            warn_redundant(state);
+                        } else {
+                            covered_true = true;
+                        }
+                    } else if covered_false {
+                        warn_redundant(state);
+                    } else {
+                        covered_false = true;
+                    }
+                }
+            }
+            Type::Adt { .. } => {
+                if let Some(_ctors) = &adt_constructors {
+                    let ctor_name = match &arm.pattern {
+                        Pattern::Constructor { name, .. } => Some(name),
+                        Pattern::Var(name) if env.lookup_ctor(name).is_some() => Some(name),
+                        _ => None,
+                    };
+                    if let Some(name) = ctor_name {
+                        if covered_ctors.contains(name) {
+                            warn_redundant(state);
+                        } else {
+                            covered_ctors.insert(name.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn parse_type_expr_with_params(
+    node: &Node,
+    params: &HashMap<String, TypeVar>,
+) -> Result<Type, TypeError> {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+            if let Some(tv) = params.get(name) {
+                Ok(Type::Var(*tv))
+            } else {
+                parse_type_name_or_adt(name)
+            }
+        }
+        NodeKind::List(items) => parse_type_list_with_params(items, node, params),
+        _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!("expected a type expression, got {:?}", node.kind),
+        })),
+    }
+}
+
+fn parse_type_list_with_params(
+    items: &[Node],
+    node: &Node,
+    params: &HashMap<String, TypeVar>,
+) -> Result<Type, TypeError> {
+    if items.is_empty() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "empty type list".to_string(),
+        })
+        .with_span(node.span));
+    }
+    let head = match &items[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.as_str(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "type list head must be a symbol".to_string(),
+            })
+            .with_span(node.span));
+        }
+    };
+    if head == "Fn" {
+        return parse_fn_type_with_params(items, node, params);
+    }
+
+    let mut args = Vec::new();
+    for arg_node in &items[1..] {
+        args.push(parse_type_expr_with_params(arg_node, params)?);
+    }
+    Ok(Type::Adt {
+        name: head.to_string(),
+        args,
+    })
+}
+
+fn parse_fn_type_with_params(
+    items: &[Node],
+    node: &Node,
+    params: &HashMap<String, TypeVar>,
+) -> Result<Type, TypeError> {
+    let bad = || {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: "Fn type expects (Fn [param-types...] -> ret-type)".to_string(),
+        })
+        .with_span(node.span)
+    };
+
+    if items.len() != 4 {
+        return Err(bad());
+    }
+
+    let is_fn_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "Fn"
+    );
+    if !is_fn_head {
+        return Err(bad());
+    }
+
+    let param_nodes = match &items[1].kind {
+        NodeKind::Vector(elems) => elems,
+        _ => return Err(bad()),
+    };
+
+    let is_arrow = matches!(
+        &items[2].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "->"
+    );
+    if !is_arrow {
+        return Err(bad());
+    }
+
+    let params_ty: Vec<Type> = param_nodes
+        .iter()
+        .map(|node| parse_type_expr_with_params(node, params))
+        .collect::<Result<_, _>>()?;
+    let ret = parse_type_expr_with_params(&items[3], params)?;
+
+    Ok(Type::Fn {
+        params: params_ty,
+        ret: Box::new(ret),
+    })
+}
+
+fn parse_type_name_or_adt(name: &str) -> Result<Type, TypeError> {
+    let ty = match name {
+        "Int" | "Int64" => Ok(Type::Int),
+        "Float" | "F64" => Ok(Type::Float),
+        "Ratio" => Ok(Type::Ratio),
+        "Bool" => Ok(Type::Bool),
+        "Char" => Ok(Type::Char),
+        "Str" => Ok(Type::Str),
+        "Keyword" => Ok(Type::Keyword),
+        "Symbol" => Ok(Type::Symbol),
+        "Unit" => Ok(Type::Unit),
+        "Never" => Ok(Type::Never),
+        "Int8" => Ok(Type::Int8),
+        "Int16" => Ok(Type::Int16),
+        "Int32" => Ok(Type::Int32),
+        "U8" => Ok(Type::U8),
+        "U16" => Ok(Type::U16),
+        "U32" => Ok(Type::U32),
+        "U64" => Ok(Type::U64),
+        "F32" => Ok(Type::F32),
+        _ => Ok(Type::Adt {
+            name: name.to_string(),
+            args: vec![],
+        }),
+    }?;
+    Ok(ty)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
-    use nexl_ast::{Atom, FileId, FloatSuffix, IntSuffix, Node, Span};
-    use nexl_types::{Scheme, Type, TypeErrorKind};
+    use nexl_ast::{Atom, FileId, FloatSuffix, IntSuffix, Node, Pattern, Span};
+    use nexl_types::{Constructor, Scheme, Type, TypeDef, TypeErrorKind, TypeVar};
 
-    use nexl_ast::NodeKind;
-    use super::{InferState, check, infer_def, infer_defn, synth};
+    use super::{
+        DeftypeDecl, InferState, check, infer_def, infer_defn, parse_match, register_deftype, synth,
+    };
     use crate::Env;
+    use nexl_ast::NodeKind;
+    use nexl_reader::read;
 
     /// Build `(defn name [param...] body)` as a List node.
     fn defn_node(name: &str, params: Vec<&str>, body: Node) -> Node {
         let head = sym_node("defn");
-        let pvec = Node::new(NodeKind::Vector(params.iter().map(|p| sym_node(p)).collect()), syn_span());
-        Node::new(NodeKind::List(vec![head, sym_node(name), pvec, body]), syn_span())
+        let pvec = Node::new(
+            NodeKind::Vector(params.iter().map(|p| sym_node(p)).collect()),
+            syn_span(),
+        );
+        Node::new(
+            NodeKind::List(vec![head, sym_node(name), pvec, body]),
+            syn_span(),
+        )
     }
 
     /// Build `(fn [param...] body)` as a List node.
     fn fn_node(params: Vec<&str>, body: Node) -> Node {
         let head = sym_node("fn");
-        let pvec = Node::new(NodeKind::Vector(params.iter().map(|p| sym_node(p)).collect()), syn_span());
+        let pvec = Node::new(
+            NodeKind::Vector(params.iter().map(|p| sym_node(p)).collect()),
+            syn_span(),
+        );
         Node::new(NodeKind::List(vec![head, pvec, body]), syn_span())
     }
 
     /// Build `(if cond then else)` as a List node.
     fn if_node(cond: Node, then: Node, else_: Node) -> Node {
-        Node::new(NodeKind::List(vec![sym_node("if"), cond, then, else_]), syn_span())
+        Node::new(
+            NodeKind::List(vec![sym_node("if"), cond, then, else_]),
+            syn_span(),
+        )
     }
 
     /// Build `(do e1 e2 ...)` as a List node.
@@ -967,23 +2054,38 @@ mod tests {
     }
 
     fn int_node(value: i128) -> Node {
-        atom_node(Atom::Int { value, suffix: None })
+        atom_node(Atom::Int {
+            value,
+            suffix: None,
+        })
     }
 
     fn int_node_suf(value: i128, suffix: IntSuffix) -> Node {
-        atom_node(Atom::Int { value, suffix: Some(suffix) })
+        atom_node(Atom::Int {
+            value,
+            suffix: Some(suffix),
+        })
     }
 
     fn float_node(value: f64) -> Node {
-        atom_node(Atom::Float { value, suffix: None })
+        atom_node(Atom::Float {
+            value,
+            suffix: None,
+        })
     }
 
     fn float_node_suf(value: f64, suffix: FloatSuffix) -> Node {
-        atom_node(Atom::Float { value, suffix: Some(suffix) })
+        atom_node(Atom::Float {
+            value,
+            suffix: Some(suffix),
+        })
     }
 
     fn sym_node(name: &str) -> Node {
-        atom_node(Atom::Symbol { ns: None, name: name.to_string() })
+        atom_node(Atom::Symbol {
+            ns: None,
+            name: name.to_string(),
+        })
     }
 
     /// Build `(def name expr)` as a List node.
@@ -991,6 +2093,13 @@ mod tests {
         let head = sym_node("def");
         let binding = sym_node(name);
         Node::new(NodeKind::List(vec![head, binding, expr]), syn_span())
+    }
+
+    /// Parse `src` and return the first top-level node, panicking on failure.
+    fn parse_one(src: &str) -> Node {
+        let nodes = read(src, FileId(0)).expect("parse failed");
+        assert_eq!(nodes.len(), 1, "expected exactly one top-level form");
+        nodes.into_iter().next().unwrap()
     }
 
     fn empty() -> (Env, InferState) {
@@ -1008,7 +2117,10 @@ mod tests {
     #[test]
     fn synth_float_no_suffix() {
         let (env, mut state) = empty();
-        assert_eq!(synth(&float_node(1.5), &env, &mut state).unwrap(), Type::Float);
+        assert_eq!(
+            synth(&float_node(1.5), &env, &mut state).unwrap(),
+            Type::Float
+        );
     }
 
     // -- Test 7 --
@@ -1023,14 +2135,20 @@ mod tests {
     #[test]
     fn synth_bool() {
         let (env, mut state) = empty();
-        assert_eq!(synth(&atom_node(Atom::Bool(true)), &env, &mut state).unwrap(), Type::Bool);
+        assert_eq!(
+            synth(&atom_node(Atom::Bool(true)), &env, &mut state).unwrap(),
+            Type::Bool
+        );
     }
 
     // -- Test 9 --
     #[test]
     fn synth_char() {
         let (env, mut state) = empty();
-        assert_eq!(synth(&atom_node(Atom::Char('a')), &env, &mut state).unwrap(), Type::Char);
+        assert_eq!(
+            synth(&atom_node(Atom::Char('a')), &env, &mut state).unwrap(),
+            Type::Char
+        );
     }
 
     // -- Test 10 --
@@ -1045,7 +2163,10 @@ mod tests {
     #[test]
     fn synth_keyword() {
         let (env, mut state) = empty();
-        let node = atom_node(Atom::Keyword { ns: None, name: "ok".into() });
+        let node = atom_node(Atom::Keyword {
+            ns: None,
+            name: "ok".into(),
+        });
         assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Keyword);
     }
 
@@ -1053,14 +2174,20 @@ mod tests {
     #[test]
     fn synth_unit() {
         let (env, mut state) = empty();
-        assert_eq!(synth(&atom_node(Atom::Unit), &env, &mut state).unwrap(), Type::Unit);
+        assert_eq!(
+            synth(&atom_node(Atom::Unit), &env, &mut state).unwrap(),
+            Type::Unit
+        );
     }
 
     // -- Test 13 --
     #[test]
     fn synth_int_i8_suffix() {
         let (env, mut state) = empty();
-        assert_eq!(synth(&int_node_suf(1, IntSuffix::I8), &env, &mut state).unwrap(), Type::Int8);
+        assert_eq!(
+            synth(&int_node_suf(1, IntSuffix::I8), &env, &mut state).unwrap(),
+            Type::Int8
+        );
     }
 
     // -- Test 14 --
@@ -1175,7 +2302,10 @@ mod tests {
         let t0 = state.supply.fresh(); // TypeVar(0) — now consumed
         let scheme = nexl_types::Scheme {
             forall: [t0].into_iter().collect::<HashSet<_>>(),
-            body: Type::Fn { params: vec![Type::Var(t0)], ret: Box::new(Type::Var(t0)) },
+            body: Type::Fn {
+                params: vec![Type::Var(t0)],
+                ret: Box::new(Type::Var(t0)),
+            },
         };
         let env = Env::new().extend("id", scheme);
         // instantiate will call state.supply.fresh() → TypeVar(1)
@@ -1184,7 +2314,11 @@ mod tests {
             Type::Fn { params, ret } => {
                 assert_eq!(params.len(), 1);
                 assert_eq!(params[0], *ret, "param and ret must be the same fresh var");
-                assert_ne!(params[0], Type::Var(t0), "must be a fresh var, not the original t0");
+                assert_ne!(
+                    params[0],
+                    Type::Var(t0),
+                    "must be a fresh var, not the original t0"
+                );
             }
             other => panic!("expected Fn type, got {other:?}"),
         }
@@ -1312,7 +2446,13 @@ mod tests {
         let (env, mut state) = empty();
         let node = defn_node("f", vec![], int_node(42));
         let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
-        assert_eq!(ty, Type::Fn { params: vec![], ret: Box::new(Type::Int) });
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Int)
+            }
+        );
     }
 
     // -- Test 3 (defn) --
@@ -1325,7 +2465,10 @@ mod tests {
         match ty {
             Type::Fn { params, ret } => {
                 assert_eq!(params.len(), 1);
-                assert_eq!(params[0], *ret, "param and return type must be the same var");
+                assert_eq!(
+                    params[0], *ret,
+                    "param and return type must be the same var"
+                );
             }
             other => panic!("expected Fn type, got {other:?}"),
         }
@@ -1340,7 +2483,13 @@ mod tests {
         let (_name, _ty, new_env) = infer_defn(&node, &env, &mut state).unwrap();
         assert!(env.lookup("f").is_none(), "original env must not have f");
         let scheme = new_env.lookup("f").expect("new env must have f");
-        assert_eq!(scheme.body, Type::Fn { params: vec![], ret: Box::new(Type::Int) });
+        assert_eq!(
+            scheme.body,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Int)
+            }
+        );
     }
 
     // -- Test 5 (defn) --
@@ -1396,7 +2545,12 @@ mod tests {
         // (defn f 42 body) → MalformedForm (params must be a vector)
         let (env, mut state) = empty();
         let node = Node::new(
-            NodeKind::List(vec![sym_node("defn"), sym_node("f"), int_node(42), int_node(99)]),
+            NodeKind::List(vec![
+                sym_node("defn"),
+                sym_node("f"),
+                int_node(42),
+                int_node(99),
+            ]),
             syn_span(),
         );
         let err = infer_defn(&node, &env, &mut state).unwrap_err();
@@ -1404,6 +2558,742 @@ mod tests {
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // deftype form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (deftype sum) --
+    #[test]
+    fn parse_deftype_sum_nullary_constructors() {
+        let node = parse_one("(deftype Color | Red | Green | Blue)");
+        let td = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Sum(td) => td,
+            other => panic!("expected Sum deftype, got {other:?}"),
+        };
+        let expected = TypeDef {
+            name: "Color".to_string(),
+            params: vec![],
+            constructors: vec![
+                Constructor::nullary("Red"),
+                Constructor::nullary("Green"),
+                Constructor::nullary("Blue"),
+            ],
+        };
+        assert_eq!(td, expected);
+    }
+
+    // -- Test 2 (deftype sum) --
+    #[test]
+    fn parse_deftype_sum_nary_constructor_fields() {
+        let node = parse_one("(deftype Result | (Ok Int) | (Err Str))");
+        let td = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Sum(td) => td,
+            other => panic!("expected Sum deftype, got {other:?}"),
+        };
+        let expected = TypeDef {
+            name: "Result".to_string(),
+            params: vec![],
+            constructors: vec![
+                Constructor::nary("Ok", vec![Type::Int]),
+                Constructor::nary("Err", vec![Type::Str]),
+            ],
+        };
+        assert_eq!(td, expected);
+    }
+
+    // -- Test 3 (deftype sum) --
+    #[test]
+    fn parse_deftype_sum_missing_pipe_is_malformed() {
+        let node = parse_one("(deftype Color Red)");
+        let err = super::parse_deftype(&node).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 4 (deftype record) --
+    #[test]
+    fn parse_deftype_record_fields() {
+        let node = parse_one("(deftype Point {:x Float :y Float})");
+        let (name, params, fields) = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Record {
+                name,
+                params,
+                fields,
+            } => (name, params, fields),
+            other => panic!("expected Record deftype, got {other:?}"),
+        };
+        assert_eq!(name, "Point");
+        assert!(params.is_empty(), "record type params should be empty");
+        assert_eq!(
+            fields,
+            vec![
+                ("x".to_string(), Type::Float),
+                ("y".to_string(), Type::Float)
+            ]
+        );
+    }
+
+    // -- Test 5 (deftype record) --
+    #[test]
+    fn parse_deftype_record_field_key_must_be_keyword() {
+        let node = parse_one("(deftype Point {x Float})");
+        let err = super::parse_deftype(&node).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 6 (deftype params) --
+    #[test]
+    fn parse_deftype_params_option() {
+        let node = parse_one("(deftype Option [a] | None | (Some a))");
+        let td = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Sum(td) => td,
+            other => panic!("expected Sum deftype, got {other:?}"),
+        };
+        assert_eq!(td.name, "Option");
+        assert_eq!(td.params.len(), 1);
+        let a = td.params[0];
+        assert_eq!(
+            td.constructors,
+            vec![
+                Constructor::nullary("None"),
+                Constructor::nary("Some", vec![Type::Var(a)]),
+            ]
+        );
+    }
+
+    // -- Test 7 (deftype params) --
+    #[test]
+    fn parse_deftype_params_recursive_adt() {
+        let node = parse_one("(deftype Tree [a] | Leaf | (Branch a (Tree a) (Tree a)))");
+        let td = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Sum(td) => td,
+            other => panic!("expected Sum deftype, got {other:?}"),
+        };
+        assert_eq!(td.name, "Tree");
+        assert_eq!(td.params.len(), 1);
+        let a = td.params[0];
+        let tree_a = Type::Adt {
+            name: "Tree".to_string(),
+            args: vec![Type::Var(a)],
+        };
+        assert_eq!(
+            td.constructors,
+            vec![
+                Constructor::nullary("Leaf"),
+                Constructor::nary("Branch", vec![Type::Var(a), tree_a.clone(), tree_a]),
+            ]
+        );
+    }
+
+    // -- Test 8 (deftype params) --
+    #[test]
+    fn parse_deftype_params_must_be_vector() {
+        let node = parse_one("(deftype Option a | None)");
+        let err = super::parse_deftype(&node).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // deftype registration tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 9 (deftype register) --
+    #[test]
+    fn register_deftype_sum_adds_type_def_and_ctors() {
+        let t0 = TypeVar(0);
+        let td = TypeDef {
+            name: "Option".to_string(),
+            params: vec![t0],
+            constructors: vec![
+                Constructor::nullary("None"),
+                Constructor::nary("Some", vec![Type::Var(t0)]),
+            ],
+        };
+        let decl = DeftypeDecl::Sum(td.clone());
+        let env = Env::new();
+        let env = register_deftype(&env, decl);
+        assert_eq!(env.lookup_type_def("Option"), Some(&td));
+        let ctor = env.lookup_ctor("Some").expect("Some should be registered");
+        assert_eq!(ctor.type_name, "Option");
+        assert_eq!(ctor.ctor, Constructor::nary("Some", vec![Type::Var(t0)]));
+    }
+
+    // -- Test 10 (deftype register) --
+    #[test]
+    fn register_deftype_record_adds_record_def() {
+        let decl = DeftypeDecl::Record {
+            name: "Point".to_string(),
+            params: vec![],
+            fields: vec![("x".to_string(), Type::Float)],
+        };
+        let env = Env::new();
+        let env = register_deftype(&env, decl);
+        let rec = env
+            .lookup_record_def("Point")
+            .expect("Point record should be registered");
+        assert_eq!(rec.name, "Point");
+        assert_eq!(rec.fields, vec![("x".to_string(), Type::Float)]);
+    }
+
+    // -- Test 10b (deftype register) --
+    #[test]
+    fn parse_and_register_option_registers_schemes() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+
+        let td = env
+            .lookup_type_def("Option")
+            .expect("typedef Option should be present");
+        assert_eq!(td.params.len(), 1);
+        let a = td.params[0];
+
+        let some = env
+            .lookup("Some")
+            .expect("Some scheme should be registered");
+        assert!(
+            some.forall.contains(&a),
+            "Some should quantify its type parameter"
+        );
+        assert_eq!(
+            some.body,
+            Type::Fn {
+                params: vec![Type::Var(a)],
+                ret: Box::new(Type::Adt {
+                    name: "Option".to_string(),
+                    args: vec![Type::Var(a)]
+                }),
+            }
+        );
+
+        let none = env
+            .lookup("None")
+            .expect("None scheme should be registered");
+        assert!(
+            none.forall.contains(&a),
+            "None should quantify its type parameter"
+        );
+        assert_eq!(
+            none.body,
+            Type::Adt {
+                name: "Option".to_string(),
+                args: vec![Type::Var(a)]
+            }
+        );
+    }
+
+    // -- Test 10c (deftype register) --
+    #[test]
+    fn parse_and_register_record_registers_ctor_scheme() {
+        let def = parse_one("(deftype Point {:x Float :y Float})");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+
+        let rec = env
+            .lookup_record_def("Point")
+            .expect("Point record should be registered");
+        assert!(rec.params.is_empty(), "record should be monomorphic here");
+
+        let ctor = env
+            .lookup("Point")
+            .expect("record constructor should be bound in env");
+        assert!(
+            ctor.forall.is_empty(),
+            "record constructor scheme should be monomorphic"
+        );
+        let record_ty = Type::Record {
+            name: "Point".to_string(),
+            fields: vec![
+                ("x".to_string(), Type::Float),
+                ("y".to_string(), Type::Float),
+            ],
+        };
+        assert_eq!(
+            ctor.body,
+            Type::Fn {
+                params: vec![record_ty.clone()],
+                ret: Box::new(record_ty),
+            }
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // constructor application tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 11 (constructor application) --
+    #[test]
+    fn infer_constructor_application_some_int() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(Some 42)");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Adt {
+                name: "Option".to_string(),
+                args: vec![Type::Int]
+            }
+        );
+    }
+
+    // -- Test 11b (constructor application) --
+    #[test]
+    fn infer_constructor_application_some_str() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(Some \"hi\")");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Adt {
+                name: "Option".to_string(),
+                args: vec![Type::Str]
+            }
+        );
+    }
+
+    // -- Test 12 (constructor application) --
+    #[test]
+    fn infer_nullary_constructor_usage_none() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("None");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Adt { name, args } => {
+                assert_eq!(name, "Option");
+                assert_eq!(args.len(), 1);
+                assert!(
+                    matches!(args[0], Type::Var(_)),
+                    "arg should be a fresh type var"
+                );
+            }
+            other => panic!("expected Option type, got {other:?}"),
+        }
+    }
+
+    // -- Test 13 (record construction) --
+    #[test]
+    fn infer_record_construction_point() {
+        let def = parse_one("(deftype Point {:x Float :y Float})");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(Point {:x 1.0 :y 2.0})");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Record {
+                name: "Point".to_string(),
+                fields: vec![
+                    ("x".to_string(), Type::Float),
+                    ("y".to_string(), Type::Float),
+                ],
+            }
+        );
+    }
+
+    // -- Test 14 (field access) --
+    #[test]
+    fn infer_keyword_field_access() {
+        let def = parse_one("(deftype Point {:x Float :y Float})");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(:x (Point {:x 1.0 :y 2.0}))");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Float);
+    }
+
+    // -----------------------------------------------------------------------
+    // match form parsing tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 15 (match parse) --
+    #[test]
+    fn parse_match_two_arms_no_guard() {
+        let node = parse_one("(match x 0 1 _ 2)");
+        let (scrutinee, arms) = parse_match(&node).unwrap();
+        assert!(
+            matches!(
+                &scrutinee.kind,
+                NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "x"
+            ),
+            "scrutinee should be symbol x"
+        );
+        assert_eq!(arms.len(), 2);
+        assert_eq!(
+            arms[0].pattern,
+            Pattern::Literal(Atom::Int {
+                value: 0,
+                suffix: None
+            })
+        );
+        assert!(arms[0].guard.is_none());
+        assert!(
+            matches!(
+                &arms[0].body.kind,
+                NodeKind::Atom(Atom::Int {
+                    value: 1,
+                    suffix: None
+                })
+            ),
+            "first arm body should be 1"
+        );
+        assert_eq!(arms[1].pattern, Pattern::Wildcard);
+        assert!(arms[1].guard.is_none());
+        assert!(
+            matches!(
+                &arms[1].body.kind,
+                NodeKind::Atom(Atom::Int {
+                    value: 2,
+                    suffix: None
+                })
+            ),
+            "second arm body should be 2"
+        );
+    }
+
+    // -- Test 16 (match parse) --
+    #[test]
+    fn parse_match_guard_arm() {
+        let node = parse_one("(match x 0 :when (> x 0) 1 _ 2)");
+        let (_scrutinee, arms) = parse_match(&node).unwrap();
+        assert_eq!(arms.len(), 2);
+        assert!(arms[0].guard.is_some());
+        let guard = arms[0].guard.unwrap();
+        assert!(
+            matches!(
+                &guard.kind,
+                NodeKind::List(items)
+                    if matches!(
+                        &items[0].kind,
+                        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == ">"
+                    )
+            ),
+            "guard should be (> x 0)"
+        );
+    }
+
+    // -- Test 17 (match parse) --
+    #[test]
+    fn parse_match_missing_body_is_malformed() {
+        let node = parse_one("(match x 0)");
+        let err = parse_match(&node).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 18 (match parse) --
+    #[test]
+    fn parse_match_guard_missing_body_is_malformed() {
+        let node = parse_one("(match x 0 :when 1)");
+        let err = parse_match(&node).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // match form inference tests (scrutinee only)
+    // -----------------------------------------------------------------------
+
+    // -- Test 19 (match infer) --
+    #[test]
+    fn infer_match_scrutinee_unbound_is_error() {
+        let (env, mut state) = empty();
+        let node = parse_one("(match unknown _ 0)");
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 20 (match infer) --
+    #[test]
+    fn infer_match_scrutinee_inner_mismatch_is_error() {
+        let (env, mut state) = empty();
+        let node = parse_one("(match (if 0 1 2) _ 3)");
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::Mismatch { ref expected, ref found }
+                    if *expected == Type::Bool && *found == Type::Int
+            ),
+            "expected Mismatch(Bool, Int), got {err:?}"
+        );
+    }
+
+    // -- Test 21 (match infer) --
+    #[test]
+    fn infer_match_form_is_recognized() {
+        let (env, mut state) = empty();
+        let node = parse_one("(match 1 _ 2)");
+        assert!(
+            synth(&node, &env, &mut state).is_ok(),
+            "match form should be synthesized, not treated as application"
+        );
+    }
+
+    // -- Test 22 (match infer) --
+    #[test]
+    fn infer_match_too_few_elements_is_malformed() {
+        let (env, mut state) = empty();
+        let node = parse_one("(match 1)");
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 23 (match infer) --
+    #[test]
+    fn infer_match_pattern_type_mismatch_is_error() {
+        let (env, mut state) = empty();
+        let node = parse_one("(match 1 0 1 true 2)");
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::Mismatch { ref expected, ref found }
+                    if *expected == Type::Int && *found == Type::Bool
+            ),
+            "expected Mismatch(Int, Bool), got {err:?}"
+        );
+    }
+
+    // -- Test 24 (match infer) --
+    #[test]
+    fn infer_match_unifies_arm_body_types() {
+        let (env, mut state) = empty();
+        let node = parse_one("(match 1 0 1 _ 2)");
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+    }
+
+    // -- Test 24b (match infer) --
+    #[test]
+    fn infer_match_option_exhaustive_returns_int() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(match (Some 1) (Some x) x None 0)");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+    }
+
+    // -- Test 25 (match infer) --
+    #[test]
+    fn infer_match_guard_must_be_bool() {
+        let (env, mut state) = empty();
+        let node = parse_one("(match 1 0 :when 42 1 _ 0)");
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::Mismatch { ref expected, ref found }
+                    if *expected == Type::Bool && *found == Type::Int
+            ),
+            "expected Mismatch(Bool, Int), got {err:?}"
+        );
+    }
+
+    // -- Test 26 (match infer) --
+    #[test]
+    fn infer_match_nullary_constructor_pattern_mismatch() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(match 1 None 0 _ 1)");
+        let mut state = InferState::new();
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::Mismatch { ref expected, ref found }
+                    if *expected == Type::Int
+                        && matches!(found, Type::Adt { name, .. } if name == "Option")
+            ),
+            "expected Mismatch(Int, Option), got {err:?}"
+        );
+    }
+
+    // -- Test 27 (match infer) --
+    #[test]
+    fn infer_match_constructor_pattern_binds_arg() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(match (Some 1) (Some x) x None 0)");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+    }
+
+    // -- Test 28 (match infer) --
+    #[test]
+    fn infer_match_record_pattern_binds_fields() {
+        let def = parse_one("(deftype Point {:x Float :y Float})");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(match (Point {:x 1.0 :y 2.0}) {:x x :y y} x)");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Float);
+    }
+
+    // -- Test 29 (match infer) --
+    #[test]
+    fn infer_match_non_exhaustive_option_is_error() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(match (Some 1) (Some x) x)");
+        let mut state = InferState::new();
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::MalformedForm { ref description }
+                    if description.contains("non-exhaustive")
+            ),
+            "expected non-exhaustive match error, got {err:?}"
+        );
+    }
+
+    // -- Test 30 (match infer) --
+    #[test]
+    fn infer_match_redundant_pattern_warns() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(match (Some 1) None 0 (Some x) x _ 2)");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+        assert_eq!(
+            state.warnings.len(),
+            1,
+            "expected one redundant pattern warning"
+        );
+    }
+
+    // -- Test 31 (match infer) --
+    #[test]
+    fn infer_match_non_exhaustive_bool_is_error() {
+        let (env, mut state) = empty();
+        let node = parse_one("(match true true 1)");
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::MalformedForm { ref description }
+                    if description.contains("non-exhaustive")
+            ),
+            "expected non-exhaustive match error, got {err:?}"
+        );
+    }
+
+    // -- Test 32 (match infer) --
+    #[test]
+    fn infer_match_non_exhaustive_color_is_error() {
+        let def = parse_one("(deftype Color | Red | Green | Blue)");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(match Red Red 1 Green 2)");
+        let mut state = InferState::new();
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::MalformedForm { ref description }
+                    if description.contains("non-exhaustive")
+            ),
+            "expected non-exhaustive match error, got {err:?}"
+        );
+    }
+
+    // -- Test 33 (match infer) --
+    #[test]
+    fn infer_match_non_exhaustive_result_is_error() {
+        let def = parse_one("(deftype Result [a b] | (Ok a) | (Err b))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(match (Ok 1) (Ok x) x)");
+        let mut state = InferState::new();
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::MalformedForm { ref description }
+                    if description.contains("non-exhaustive")
+            ),
+            "expected non-exhaustive match error, got {err:?}"
+        );
+    }
+
+    // -- Test 34 (let destructuring) --
+    #[test]
+    fn infer_let_constructor_pattern_non_exhaustive_is_error() {
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(let [(Some v) (Some 1)] v)");
+        let mut state = InferState::new();
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::MalformedForm { ref description }
+                    if description.contains("non-exhaustive")
+            ),
+            "expected non-exhaustive let pattern error, got {err:?}"
+        );
+    }
+
+    // -- Test 35 (let destructuring) --
+    #[test]
+    fn infer_let_record_destructuring_binds_fields() {
+        let def = parse_one("(deftype Point {:x Float :y Float})");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(let [{:x x :y y} (Point {:x 1.0 :y 2.0})] x)");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Float);
+    }
+
+    // -- Test 36 (let destructuring) --
+    #[test]
+    fn infer_let_tuple_destructuring_binds_fields() {
+        let (env, mut state) = empty();
+        let node = parse_one("(let [[a b] [1 2]] a)");
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
     }
 
     // -----------------------------------------------------------------------
@@ -1417,7 +3307,13 @@ mod tests {
         let (env, mut state) = empty();
         let node = fn_node(vec![], int_node(42));
         let ty = synth(&node, &env, &mut state).unwrap();
-        assert_eq!(ty, Type::Fn { params: vec![], ret: Box::new(Type::Int) });
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Int)
+            }
+        );
     }
 
     // -- Test 2 (fn) --
@@ -1430,7 +3326,10 @@ mod tests {
         match ty {
             Type::Fn { params, ret } => {
                 assert_eq!(params.len(), 1);
-                assert!(matches!(params[0], Type::Var(_)), "param should be a free var");
+                assert!(
+                    matches!(params[0], Type::Var(_)),
+                    "param should be a free var"
+                );
                 assert_eq!(*ret, Type::Int);
             }
             other => panic!("expected Fn type, got {other:?}"),
@@ -1447,7 +3346,10 @@ mod tests {
         match ty {
             Type::Fn { params, ret } => {
                 assert_eq!(params.len(), 1);
-                assert_eq!(params[0], *ret, "param and return type must be the same var");
+                assert_eq!(
+                    params[0], *ret,
+                    "param and return type must be the same var"
+                );
             }
             other => panic!("expected Fn type, got {other:?}"),
         }
@@ -1463,7 +3365,10 @@ mod tests {
         match ty {
             Type::Fn { params, ret } => {
                 assert_eq!(params.len(), 2);
-                assert_ne!(params[0], params[1], "params should have distinct type vars");
+                assert_ne!(
+                    params[0], params[1],
+                    "params should have distinct type vars"
+                );
                 assert_eq!(params[0], *ret, "return type should match first param");
             }
             other => panic!("expected Fn type, got {other:?}"),
@@ -1608,7 +3513,11 @@ mod tests {
     fn infer_if_error_in_then() {
         // (if true unknown 2) → UnboundVariable("unknown")
         let (env, mut state) = empty();
-        let node = if_node(atom_node(Atom::Bool(true)), sym_node("unknown"), int_node(2));
+        let node = if_node(
+            atom_node(Atom::Bool(true)),
+            sym_node("unknown"),
+            int_node(2),
+        );
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
@@ -1621,7 +3530,11 @@ mod tests {
     fn infer_if_error_in_else() {
         // (if true 1 unknown) → UnboundVariable("unknown")
         let (env, mut state) = empty();
-        let node = if_node(atom_node(Atom::Bool(true)), int_node(1), sym_node("unknown"));
+        let node = if_node(
+            atom_node(Atom::Bool(true)),
+            int_node(1),
+            sym_node("unknown"),
+        );
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
@@ -1635,7 +3548,11 @@ mod tests {
         // (if true 1) — no else branch → MalformedForm
         let (env, mut state) = empty();
         let node = Node::new(
-            NodeKind::List(vec![sym_node("if"), atom_node(Atom::Bool(true)), int_node(1)]),
+            NodeKind::List(vec![
+                sym_node("if"),
+                atom_node(Atom::Bool(true)),
+                int_node(1),
+            ]),
             syn_span(),
         );
         let err = synth(&node, &env, &mut state).unwrap_err();
@@ -1785,7 +3702,10 @@ mod tests {
         // 'y' is bound to 'x', which is bound to 42 : Int
         let (env, mut state) = empty();
         let node = let_node(
-            vec![(sym_node("x"), int_node(42)), (sym_node("y"), sym_node("x"))],
+            vec![
+                (sym_node("x"), int_node(42)),
+                (sym_node("y"), sym_node("x")),
+            ],
             sym_node("y"),
         );
         assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
@@ -1836,10 +3756,7 @@ mod tests {
         // direct synth_let call; test via a malformed node with wrong element count.
         // Use a let list with only 1 element: (let)
         let (env, mut state) = empty();
-        let node = Node::new(
-            NodeKind::List(vec![sym_node("let")]),
-            syn_span(),
-        );
+        let node = Node::new(NodeKind::List(vec![sym_node("let")]), syn_span());
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
@@ -1856,10 +3773,7 @@ mod tests {
             NodeKind::Vector(vec![sym_node("x"), int_node(1)]),
             syn_span(),
         );
-        let node = Node::new(
-            NodeKind::List(vec![sym_node("let"), bvec]),
-            syn_span(),
-        );
+        let node = Node::new(NodeKind::List(vec![sym_node("let"), bvec]), syn_span());
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
@@ -1933,7 +3847,13 @@ mod tests {
             syn_span(),
         );
         let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
-        assert_eq!(ty, Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Int) });
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![Type::Int],
+                ret: Box::new(Type::Int)
+            }
+        );
     }
 
     // -- Test 11 (annot) --
@@ -1944,13 +3864,23 @@ mod tests {
         let pvec = Node::new(NodeKind::Vector(vec![]), syn_span());
         let node = Node::new(
             NodeKind::List(vec![
-                sym_node("defn"), sym_node("f"), pvec,
-                sym_node("->"), sym_node("Int"), int_node(42),
+                sym_node("defn"),
+                sym_node("f"),
+                pvec,
+                sym_node("->"),
+                sym_node("Int"),
+                int_node(42),
             ]),
             syn_span(),
         );
         let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
-        assert_eq!(ty, Type::Fn { params: vec![], ret: Box::new(Type::Int) });
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Int)
+            }
+        );
     }
 
     // -- Test 12 (annot) --
@@ -1961,8 +3891,12 @@ mod tests {
         let pvec = Node::new(NodeKind::Vector(vec![]), syn_span());
         let node = Node::new(
             NodeKind::List(vec![
-                sym_node("defn"), sym_node("f"), pvec,
-                sym_node("->"), sym_node("Bool"), int_node(42),
+                sym_node("defn"),
+                sym_node("f"),
+                pvec,
+                sym_node("->"),
+                sym_node("Bool"),
+                int_node(42),
             ]),
             syn_span(),
         );
@@ -1984,13 +3918,23 @@ mod tests {
         );
         let node = Node::new(
             NodeKind::List(vec![
-                sym_node("defn"), sym_node("f"), pvec,
-                sym_node("->"), sym_node("Int"), sym_node("x"),
+                sym_node("defn"),
+                sym_node("f"),
+                pvec,
+                sym_node("->"),
+                sym_node("Int"),
+                sym_node("x"),
             ]),
             syn_span(),
         );
         let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
-        assert_eq!(ty, Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Int) });
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![Type::Int],
+                ret: Box::new(Type::Int)
+            }
+        );
     }
 
     // -- Test 7 (annot) --
@@ -1999,7 +3943,12 @@ mod tests {
         // (let [x : Int 42] x) → Int
         let (env, mut state) = empty();
         let bvec = Node::new(
-            NodeKind::Vector(vec![sym_node("x"), sym_node(":"), sym_node("Int"), int_node(42)]),
+            NodeKind::Vector(vec![
+                sym_node("x"),
+                sym_node(":"),
+                sym_node("Int"),
+                int_node(42),
+            ]),
             syn_span(),
         );
         let node = Node::new(
@@ -2015,7 +3964,12 @@ mod tests {
         // (let [x : Bool 42] x) → Mismatch { expected: Bool, found: Int }
         let (env, mut state) = empty();
         let bvec = Node::new(
-            NodeKind::Vector(vec![sym_node("x"), sym_node(":"), sym_node("Bool"), int_node(42)]),
+            NodeKind::Vector(vec![
+                sym_node("x"),
+                sym_node(":"),
+                sym_node("Bool"),
+                int_node(42),
+            ]),
             syn_span(),
         );
         let node = Node::new(
@@ -2037,8 +3991,12 @@ mod tests {
         let (env, mut state) = empty();
         let bvec = Node::new(
             NodeKind::Vector(vec![
-                sym_node("x"), sym_node(":"), sym_node("Int"), int_node(42),
-                sym_node("y"), atom_node(Atom::Str("hi".into())),
+                sym_node("x"),
+                sym_node(":"),
+                sym_node("Int"),
+                int_node(42),
+                sym_node("y"),
+                atom_node(Atom::Str("hi".into())),
             ]),
             syn_span(),
         );
@@ -2056,8 +4014,11 @@ mod tests {
         let (env, mut state) = empty();
         let node = Node::new(
             NodeKind::List(vec![
-                sym_node("def"), sym_node("x"),
-                sym_node(":"), sym_node("Int"), int_node(42),
+                sym_node("def"),
+                sym_node("x"),
+                sym_node(":"),
+                sym_node("Int"),
+                int_node(42),
             ]),
             syn_span(),
         );
@@ -2072,8 +4033,11 @@ mod tests {
         let (env, mut state) = empty();
         let node = Node::new(
             NodeKind::List(vec![
-                sym_node("def"), sym_node("x"),
-                sym_node(":"), sym_node("Bool"), int_node(42),
+                sym_node("def"),
+                sym_node("x"),
+                sym_node(":"),
+                sym_node("Bool"),
+                int_node(42),
             ]),
             syn_span(),
         );
@@ -2095,7 +4059,10 @@ mod tests {
         let node = fn_type_node(vec![type_sym("Int"), type_sym("Str")], type_sym("Bool"));
         assert_eq!(
             parse_type_expr(&node).unwrap(),
-            Type::Fn { params: vec![Type::Int, Type::Str], ret: Box::new(Type::Bool) }
+            Type::Fn {
+                params: vec![Type::Int, Type::Str],
+                ret: Box::new(Type::Bool)
+            }
         );
     }
 
@@ -2106,7 +4073,10 @@ mod tests {
         let node = fn_type_node(vec![], type_sym("Int"));
         assert_eq!(
             parse_type_expr(&node).unwrap(),
-            Type::Fn { params: vec![], ret: Box::new(Type::Int) }
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Int)
+            }
         );
     }
 
@@ -2279,10 +4249,7 @@ mod tests {
             NodeKind::Vector(vec![sym_node("x"), int_node(1)]),
             syn_span(),
         );
-        let node = Node::new(
-            NodeKind::List(vec![sym_node("loop"), bvec]),
-            syn_span(),
-        );
+        let node = Node::new(NodeKind::List(vec![sym_node("loop"), bvec]), syn_span());
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
@@ -2338,7 +4305,13 @@ mod tests {
         );
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
-            matches!(err.kind, TypeErrorKind::ArityMismatch { expected: 1, found: 2 }),
+            matches!(
+                err.kind,
+                TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: 2
+                }
+            ),
             "expected ArityMismatch(1,2), got {err:?}"
         );
     }
@@ -2349,13 +4322,16 @@ mod tests {
         // (loop [i 0] (recur)) — 1 loop var but recur passes 0
         // → ArityMismatch { expected: 1, found: 0 }
         let (env, mut state) = empty();
-        let node = loop_node(
-            vec![(sym_node("i"), int_node(0))],
-            recur_node(vec![]),
-        );
+        let node = loop_node(vec![(sym_node("i"), int_node(0))], recur_node(vec![]));
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
-            matches!(err.kind, TypeErrorKind::ArityMismatch { expected: 1, found: 0 }),
+            matches!(
+                err.kind,
+                TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: 0
+                }
+            ),
             "expected ArityMismatch(1,0), got {err:?}"
         );
     }
@@ -2458,7 +4434,10 @@ mod tests {
         let t0 = state.supply.fresh(); // consume t0 for the scheme
         let scheme = nexl_types::Scheme {
             forall: [t0].into_iter().collect::<HashSet<_>>(),
-            body: Type::Fn { params: vec![Type::Var(t0)], ret: Box::new(Type::Var(t0)) },
+            body: Type::Fn {
+                params: vec![Type::Var(t0)],
+                ret: Box::new(Type::Var(t0)),
+            },
         };
         let env = Env::new().extend("id", scheme);
         let node = app_node(sym_node("id"), vec![int_node(42)]);
@@ -2482,7 +4461,10 @@ mod tests {
     #[test]
     fn apply_arity_too_few() {
         // (f) where f : (Fn [Int] -> Bool) → ArityMismatch {expected: 1, found: 0}
-        let f_ty = Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Bool) };
+        let f_ty = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Bool),
+        };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
         let node = app_node(sym_node("f"), vec![]);
@@ -2490,7 +4472,10 @@ mod tests {
         assert!(
             matches!(
                 err.kind,
-                TypeErrorKind::ArityMismatch { expected: 1, found: 0 }
+                TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: 0
+                }
             ),
             "expected ArityMismatch(1,0), got {err:?}"
         );
@@ -2500,7 +4485,10 @@ mod tests {
     #[test]
     fn apply_arity_too_many() {
         // (f 1 2) where f : (Fn [Int] -> Bool) → ArityMismatch {expected: 1, found: 2}
-        let f_ty = Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Bool) };
+        let f_ty = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Bool),
+        };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
         let node = app_node(sym_node("f"), vec![int_node(1), int_node(2)]);
@@ -2508,7 +4496,10 @@ mod tests {
         assert!(
             matches!(
                 err.kind,
-                TypeErrorKind::ArityMismatch { expected: 1, found: 2 }
+                TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: 2
+                }
             ),
             "expected ArityMismatch(1,2), got {err:?}"
         );
@@ -2518,7 +4509,10 @@ mod tests {
     #[test]
     fn apply_arg_type_mismatch() {
         // (f true) where f : (Fn [Int] -> Bool) → Mismatch {expected: Int, found: Bool}
-        let f_ty = Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Bool) };
+        let f_ty = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Bool),
+        };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
         let node = app_node(sym_node("f"), vec![atom_node(Atom::Bool(true))]);
@@ -2537,10 +4531,16 @@ mod tests {
     #[test]
     fn apply_two_arg_fn() {
         // (f 42 "hello") where f : (Fn [Int Str] -> Float) → Float
-        let f_ty = Type::Fn { params: vec![Type::Int, Type::Str], ret: Box::new(Type::Float) };
+        let f_ty = Type::Fn {
+            params: vec![Type::Int, Type::Str],
+            ret: Box::new(Type::Float),
+        };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
-        let node = app_node(sym_node("f"), vec![int_node(42), atom_node(Atom::Str("hello".into()))]);
+        let node = app_node(
+            sym_node("f"),
+            vec![int_node(42), atom_node(Atom::Str("hello".into()))],
+        );
         assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Float);
     }
 
@@ -2548,7 +4548,10 @@ mod tests {
     #[test]
     fn apply_one_arg_fn() {
         // (f 42) where f : (Fn [Int] -> Bool) → Bool
-        let f_ty = Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Bool) };
+        let f_ty = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Bool),
+        };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
         let node = app_node(sym_node("f"), vec![int_node(42)]);
@@ -2559,7 +4562,10 @@ mod tests {
     #[test]
     fn apply_zero_arg_fn() {
         // (f) where f : (Fn [] -> Int) → Int
-        let f_ty = Type::Fn { params: vec![], ret: Box::new(Type::Int) };
+        let f_ty = Type::Fn {
+            params: vec![],
+            ret: Box::new(Type::Int),
+        };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
         let node = app_node(sym_node("f"), vec![]);
@@ -2599,7 +4605,10 @@ mod tests {
         let inner_span = Span::new(FileId(0), 4, 1); // "x" at offset 4
         let outer_span = Span::new(FileId(0), 0, 10); // "(if x 1 0)" at offset 0
         let cond = Node::new(
-            NodeKind::Atom(Atom::Symbol { ns: None, name: "x".to_string() }),
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "x".to_string(),
+            }),
             inner_span,
         );
         let if_form = Node::new(
@@ -2609,7 +4618,11 @@ mod tests {
         let err = synth(&if_form, &env, &mut state).unwrap_err();
         // Error originates at the unbound variable "x" — inner_span must win.
         assert_eq!(err.span, Some(inner_span), "inner span must be preserved");
-        assert_ne!(err.span, Some(outer_span), "outer span must not overwrite inner");
+        assert_ne!(
+            err.span,
+            Some(outer_span),
+            "outer span must not overwrite inner"
+        );
     }
 
     // -- Test 5 (span) --
@@ -2619,13 +4632,23 @@ mod tests {
         // check() should attach the node's span to it.
         let (env, mut state) = empty();
         let real_span = Span::new(FileId(0), 5, 2);
-        let node = Node::new(NodeKind::Atom(Atom::Int { value: 42, suffix: None }), real_span);
+        let node = Node::new(
+            NodeKind::Atom(Atom::Int {
+                value: 42,
+                suffix: None,
+            }),
+            real_span,
+        );
         let err = check(&node, &Type::Bool, &env, &mut state).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::Mismatch { .. }),
             "expected Mismatch, got {err:?}"
         );
-        assert_eq!(err.span, Some(real_span), "check should attach the node's span");
+        assert_eq!(
+            err.span,
+            Some(real_span),
+            "check should attach the node's span"
+        );
     }
 
     // -- Test 4 (span) --
@@ -2636,7 +4659,10 @@ mod tests {
         let (env, mut state) = empty();
         let real_span = Span::new(FileId(0), 10, 3);
         let node = Node::new(
-            NodeKind::Atom(Atom::Symbol { ns: None, name: "z".to_string() }),
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "z".to_string(),
+            }),
             real_span,
         );
         let err = synth(&node, &env, &mut state).unwrap_err();
@@ -2644,7 +4670,11 @@ mod tests {
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "z"),
             "expected UnboundVariable(z), got {err:?}"
         );
-        assert_eq!(err.span, Some(real_span), "error should carry the node's span");
+        assert_eq!(
+            err.span,
+            Some(real_span),
+            "error should carry the node's span"
+        );
     }
 
     // -- Test 6 (adr-006) --
@@ -2720,7 +4750,10 @@ mod tests {
         );
         let err = synth(&node, &env, &mut state).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("help:"), "expected 'help:' in display, got: '{msg}'");
+        assert!(
+            msg.contains("help:"),
+            "expected 'help:' in display, got: '{msg}'"
+        );
         assert!(
             msg.contains("->float") || msg.contains("convert"),
             "expected conversion hint in display, got: '{msg}'"
@@ -2773,8 +4806,10 @@ mod tests {
         let (env, mut state) = empty();
         let bvec = Node::new(
             NodeKind::Vector(vec![
-                sym_node("x"), sym_node("unbound_a"),
-                sym_node("y"), sym_node("unbound_b"),
+                sym_node("x"),
+                sym_node("unbound_a"),
+                sym_node("y"),
+                sym_node("unbound_b"),
             ]),
             syn_span(),
         );
@@ -2784,7 +4819,11 @@ mod tests {
         );
         let ty = synth(&node, &env, &mut state).unwrap();
         assert_eq!(ty, Type::Int, "body type should be Int");
-        assert_eq!(state.errors.len(), 2, "both binding-init errors must be collected");
+        assert_eq!(
+            state.errors.len(),
+            2,
+            "both binding-init errors must be collected"
+        );
     }
 
     // -- Test 3 (multi-error) --
@@ -2802,7 +4841,11 @@ mod tests {
         );
         let mut state = InferState::new();
         let node = Node::new(
-            NodeKind::List(vec![sym_node("f"), sym_node("unbound_a"), sym_node("unbound_b")]),
+            NodeKind::List(vec![
+                sym_node("f"),
+                sym_node("unbound_a"),
+                sym_node("unbound_b"),
+            ]),
             syn_span(),
         );
         let ty = synth(&node, &env, &mut state).unwrap();
@@ -2818,7 +4861,10 @@ mod tests {
         let node = do_node(vec![int_node(1), int_node(2), int_node(3)]);
         let ty = synth(&node, &env, &mut state).unwrap();
         assert_eq!(ty, Type::Int);
-        assert!(state.errors.is_empty(), "no errors expected for successful do");
+        assert!(
+            state.errors.is_empty(),
+            "no errors expected for successful do"
+        );
     }
 
     // -- Test 1 (multi-error) --
@@ -2828,10 +4874,18 @@ mod tests {
         // successful one.  synth should return Ok(Int) and state.errors should
         // hold both unbound-variable errors rather than stopping at the first.
         let (env, mut state) = empty();
-        let node = do_node(vec![sym_node("unbound_x"), sym_node("unbound_y"), int_node(42)]);
+        let node = do_node(vec![
+            sym_node("unbound_x"),
+            sym_node("unbound_y"),
+            int_node(42),
+        ]);
         let ty = synth(&node, &env, &mut state).unwrap();
         assert_eq!(ty, Type::Int, "last expr type should be Int");
-        assert_eq!(state.errors.len(), 2, "both unbound-var errors must be collected");
+        assert_eq!(
+            state.errors.len(),
+            2,
+            "both unbound-var errors must be collected"
+        );
     }
 }
 
@@ -2845,7 +4899,7 @@ mod integration_tests {
     use nexl_reader::read;
     use nexl_types::{Scheme, Type};
 
-    use super::{InferState, infer_defn, synth};
+    use super::{InferState, infer_defn, parse_deftype, register_deftype, synth};
     use crate::Env;
 
     /// Parse `src` and return the first top-level node, panicking on failure.
@@ -2857,7 +4911,10 @@ mod integration_tests {
 
     /// Build an environment containing the four standard Int arithmetic operators.
     fn arith_env() -> Env {
-        let int_binop = Type::Fn { params: vec![Type::Int, Type::Int], ret: Box::new(Type::Int) };
+        let int_binop = Type::Fn {
+            params: vec![Type::Int, Type::Int],
+            ret: Box::new(Type::Int),
+        };
         Env::new()
             .extend("+", Scheme::mono(int_binop.clone()))
             .extend("-", Scheme::mono(int_binop.clone()))
@@ -2877,7 +4934,10 @@ mod integration_tests {
         let (_name, ty, _new_env) = infer_defn(&node, &env, &mut state).unwrap();
         assert_eq!(
             ty,
-            Type::Fn { params: vec![Type::Int, Type::Int], ret: Box::new(Type::Int) },
+            Type::Fn {
+                params: vec![Type::Int, Type::Int],
+                ret: Box::new(Type::Int)
+            },
             "add should have type (Fn [Int Int] -> Int)"
         );
     }
@@ -2928,8 +4988,27 @@ mod integration_tests {
         let (_name, ty, _new_env) = infer_defn(&node, &env, &mut state).unwrap();
         assert_eq!(
             ty,
-            Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Int) },
+            Type::Fn {
+                params: vec![Type::Int],
+                ret: Box::new(Type::Int)
+            },
             "fib should have type (Fn [Int] -> Int)"
         );
+    }
+
+    // -- Test 4 (integration) --
+    #[test]
+    fn integration_deftype_match_end_to_end() {
+        let nodes = read(
+            "(deftype Option [a] | None | (Some a)) (match (Some 1) (Some x) x None 0)",
+            FileId(0),
+        )
+        .expect("parse failed");
+        assert_eq!(nodes.len(), 2, "expected two top-level forms");
+        let decl = parse_deftype(&nodes[0]).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let mut state = InferState::new();
+        let ty = synth(&nodes[1], &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
     }
 }

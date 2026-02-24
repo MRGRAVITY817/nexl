@@ -43,7 +43,11 @@ pub struct TypeError {
 impl TypeError {
     /// Create an error without a source span or help text.
     pub fn new(kind: TypeErrorKind) -> Self {
-        Self { kind, span: None, help: None }
+        Self {
+            kind,
+            span: None,
+            help: None,
+        }
     }
 
     /// Attach a source span to this error.
@@ -118,13 +122,9 @@ fn normalize(ty: Type) -> Type {
 fn occurs_in(tv: TypeVar, ty: &Type) -> bool {
     match ty {
         Type::Var(v) => *v == tv,
-        Type::Fn { params, ret } => {
-            params.iter().any(|p| occurs_in(tv, p)) || occurs_in(tv, ret)
-        }
+        Type::Fn { params, ret } => params.iter().any(|p| occurs_in(tv, p)) || occurs_in(tv, ret),
         Type::Adt { args, .. } => args.iter().any(|a| occurs_in(tv, a)),
-        Type::Record { fields, .. } => {
-            fields.iter().any(|(_, field_ty)| occurs_in(tv, field_ty))
-        }
+        Type::Record { fields, .. } => fields.iter().any(|(_, field_ty)| occurs_in(tv, field_ty)),
         Type::Tuple(items) => items.iter().any(|item| occurs_in(tv, item)),
         _ => false,
     }
@@ -188,10 +188,6 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
         | (Type::F32, Type::F32)
         | (Type::F64, Type::F64) => Ok(()),
 
-        // Never is the bottom type — it is a subtype of every type and
-        // unifies with anything (spec §5.3: "type of diverging expressions").
-        (Type::Never, _) | (_, Type::Never) => Ok(()),
-
         // Variable on the left.
         (Type::Var(tv), _) => {
             let tv = *tv;
@@ -217,6 +213,10 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
             subst.insert(tv, a.clone());
             Ok(())
         }
+
+        // Never is the bottom type — it is a subtype of every type and
+        // unifies with anything (spec §5.3: "type of diverging expressions").
+        (Type::Never, _) | (_, Type::Never) => Ok(()),
 
         // Two function types.
         (
@@ -263,7 +263,16 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
         }
 
         // Two nominal record types: names must match, fields unify by name.
-        (Type::Record { name: na, fields: fa }, Type::Record { name: nb, fields: fb }) => {
+        (
+            Type::Record {
+                name: na,
+                fields: fa,
+            },
+            Type::Record {
+                name: nb,
+                fields: fb,
+            },
+        ) => {
             if na != nb || fa.len() != fb.len() {
                 return Err(TypeError::new(TypeErrorKind::Mismatch {
                     expected: a.clone(),
@@ -320,11 +329,17 @@ mod tests {
     }
 
     fn fn1(param: Type, ret: Type) -> Type {
-        Type::Fn { params: vec![param], ret: Box::new(ret) }
+        Type::Fn {
+            params: vec![param],
+            ret: Box::new(ret),
+        }
     }
 
     fn fn2(p1: Type, p2: Type, ret: Type) -> Type {
-        Type::Fn { params: vec![p1, p2], ret: Box::new(ret) }
+        Type::Fn {
+            params: vec![p1, p2],
+            ret: Box::new(ret),
+        }
     }
 
     // -- Test 1 --
@@ -432,7 +447,10 @@ mod tests {
         assert!(
             matches!(
                 err.kind,
-                TypeErrorKind::ArityMismatch { expected: 1, found: 2 }
+                TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: 2
+                }
             ),
             "expected ArityMismatch(1,2), got {err:?}"
         );
@@ -446,7 +464,13 @@ mod tests {
         let ty = fn1(tv(0), Type::Int);
         let err = unify(&tv(0), &ty, &mut s).unwrap_err();
         assert!(
-            matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
+            matches!(
+                err.kind,
+                TypeErrorKind::InfiniteType {
+                    var: TypeVar(0),
+                    ..
+                }
+            ),
             "expected InfiniteType(t0), got {err:?}"
         );
     }
@@ -460,7 +484,13 @@ mod tests {
         let outer = fn1(inner, Type::Int);
         let err = unify(&tv(0), &outer, &mut s).unwrap_err();
         assert!(
-            matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
+            matches!(
+                err.kind,
+                TypeErrorKind::InfiniteType {
+                    var: TypeVar(0),
+                    ..
+                }
+            ),
             "expected InfiniteType(t0), got {err:?}"
         );
     }
@@ -500,10 +530,42 @@ mod tests {
     fn unify_never_with_any_type() {
         // Never is the bottom type — it must unify with any concrete type.
         let mut s = Subst::empty();
-        assert!(unify(&Type::Never, &Type::Int, &mut s).is_ok(), "Never ~ Int");
-        assert!(unify(&Type::Int, &Type::Never, &mut s).is_ok(), "Int ~ Never");
-        assert!(unify(&Type::Never, &Type::Bool, &mut s).is_ok(), "Never ~ Bool");
-        assert!(unify(&Type::Never, &Type::Str, &mut s).is_ok(), "Never ~ Str");
+        assert!(
+            unify(&Type::Never, &Type::Int, &mut s).is_ok(),
+            "Never ~ Int"
+        );
+        assert!(
+            unify(&Type::Int, &Type::Never, &mut s).is_ok(),
+            "Int ~ Never"
+        );
+        assert!(
+            unify(&Type::Never, &Type::Bool, &mut s).is_ok(),
+            "Never ~ Bool"
+        );
+        assert!(
+            unify(&Type::Never, &Type::Str, &mut s).is_ok(),
+            "Never ~ Str"
+        );
+    }
+
+    // -- Test 23a --
+    #[test]
+    fn unify_var_with_never_binds() {
+        // t0 = Never should bind t0 to bottom so future lookups resolve.
+        let mut s = Subst::empty();
+        unify(&tv(0), &Type::Never, &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), Type::Never);
+    }
+
+    // -- Test 23b --
+    #[test]
+    fn unify_option_never_binds_inner_var() {
+        // (Option Never) = (Option t0) → t0 should resolve to Never.
+        let mut s = Subst::empty();
+        let left = adt("Option", vec![Type::Never]);
+        let right = adt("Option", vec![tv(0)]);
+        unify(&left, &right, &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), Type::Never);
     }
 
     // -- Test 16 --
@@ -560,13 +622,19 @@ mod tests {
             ty: fn1(tv(0), Type::Int),
         });
         let msg = err.to_string();
-        assert!(msg.contains("infinite") || msg.contains("t0"), "uninformative: '{msg}'");
+        assert!(
+            msg.contains("infinite") || msg.contains("t0"),
+            "uninformative: '{msg}'"
+        );
     }
 
     // -- Test 21 --
     #[test]
     fn type_error_arity_display() {
-        let err = TypeError::new(TypeErrorKind::ArityMismatch { expected: 2, found: 3 });
+        let err = TypeError::new(TypeErrorKind::ArityMismatch {
+            expected: 2,
+            found: 3,
+        });
         let msg = err.to_string();
         assert!(msg.contains('2'), "missing '2' in '{msg}'");
         assert!(msg.contains('3'), "missing '3' in '{msg}'");
@@ -583,7 +651,10 @@ mod tests {
         .with_help("use (->float n) to convert Int to Float");
         let msg = err.to_string();
         assert!(msg.contains("help:"), "expected 'help:' in '{msg}'");
-        assert!(msg.contains("->float"), "expected conversion hint in '{msg}'");
+        assert!(
+            msg.contains("->float"),
+            "expected conversion hint in '{msg}'"
+        );
     }
 
     // -- Test 27 (suggest-fixes) --
@@ -634,7 +705,10 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn adt(name: &str, args: Vec<Type>) -> Type {
-        Type::Adt { name: name.to_string(), args }
+        Type::Adt {
+            name: name.to_string(),
+            args,
+        }
     }
 
     fn record(name: &str, fields: Vec<(&str, Type)>) -> Type {
@@ -672,7 +746,10 @@ mod tests {
         // Color ≠ (Option Int) → Mismatch
         let mut s = Subst::empty();
         let err = unify(&adt("Color", vec![]), &adt("Shape", vec![]), &mut s).unwrap_err();
-        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
     }
 
     // -- ADT Test 18 --
@@ -683,7 +760,10 @@ mod tests {
         let a = adt("Option", vec![Type::Int]);
         let b = adt("Option", vec![Type::Str]);
         let err = unify(&a, &b, &mut s).unwrap_err();
-        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
     }
 
     // -- ADT Test 19 --
@@ -703,7 +783,13 @@ mod tests {
         let cyclic = adt("Option", vec![tv(0)]);
         let err = unify(&tv(0), &cyclic, &mut s).unwrap_err();
         assert!(
-            matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
+            matches!(
+                err.kind,
+                TypeErrorKind::InfiniteType {
+                    var: TypeVar(0),
+                    ..
+                }
+            ),
             "expected InfiniteType(t0), got {err:?}"
         );
     }
@@ -713,14 +799,8 @@ mod tests {
     fn unify_record_same_name_fields() {
         // Point{x: t0, y: Float} = Point{x: Int, y: Float} → t0 = Int
         let mut s = Subst::empty();
-        let a = record(
-            "Point",
-            vec![("x", tv(0)), ("y", Type::Float)],
-        );
-        let b = record(
-            "Point",
-            vec![("x", Type::Int), ("y", Type::Float)],
-        );
+        let a = record("Point", vec![("x", tv(0)), ("y", Type::Float)]);
+        let b = record("Point", vec![("x", Type::Int), ("y", Type::Float)]);
         unify(&a, &b, &mut s).unwrap();
         assert_eq!(s.apply(&tv(0)), Type::Int);
     }
@@ -730,16 +810,13 @@ mod tests {
     fn unify_record_name_mismatch() {
         // Point ≠ Vec2 even if fields align (nominal types).
         let mut s = Subst::empty();
-        let a = record(
-            "Point",
-            vec![("x", Type::Float), ("y", Type::Float)],
-        );
-        let b = record(
-            "Vec2",
-            vec![("x", Type::Float), ("y", Type::Float)],
-        );
+        let a = record("Point", vec![("x", Type::Float), ("y", Type::Float)]);
+        let b = record("Vec2", vec![("x", Type::Float), ("y", Type::Float)]);
         let err = unify(&a, &b, &mut s).unwrap_err();
-        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
     }
 
     // -- Record Test 3 --
@@ -747,16 +824,13 @@ mod tests {
     fn unify_record_field_name_mismatch() {
         // Same nominal type, different field set → mismatch.
         let mut s = Subst::empty();
-        let a = record(
-            "Point",
-            vec![("x", Type::Float), ("y", Type::Float)],
-        );
-        let b = record(
-            "Point",
-            vec![("x", Type::Float), ("z", Type::Float)],
-        );
+        let a = record("Point", vec![("x", Type::Float), ("y", Type::Float)]);
+        let b = record("Point", vec![("x", Type::Float), ("z", Type::Float)]);
         let err = unify(&a, &b, &mut s).unwrap_err();
-        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
     }
 
     // -- Record Test 4 --
@@ -764,14 +838,8 @@ mod tests {
     fn unify_record_field_order_irrelevant() {
         // Field order should not matter for nominal records.
         let mut s = Subst::empty();
-        let a = record(
-            "Point",
-            vec![("x", Type::Int), ("y", Type::Bool)],
-        );
-        let b = record(
-            "Point",
-            vec![("y", Type::Bool), ("x", Type::Int)],
-        );
+        let a = record("Point", vec![("x", Type::Int), ("y", Type::Bool)]);
+        let b = record("Point", vec![("y", Type::Bool), ("x", Type::Int)]);
         unify(&a, &b, &mut s).unwrap();
     }
 
@@ -780,13 +848,13 @@ mod tests {
     fn unify_record_missing_field() {
         // Same nominal type, but missing a field on one side → mismatch.
         let mut s = Subst::empty();
-        let a = record(
-            "Point",
-            vec![("x", Type::Float), ("y", Type::Float)],
-        );
+        let a = record("Point", vec![("x", Type::Float), ("y", Type::Float)]);
         let b = record("Point", vec![("x", Type::Float)]);
         let err = unify(&a, &b, &mut s).unwrap_err();
-        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
     }
 
     // -- Record Test 5 --
@@ -797,7 +865,13 @@ mod tests {
         let cyclic = record("Point", vec![("x", tv(0))]);
         let err = unify(&tv(0), &cyclic, &mut s).unwrap_err();
         assert!(
-            matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
+            matches!(
+                err.kind,
+                TypeErrorKind::InfiniteType {
+                    var: TypeVar(0),
+                    ..
+                }
+            ),
             "expected InfiniteType(t0), got {err:?}"
         );
     }
@@ -810,7 +884,13 @@ mod tests {
         let cyclic = Type::Tuple(vec![tv(0), Type::Int]);
         let err = unify(&tv(0), &cyclic, &mut s).unwrap_err();
         assert!(
-            matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
+            matches!(
+                err.kind,
+                TypeErrorKind::InfiniteType {
+                    var: TypeVar(0),
+                    ..
+                }
+            ),
             "expected InfiniteType(t0), got {err:?}"
         );
     }
@@ -834,7 +914,10 @@ mod tests {
         let a = Type::Tuple(vec![Type::Int, Type::Bool]);
         let b = Type::Tuple(vec![Type::Int, Type::Bool, Type::Str]);
         let err = unify(&a, &b, &mut s).unwrap_err();
-        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
     }
 
     // -- Tuple Test 4 --
@@ -883,6 +966,9 @@ mod tests {
         });
         let msg = err.to_string();
         assert!(msg.contains("but got"), "expected 'but got' in '{msg}'");
-        assert!(!msg.contains(", found"), "old 'found' phrasing still present in '{msg}'");
+        assert!(
+            !msg.contains(", found"),
+            "old 'found' phrasing still present in '{msg}'"
+        );
     }
 }
