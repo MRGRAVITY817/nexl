@@ -1,0 +1,6 @@
+[package]
+name = "nexl-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Type representation, substitution, and unification for Nexl"

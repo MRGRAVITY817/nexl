@@ -7,15 +7,15 @@
 ## Todo
 
 ### nexl-types — Type Representation
-- [ ] Add `nexl-types` crate to workspace
-- [ ] `Type` enum: Int, Float, Ratio, Bool, Char, Str, Keyword, Symbol, Unit, Never
-- [ ] Fixed-width numeric types: Int8, Int16, Int32, Int64, U8, U16, U32, U64, F32, F64
-- [ ] `Type::Var(TypeVar)` — unification variables
-- [ ] `Type::Fn { params, ret }` — function types `(Fn [A B] -> C)`
-- [ ] `Display` impl for types (human-readable format)
-- [ ] `TypeVar` generation (unique IDs via counter)
-- [ ] Substitution: `Subst` type (TypeVar → Type map) with `apply` method
-- [ ] `Scheme` — polymorphic type (forall quantifier for let-generalization)
+- [x] Add `nexl-types` crate to workspace
+- [x] `Type` enum: Int, Float, Ratio, Bool, Char, Str, Keyword, Symbol, Unit, Never
+- [x] Fixed-width numeric types: Int8, Int16, Int32, Int64, U8, U16, U32, U64, F32, F64
+- [x] `Type::Var(TypeVar)` — unification variables
+- [x] `Type::Fn { params, ret }` — function types `(Fn [A B] -> C)`
+- [x] `Display` impl for types (human-readable format)
+- [x] `TypeVar` generation (unique IDs via counter)
+- [x] Substitution: `Subst` type (TypeVar → Type map) with `apply` method
+- [x] `Scheme` — polymorphic type (forall quantifier for let-generalization)
 
 ### nexl-types — Unification
 - [ ] `unify(a, b, subst)` — Robinson unification of two types
@@ -53,8 +53,8 @@
 - [ ] Multiple errors collected (don't stop at first)
 
 ### Test Suite
-- [ ] Unit tests for `Type` construction and display
-- [ ] Unit tests for substitution and occurs check
+- [x] Unit tests for `Type` construction and display
+- [x] Unit tests for substitution and occurs check
 - [ ] Unit tests for unification (success and failure cases)
 - [ ] Unit tests for literal type synthesis
 - [ ] Unit tests for each core form inference
