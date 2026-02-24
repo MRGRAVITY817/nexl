@@ -19,12 +19,12 @@ See `docs/crate-map.md` for the full dependency graph.
 - `nexl-ast` — AST node types, spans, source locations
 - `nexl-reader` — Lexer + reader (text → s-expression AST)
 - `nexl-errors` — Diagnostic types (miette + thiserror)
-
-## Key Crates (planned, added as milestones begin)
-- `nexl-types` — Type representation, substitution, unification (M2)
-- `nexl-infer` — Bidirectional inference + effect row inference (M2)
 - `nexl-eval` — Tree-walk evaluator for dev mode (M1, temporary)
 - `nexl-runtime` — Value representation, built-in functions (M1)
+- `nexl-types` — Type representation, substitution, unification (M2)
+- `nexl-infer` — Bidirectional inference + effect row inference (M2)
+
+## Key Crates (planned, added as milestones begin)
 - `nexl-effects` — Effect declarations, evidence passing (M6)
 - `nexl-ir` — Intermediate representation, post-lowering (M8)
 - `nexl-wasm` — WASM code generation (M8)
@@ -71,7 +71,7 @@ the AI executes one test at a time; no one skips the Red step.
 
 ## Current Milestone
 See `docs/current-milestone.md` for active work.
-See `docs/todo-m0.md` for the task checklist.
+See `docs/todo-m2.md` for the task checklist.
 Read `milestones.md` for the full plan.
 
 ## Spec Reference
