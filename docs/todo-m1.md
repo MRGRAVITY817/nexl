@@ -43,7 +43,7 @@
 - [x] Integration test: Fibonacci via `loop`/`recur`
 
 ### Minimal REPL (stretch)
-- [ ] `nexl-eval` binary: stdin → reader → eval → print loop
+- [x] `nexl-eval` binary: stdin → reader → eval → print loop
 
 ## Blocked
 (none)

@@ -6,6 +6,7 @@ use nexl_runtime::Value;
 use thiserror::Error;
 
 pub mod eval;
+pub mod repl;
 pub mod stdlib;
 
 /// Lexical environment: a frame of bindings plus an optional parent link.
@@ -1414,9 +1415,7 @@ mod tests {
 
     /// Parse a Nexl snippet and evaluate it in the standard environment.
     fn eval_str(src: &str) -> Result<Value, EvalError> {
-        use nexl_reader::read;
-        use meta::FileId;
-        let nodes = read(src, FileId::SYNTHETIC).expect("parse error");
+        let nodes = nexl_reader::read(src, meta::FileId::SYNTHETIC).expect("parse error");
         assert_eq!(nodes.len(), 1, "eval_str expects exactly one form");
         let env = crate::stdlib::standard_env();
         eval::eval(&nodes[0], &env)
