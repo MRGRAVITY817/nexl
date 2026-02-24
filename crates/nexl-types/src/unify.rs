@@ -22,6 +22,8 @@ pub enum TypeErrorKind {
     ArityMismatch { expected: usize, found: usize },
     /// A name was used but is not bound in the typing environment.
     UnboundVariable { name: String },
+    /// A syntactic form was structurally invalid (wrong head, wrong arity, etc.).
+    MalformedForm { description: String },
 }
 
 /// A type error produced during unification.
@@ -64,6 +66,9 @@ impl fmt::Display for TypeError {
             }
             TypeErrorKind::UnboundVariable { name } => {
                 write!(f, "unbound variable: {name}")
+            }
+            TypeErrorKind::MalformedForm { description } => {
+                write!(f, "malformed form: {description}")
             }
         }
     }

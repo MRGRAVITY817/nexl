@@ -28,8 +28,8 @@
 - [x] Context type: typing environment (name → Scheme), substitution state
 - [x] Synthesize mode: literal → type (Int literal → Int, Float → Float, etc.)
 - [x] Synthesize mode: variable lookup (instantiate polymorphic schemes)
-- [ ] Check mode: expression against expected type
-- [ ] Infer `def` form — bind inferred type in context
+- [x] Check mode: expression against expected type
+- [x] Infer `def` form — bind inferred type in context
 - [ ] Infer `let` form — sequential bindings with let-generalization
 - [ ] Infer `do` form — check each expr, return type of last
 - [ ] Infer `if` form — condition must be Bool, branches must unify

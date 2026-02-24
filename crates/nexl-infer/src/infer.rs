@@ -1,7 +1,7 @@
 //! Synthesis and checking modes for the bidirectional inference engine.
 
 use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, NodeKind};
-use nexl_types::{Subst, Type, TypeError, TypeErrorKind, TypeVarSupply};
+use nexl_types::{Scheme, Subst, Type, TypeError, TypeErrorKind, TypeVarSupply};
 
 use crate::Env;
 
@@ -103,6 +103,84 @@ fn synth_var(name: &str, env: &Env, state: &mut InferState) -> Result<Type, Type
 }
 
 // ---------------------------------------------------------------------------
+// Check mode
+// ---------------------------------------------------------------------------
+
+/// Check that `node` has type `expected`.
+///
+/// Synthesizes the node's type, then unifies the result with `expected`.
+/// Any new variable bindings are recorded in `state.subst`.
+pub fn check(
+    node: &Node,
+    expected: &Type,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<(), TypeError> {
+    let actual = synth(node, env, state)?;
+    nexl_types::unify(&actual, expected, &mut state.subst)
+}
+
+// ---------------------------------------------------------------------------
+// def form
+// ---------------------------------------------------------------------------
+
+/// Infer the type of a `(def name expr)` form.
+///
+/// Returns the bound name, the synthesized type of `expr`, and a new
+/// environment that extends `env` with `name → Scheme::mono(type)`.
+pub fn infer_def(
+    node: &Node,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<(String, Type, Env), TypeError> {
+    let (name, body) = parse_def(node)?;
+    let ty = synth(body, env, state)?;
+    let new_env = env.extend(name.clone(), Scheme::mono(ty.clone()));
+    Ok((name, ty, new_env))
+}
+
+/// Parse `(def name expr)` and return the binding name and body node.
+fn parse_def(node: &Node) -> Result<(String, &Node), TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "def must be a list".to_string(),
+            }));
+        }
+    };
+
+    if items.len() != 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!("def expects (def name expr), got {} elements", items.len()),
+        }));
+    }
+
+    // items[0] must be Symbol("def")
+    let is_def_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "def"
+    );
+    if !is_def_head {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "first element of def form must be the symbol `def`".to_string(),
+        }));
+    }
+
+    // items[1] must be an unqualified symbol (the binding name)
+    let binding_name = match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "def binding name must be an unqualified symbol".to_string(),
+            }));
+        }
+    };
+
+    Ok((binding_name, &items[2]))
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -111,7 +189,8 @@ mod tests {
     use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, Span};
     use nexl_types::{Scheme, Type, TypeErrorKind};
 
-    use super::{InferState, synth};
+    use nexl_ast::NodeKind;
+    use super::{InferState, check, infer_def, synth};
     use crate::Env;
 
     fn syn_span() -> Span {
@@ -140,6 +219,13 @@ mod tests {
 
     fn sym_node(name: &str) -> Node {
         atom_node(Atom::Symbol { ns: None, name: name.to_string() })
+    }
+
+    /// Build `(def name expr)` as a List node.
+    fn def_node(name: &str, expr: Node) -> Node {
+        let head = sym_node("def");
+        let binding = sym_node(name);
+        Node::new(NodeKind::List(vec![head, binding, expr]), syn_span())
     }
 
     fn empty() -> (Env, InferState) {
@@ -347,6 +433,96 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "y"),
             "expected UnboundVariable(y), got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Check mode tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (check) --
+    #[test]
+    fn check_lit_matches_expected() {
+        let (env, mut state) = empty();
+        assert!(check(&int_node(42), &Type::Int, &env, &mut state).is_ok());
+    }
+
+    // -- Test 2 (check) --
+    #[test]
+    fn check_lit_wrong_type() {
+        let (env, mut state) = empty();
+        let err = check(&int_node(42), &Type::Bool, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
+    }
+
+    // -- Test 3 (check) --
+    #[test]
+    fn check_unifies_type_var() {
+        use nexl_types::TypeVar;
+        let (env, mut state) = empty();
+        // t0 is unbound; checking 42 against t0 should bind t0 → Int
+        let t0 = Type::Var(TypeVar(0));
+        check(&int_node(42), &t0, &env, &mut state).unwrap();
+        assert_eq!(state.subst.apply(&t0), Type::Int);
+    }
+
+    // -----------------------------------------------------------------------
+    // def form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 4 (def) --
+    #[test]
+    fn infer_def_name_returned() {
+        let (env, mut state) = empty();
+        let node = def_node("x", int_node(42));
+        let (name, _ty, _new_env) = infer_def(&node, &env, &mut state).unwrap();
+        assert_eq!(name, "x");
+    }
+
+    // -- Test 5 (def) --
+    #[test]
+    fn infer_def_int_type() {
+        let (env, mut state) = empty();
+        let node = def_node("x", int_node(42));
+        let (_name, ty, _new_env) = infer_def(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+    }
+
+    // -- Test 6 (def) --
+    #[test]
+    fn infer_def_bool_type() {
+        let (env, mut state) = empty();
+        let node = def_node("flag", atom_node(Atom::Bool(true)));
+        let (_name, ty, _new_env) = infer_def(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Bool);
+    }
+
+    // -- Test 7 (def) --
+    #[test]
+    fn infer_def_extends_env() {
+        let (env, mut state) = empty();
+        let node = def_node("x", int_node(42));
+        let (_name, _ty, new_env) = infer_def(&node, &env, &mut state).unwrap();
+        // original env is unchanged
+        assert!(env.lookup("x").is_none());
+        // new env has x → Int
+        let scheme = new_env.lookup("x").expect("x should be in new env");
+        assert_eq!(scheme.body, Type::Int);
+    }
+
+    // -- Test 8 (def) --
+    #[test]
+    fn infer_def_body_error() {
+        let (env, mut state) = empty();
+        // (def x unknown) — 'unknown' is not in env
+        let node = def_node("x", sym_node("unknown"));
+        let err = infer_def(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
         );
     }
 }
