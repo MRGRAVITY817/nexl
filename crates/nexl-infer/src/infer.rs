@@ -54,8 +54,30 @@ pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, Typ
 fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     match head_sym(items) {
         Some("let") => synth_let(items, env, state),
+        Some("do") => synth_do(items, env, state),
         _ => unimplemented!("synth_list: {:?}", items.first().map(|n| &n.kind)),
     }
+}
+
+/// Synthesize the type of a `(do e1 e2 ... eN)` form.
+///
+/// Evaluates each expression in order and returns the type of the last.
+/// Prior expressions are synthesized for their side effects only (spec §4.8).
+fn synth_do(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // items[0] is the "do" symbol; the rest are the body expressions.
+    let exprs = &items[1..];
+
+    if exprs.is_empty() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "do requires at least one expression".to_string(),
+        }));
+    }
+
+    let mut last_ty = Type::Unit; // placeholder; overwritten by the loop
+    for expr in exprs {
+        last_ty = synth(expr, env, state)?;
+    }
+    Ok(last_ty)
 }
 
 /// Return the name string if the first item in `items` is an unqualified symbol.
@@ -268,6 +290,13 @@ mod tests {
     use nexl_ast::NodeKind;
     use super::{InferState, check, infer_def, synth};
     use crate::Env;
+
+    /// Build `(do e1 e2 ...)` as a List node.
+    fn do_node(exprs: Vec<Node>) -> Node {
+        let mut items = vec![sym_node("do")];
+        items.extend(exprs);
+        Node::new(NodeKind::List(items), syn_span())
+    }
 
     /// Build `(let [k0 v0 k1 v1 ...] body)` as a List node.
     fn let_node(bindings: Vec<(Node, Node)>, body: Node) -> Node {
@@ -607,6 +636,80 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
             "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // do form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (do) --
+    #[test]
+    fn infer_do_single_expr() {
+        // (do 42) → Int
+        let (env, mut state) = empty();
+        let node = do_node(vec![int_node(42)]);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 2 (do) --
+    #[test]
+    fn infer_do_returns_last_of_two() {
+        // (do true 42) → Int  (Bool from first is discarded)
+        let (env, mut state) = empty();
+        let node = do_node(vec![atom_node(Atom::Bool(true)), int_node(42)]);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 3 (do) --
+    #[test]
+    fn infer_do_returns_last_of_three() {
+        // (do true 3.14 "hello") → Str
+        let (env, mut state) = empty();
+        let node = do_node(vec![
+            atom_node(Atom::Bool(true)),
+            float_node(3.14),
+            atom_node(Atom::Str("hello".into())),
+        ]);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Str);
+    }
+
+    // -- Test 4 (do) --
+    #[test]
+    fn infer_do_error_in_early_expr() {
+        // (do unknown 42) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = do_node(vec![sym_node("unknown"), int_node(42)]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 5 (do) --
+    #[test]
+    fn infer_do_error_in_last_expr() {
+        // (do 42 unknown) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = do_node(vec![int_node(42), sym_node("unknown")]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 6 (do) --
+    #[test]
+    fn infer_do_malformed_empty() {
+        // (do) → MalformedForm — no expressions to return
+        let (env, mut state) = empty();
+        let node = do_node(vec![]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
         );
     }
 
