@@ -8,3 +8,6 @@ description = "Bidirectional type inference for Nexl"
 [dependencies]
 nexl-ast   = { path = "../nexl-ast" }
 nexl-types = { path = "../nexl-types" }
+
+[dev-dependencies]
+nexl-reader = { path = "../nexl-reader" }

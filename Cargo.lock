@@ -160,6 +160,7 @@ name = "nexl-infer"
 version = "0.1.0"
 dependencies = [
  "nexl-ast",
+ "nexl-reader",
  "nexl-types",
 ]
 

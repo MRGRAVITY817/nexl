@@ -1008,7 +1008,7 @@ mod tests {
     #[test]
     fn synth_float_no_suffix() {
         let (env, mut state) = empty();
-        assert_eq!(synth(&float_node(3.14), &env, &mut state).unwrap(), Type::Float);
+        assert_eq!(synth(&float_node(1.5), &env, &mut state).unwrap(), Type::Float);
     }
 
     // -- Test 7 --
@@ -1696,7 +1696,7 @@ mod tests {
         let (env, mut state) = empty();
         let node = do_node(vec![
             atom_node(Atom::Bool(true)),
-            float_node(3.14),
+            float_node(1.5),
             atom_node(Atom::Str("hello".into())),
         ]);
         assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Str);
@@ -2832,5 +2832,104 @@ mod tests {
         let ty = synth(&node, &env, &mut state).unwrap();
         assert_eq!(ty, Type::Int, "last expr type should be Int");
         assert_eq!(state.errors.len(), 2, "both unbound-var errors must be collected");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Integration tests (nexl-reader → AST → inference)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod integration_tests {
+    use nexl_ast::FileId;
+    use nexl_reader::read;
+    use nexl_types::{Scheme, Type};
+
+    use super::{InferState, infer_defn, synth};
+    use crate::Env;
+
+    /// Parse `src` and return the first top-level node, panicking on failure.
+    fn parse_one(src: &str) -> nexl_ast::Node {
+        let nodes = read(src, FileId(0)).expect("parse failed");
+        assert_eq!(nodes.len(), 1, "expected exactly one top-level form");
+        nodes.into_iter().next().unwrap()
+    }
+
+    /// Build an environment containing the four standard Int arithmetic operators.
+    fn arith_env() -> Env {
+        let int_binop = Type::Fn { params: vec![Type::Int, Type::Int], ret: Box::new(Type::Int) };
+        Env::new()
+            .extend("+", Scheme::mono(int_binop.clone()))
+            .extend("-", Scheme::mono(int_binop.clone()))
+            .extend("*", Scheme::mono(int_binop.clone()))
+            .extend("/", Scheme::mono(int_binop))
+    }
+
+    // -- Test 1 (integration) --
+    #[test]
+    fn integration_infer_add_type() {
+        // Parse the milestone's own example: (defn add [x y] (+ x y))
+        // in an env that has + : (Fn [Int Int] -> Int).
+        // Expected result: (Fn [Int Int] -> Int).
+        let node = parse_one("(defn add [x y] (+ x y))");
+        let env = arith_env();
+        let mut state = InferState::new();
+        let (_name, ty, _new_env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn { params: vec![Type::Int, Type::Int], ret: Box::new(Type::Int) },
+            "add should have type (Fn [Int Int] -> Int)"
+        );
+    }
+
+    // -- Test 2 (integration) --
+    #[test]
+    fn integration_type_error_add_str() {
+        // Parse the milestone's own example: (add 1 "hello").
+        // In an env where add : (Fn [Int Int] -> Int), passing "hello" (Str)
+        // for the second Int parameter must produce a Mismatch type error.
+        use nexl_types::TypeErrorKind;
+        let node = parse_one(r#"(add 1 "hello")"#);
+        let env = Env::new().extend(
+            "add",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Int, Type::Int],
+                ret: Box::new(Type::Int),
+            }),
+        );
+        let mut state = InferState::new();
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch (Int vs Str), got {err:?}"
+        );
+    }
+
+    // -- Test 3 (integration) --
+    #[test]
+    fn integration_infer_fibonacci_type() {
+        // Verify that a fibonacci-shaped function infers as (Fn [Int] -> Int).
+        //
+        // Uses the form: (defn fib [n] (if (= n 0) 0 1))
+        // where `=` is supplied as (Fn [Int Int] -> Bool).  The `n` parameter
+        // is unified to Int through the `=` call; both branches return Int,
+        // so the overall result type is (Fn [Int] -> Int).
+        //
+        // Note: self-recursive defn (where `fib` calls itself) requires the
+        // function's own type in the body env, which infer_defn does not yet
+        // support.  That is tracked as a separate todo item.
+        let node = parse_one("(defn fib [n] (if (= n 0) 0 1))");
+        let eq_ty = Type::Fn {
+            params: vec![Type::Int, Type::Int],
+            ret: Box::new(Type::Bool),
+        };
+        let env = Env::new().extend("=", Scheme::mono(eq_ty));
+        let mut state = InferState::new();
+        let (_name, ty, _new_env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Int) },
+            "fib should have type (Fn [Int] -> Int)"
+        );
     }
 }

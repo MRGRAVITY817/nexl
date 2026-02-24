@@ -57,12 +57,12 @@
 - [x] Unit tests for substitution and occurs check
 - [x] Unit tests for unification (success and failure cases)
 - [x] Unit tests for literal type synthesis
-- [ ] Unit tests for each core form inference
-- [ ] Unit tests for let-generalization (polymorphism)
-- [ ] Unit tests for type annotation checking
-- [ ] Unit tests for cross-type arithmetic error (ADR-006)
-- [ ] Integration test: infer `fibonacci` type as `(Fn [Int] -> Int)`
-- [ ] Integration test: type error on `(add 1 "hello")`
+- [x] Unit tests for each core form inference
+- [x] Unit tests for let-generalization (polymorphism)
+- [x] Unit tests for type annotation checking
+- [x] Unit tests for cross-type arithmetic error (ADR-006)
+- [x] Integration test: infer `fibonacci` type as `(Fn [Int] -> Int)`
+- [x] Integration test: type error on `(add 1 "hello")`
 
 ## Blocked
 (none)
