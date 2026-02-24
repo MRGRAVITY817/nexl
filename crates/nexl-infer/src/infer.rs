@@ -10,16 +10,23 @@ use crate::Env;
 /// The [`TypeVarSupply`] is held here so that all scopes share the same
 /// counter and generate globally-unique type variables.  The [`Subst`]
 /// accumulates variable bindings discovered during unification.
+///
+/// `recur_types` holds the expected argument types for the innermost
+/// `loop` form currently being inferred.  `synth_loop` saves and restores
+/// this field so that nested loops work correctly.  It is `None` when
+/// inference is not inside a loop.
 #[derive(Debug)]
 pub struct InferState {
     pub supply: TypeVarSupply,
     pub subst: Subst,
+    /// The loop-variable types that a `recur` in the current loop must match.
+    pub recur_types: Option<Vec<Type>>,
 }
 
 impl InferState {
     /// Create a fresh inference state with no bindings.
     pub fn new() -> Self {
-        Self { supply: TypeVarSupply::new(), subst: Subst::empty() }
+        Self { supply: TypeVarSupply::new(), subst: Subst::empty(), recur_types: None }
     }
 
     /// Allocate a fresh unification variable and return it as a `Type`.
@@ -57,8 +64,115 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("do") => synth_do(items, env, state),
         Some("if") => synth_if(items, env, state),
         Some("fn") => synth_fn(items, env, state),
+        Some("loop") => synth_loop(items, env, state),
+        Some("recur") => synth_recur(items, env, state),
         _ => synth_application(items, env, state),
     }
+}
+
+/// Synthesize the type of a `(loop [x0 v0 x1 v1 ...] body)` form.
+///
+/// Each binding's init expression is synthesized to determine the loop
+/// variable's type.  The body is inferred in an environment extended with
+/// those bindings.  `recur_types` is set in `state` so that any `recur`
+/// form inside the body can check its arguments against them.
+///
+/// The return type of the loop is the return type of the body.  `recur`
+/// itself has type `Never`, which is the bottom type and unifies with any
+/// type (spec §5.3), so branches containing `recur` do not constrain the
+/// overall loop return type.
+fn synth_loop(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // Structure: (loop <bindings-vec> <body>) — exactly 3 elements.
+    if items.len() != 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "loop expects (loop [bindings...] body), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    // items[1] must be a Vector of name/expr pairs.
+    let bvec = match &items[1].kind {
+        NodeKind::Vector(elems) => elems,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "loop bindings must be a vector".to_string(),
+            }));
+        }
+    };
+
+    if bvec.len() % 2 != 0 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "loop binding vector must have an even number of elements, got {}",
+                bvec.len()
+            ),
+        }));
+    }
+
+    // Infer each init expression; collect loop var names and their types.
+    let mut current_env = env.clone();
+    let mut loop_var_types: Vec<Type> = Vec::new();
+
+    for pair in bvec.chunks(2) {
+        let name_node = &pair[0];
+        let init_node = &pair[1];
+
+        let name = match &name_node.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "loop binding name must be an unqualified symbol".to_string(),
+                }));
+            }
+        };
+
+        let ty = synth(init_node, &current_env, state)?;
+        loop_var_types.push(ty.clone());
+        current_env = current_env.extend(name, Scheme::mono(ty));
+    }
+
+    // Save the outer recur target, set ours, infer body, then restore.
+    let saved_recur = state.recur_types.take();
+    state.recur_types = Some(loop_var_types);
+    let body_ty = synth(&items[2], &current_env, state);
+    state.recur_types = saved_recur;
+
+    body_ty
+}
+
+/// Synthesize the type of a `(recur arg0 arg1 ...)` form.
+///
+/// Checks that each argument type matches the corresponding loop variable
+/// type set by the enclosing `loop`.  Returns `Type::Never` — `recur`
+/// never produces a value; it transfers control back to the loop head.
+fn synth_recur(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // items[0] is "recur"; the rest are the new loop-variable values.
+    let arg_nodes = &items[1..];
+
+    let expected = match &state.recur_types {
+        Some(ts) => ts.clone(),
+        None => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "recur used outside of a loop form".to_string(),
+            }));
+        }
+    };
+
+    if arg_nodes.len() != expected.len() {
+        return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+            expected: expected.len(),
+            found: arg_nodes.len(),
+        }));
+    }
+
+    for (arg_node, expected_ty) in arg_nodes.iter().zip(expected.iter()) {
+        let arg_ty = synth(arg_node, env, state)?;
+        nexl_types::unify(expected_ty, &arg_ty, &mut state.subst)?;
+    }
+
+    Ok(Type::Never)
 }
 
 /// Synthesize the type of a function application `(callee arg0 arg1 ...)`.
@@ -1445,6 +1559,187 @@ mod tests {
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // loop / recur form tests
+    // -----------------------------------------------------------------------
+
+    /// Build `(loop [k0 v0 k1 v1 ...] body)` as a List node.
+    fn loop_node(bindings: Vec<(Node, Node)>, body: Node) -> Node {
+        let head = sym_node("loop");
+        let bvec: Vec<Node> = bindings.into_iter().flat_map(|(k, v)| [k, v]).collect();
+        let bvec_node = Node::new(NodeKind::Vector(bvec), syn_span());
+        Node::new(NodeKind::List(vec![head, bvec_node, body]), syn_span())
+    }
+
+    /// Build `(recur arg0 arg1 ...)` as a List node.
+    fn recur_node(args: Vec<Node>) -> Node {
+        let mut items = vec![sym_node("recur")];
+        items.extend(args);
+        Node::new(NodeKind::List(items), syn_span())
+    }
+
+    // -- Test 9 (loop) --
+    #[test]
+    fn loop_malformed_odd_bindings() {
+        // (loop [x] body) — odd binding vector → MalformedForm
+        let (env, mut state) = empty();
+        let bvec = Node::new(NodeKind::Vector(vec![sym_node("x")]), syn_span());
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("loop"), bvec, int_node(42)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 10 (loop) --
+    #[test]
+    fn loop_malformed_missing_body() {
+        // (loop [x 1]) — missing body → MalformedForm
+        let (env, mut state) = empty();
+        let bvec = Node::new(
+            NodeKind::Vector(vec![sym_node("x"), int_node(1)]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("loop"), bvec]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 8 (loop) --
+    #[test]
+    fn loop_recur_outside_loop() {
+        // (recur 42) with no enclosing loop → MalformedForm
+        let (env, mut state) = empty();
+        let node = recur_node(vec![int_node(42)]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 7 (loop) --
+    #[test]
+    fn loop_multi_var_correct() {
+        // (loop [x 0 b true] (if b x (recur 1 false))) → Int
+        // Two loop vars: x : Int, b : Bool.
+        // recur passes (1 : Int, false : Bool) — both match.
+        // then branch returns x : Int; else branch returns Never.
+        let (env, mut state) = empty();
+        let body = if_node(
+            sym_node("b"),
+            sym_node("x"),
+            recur_node(vec![int_node(1), atom_node(Atom::Bool(false))]),
+        );
+        let node = loop_node(
+            vec![
+                (sym_node("x"), int_node(0)),
+                (sym_node("b"), atom_node(Atom::Bool(true))),
+            ],
+            body,
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 5 (loop) --
+    #[test]
+    fn loop_recur_arity_too_many() {
+        // (loop [i 0] (recur 1 2)) — 1 loop var but recur passes 2
+        // → ArityMismatch { expected: 1, found: 2 }
+        let (env, mut state) = empty();
+        let node = loop_node(
+            vec![(sym_node("i"), int_node(0))],
+            recur_node(vec![int_node(1), int_node(2)]),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::ArityMismatch { expected: 1, found: 2 }),
+            "expected ArityMismatch(1,2), got {err:?}"
+        );
+    }
+
+    // -- Test 6 (loop) --
+    #[test]
+    fn loop_recur_arity_too_few() {
+        // (loop [i 0] (recur)) — 1 loop var but recur passes 0
+        // → ArityMismatch { expected: 1, found: 0 }
+        let (env, mut state) = empty();
+        let node = loop_node(
+            vec![(sym_node("i"), int_node(0))],
+            recur_node(vec![]),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::ArityMismatch { expected: 1, found: 0 }),
+            "expected ArityMismatch(1,0), got {err:?}"
+        );
+    }
+
+    // -- Test 4 (loop) --
+    #[test]
+    fn loop_recur_arg_type_mismatch() {
+        // (loop [i 0] (recur true)) — loop var is Int, recur passes Bool
+        // → Mismatch { expected: Int, found: Bool }
+        let (env, mut state) = empty();
+        let node = loop_node(
+            vec![(sym_node("i"), int_node(0))],
+            recur_node(vec![atom_node(Atom::Bool(true))]),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::Mismatch { ref expected, ref found }
+                if *expected == Type::Int && *found == Type::Bool
+            ),
+            "expected Mismatch(Int, Bool), got {err:?}"
+        );
+    }
+
+    // -- Test 3 (loop) --
+    #[test]
+    fn loop_recur_correct() {
+        // (loop [i 0] (if true 99 (recur 1))) → Int
+        // The `then` branch is Int; `(recur 1)` has type Never which unifies
+        // with Int (spec §5.3 — Never is the bottom type).
+        let (env, mut state) = empty();
+        let body = if_node(
+            atom_node(Atom::Bool(true)),
+            int_node(99),
+            recur_node(vec![int_node(1)]),
+        );
+        let node = loop_node(vec![(sym_node("i"), int_node(0))], body);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 2 (loop) --
+    #[test]
+    fn loop_empty_bindings() {
+        // (loop [] 99) → Int  (no loop variables, body is a literal)
+        let (env, mut state) = empty();
+        let node = loop_node(vec![], int_node(99));
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 1 (loop) --
+    #[test]
+    fn loop_degenerate_returns_body() {
+        // (loop [x 42] x) → Int  (loop var accessible in body, no recur)
+        let (env, mut state) = empty();
+        let node = loop_node(vec![(sym_node("x"), int_node(42))], sym_node("x"));
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
     }
 
     // -----------------------------------------------------------------------

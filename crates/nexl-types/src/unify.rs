@@ -146,6 +146,10 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
         | (Type::F32, Type::F32)
         | (Type::F64, Type::F64) => Ok(()),
 
+        // Never is the bottom type — it is a subtype of every type and
+        // unifies with anything (spec §5.3: "type of diverging expressions").
+        (Type::Never, _) | (_, Type::Never) => Ok(()),
+
         // Variable on the left.
         (Type::Var(tv), _) => {
             let tv = *tv;
@@ -395,6 +399,17 @@ mod tests {
         assert!(unify(&Type::F64, &Type::Float, &mut s).is_ok());
         assert!(unify(&Type::Float, &Type::F64, &mut s).is_ok());
         assert!(unify(&Type::F64, &Type::F64, &mut s).is_ok());
+    }
+
+    // -- Test 22 --
+    #[test]
+    fn unify_never_with_any_type() {
+        // Never is the bottom type — it must unify with any concrete type.
+        let mut s = Subst::empty();
+        assert!(unify(&Type::Never, &Type::Int, &mut s).is_ok(), "Never ~ Int");
+        assert!(unify(&Type::Int, &Type::Never, &mut s).is_ok(), "Int ~ Never");
+        assert!(unify(&Type::Never, &Type::Bool, &mut s).is_ok(), "Never ~ Bool");
+        assert!(unify(&Type::Never, &Type::Str, &mut s).is_ok(), "Never ~ Str");
     }
 
     // -- Test 16 --
