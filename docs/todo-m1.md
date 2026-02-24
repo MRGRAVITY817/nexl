@@ -27,7 +27,7 @@
 - [x] `defn` form — named function (sugar for def + fn)
 - [x] Function application — call a Value::Function with arguments
 - [x] `loop` / `recur` — tail-recursive loop with TCO
-- [ ] `var` / `set!` — mutable locals within function scope
+- [x] `var` / `set!` — mutable locals within function scope (`let [mut ...]` + `set!`)
 
 ### nexl-runtime — Built-in Functions
 - [ ] Arithmetic: `+`, `-`, `*`, `/`, `mod` (Int-only and Float-only; ADR-006)

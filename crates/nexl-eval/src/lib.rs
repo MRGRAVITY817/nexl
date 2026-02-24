@@ -1405,4 +1405,222 @@ mod tests {
         assert_eq!(child.get("c"), Some(int(2)));
         assert_eq!(parent.get("c"), None);
     }
+
+    // --- set! / let [mut ...] tests ---
+
+    #[test]
+    fn set_bang_returns_unit() {
+        let env = Rc::new(Env::new());
+        env.define("n", Value::Int(0));
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "set!".into() }),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+        ]);
+        assert_eq!(eval(&expr, &env).unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn set_bang_multiple_mutations() {
+        // Last write wins.
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "mut".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 0, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "set!".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 1, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "set!".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 2, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+        ]);
+        assert_eq!(eval(&expr, &env).unwrap(), Value::Int(2));
+    }
+
+    #[test]
+    fn set_bang_in_nested_do() {
+        // Mutation from a nested `do` is visible in the outer let body.
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "mut".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 0, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "do".into() }),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "set!".into() }),
+                    lit(Atom::Symbol { ns: None, name: "n".into() }),
+                    lit(Atom::Int { value: 99, suffix: None }),
+                ]),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+        ]);
+        assert_eq!(eval(&expr, &env).unwrap(), Value::Int(99));
+    }
+
+    #[test]
+    fn set_bang_in_loop_body() {
+        // set! inside loop updates a mut binding that outlives the loop.
+        // (let [mut n 0]
+        //   (loop [i false]
+        //     (if i unit
+        //       (do (set! n 7) (recur true))))
+        //   n) → 7
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "mut".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 0, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "loop".into() }),
+                vector(vec![
+                    lit(Atom::Symbol { ns: None, name: "done".into() }),
+                    lit(Atom::Bool(false)),
+                ]),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "if".into() }),
+                    lit(Atom::Symbol { ns: None, name: "done".into() }),
+                    lit(Atom::Unit),
+                    list(vec![
+                        lit(Atom::Symbol { ns: None, name: "do".into() }),
+                        list(vec![
+                            lit(Atom::Symbol { ns: None, name: "set!".into() }),
+                            lit(Atom::Symbol { ns: None, name: "n".into() }),
+                            lit(Atom::Int { value: 7, suffix: None }),
+                        ]),
+                        list(vec![
+                            lit(Atom::Symbol { ns: None, name: "recur".into() }),
+                            lit(Atom::Bool(true)),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+        ]);
+        assert_eq!(eval(&expr, &env).unwrap(), Value::Int(7));
+    }
+
+    #[test]
+    fn set_bang_basic_mutation() {
+        // (let [mut n 0] (set! n 5) n) → 5
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "mut".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 0, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "set!".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 5, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+        ]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(5));
+    }
+
+    #[test]
+    fn set_bang_error_on_unbound() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "set!".into() }),
+            lit(Atom::Symbol { ns: None, name: "missing".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+        ]);
+        assert_eq!(
+            eval(&expr, &env).unwrap_err(),
+            EvalError::UnboundSymbol("missing".into()),
+        );
+    }
+
+    #[test]
+    fn set_bang_error_arity_too_few() {
+        // (set! n) — missing value
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "set!".into() }),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+        ]);
+        assert_eq!(eval(&expr, &env).unwrap_err(), EvalError::Arity);
+    }
+
+    #[test]
+    fn set_bang_error_arity_too_many() {
+        // (set! n 1 2) — extra arg
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "set!".into() }),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+        assert_eq!(eval(&expr, &env).unwrap_err(), EvalError::Arity);
+    }
+
+    #[test]
+    fn set_bang_error_non_symbol_target() {
+        // (set! 1 2) — literal as target
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "set!".into() }),
+            lit(Atom::Int { value: 1, suffix: None }),
+            lit(Atom::Int { value: 2, suffix: None }),
+        ]);
+        assert_eq!(eval(&expr, &env).unwrap_err(), EvalError::InvalidBindingTarget);
+    }
+
+    #[test]
+    fn let_mut_with_immutable_binding_can_still_be_set() {
+        // In M1 (no type checker), set! works on plain let bindings too.
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 0, suffix: None }),
+            ]),
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "set!".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 3, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+        ]);
+        assert_eq!(eval(&expr, &env).unwrap(), Value::Int(3));
+    }
+
+    #[test]
+    fn let_mut_keyword_accepted() {
+        // (let [mut n 0] n) → 0
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "let".into() }),
+            vector(vec![
+                lit(Atom::Symbol { ns: None, name: "mut".into() }),
+                lit(Atom::Symbol { ns: None, name: "n".into() }),
+                lit(Atom::Int { value: 0, suffix: None }),
+            ]),
+            lit(Atom::Symbol { ns: None, name: "n".into() }),
+        ]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(0));
+    }
 }

@@ -66,6 +66,7 @@ fn eval_list<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "defn" => eval_defn(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "loop" => eval_loop(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "recur" => eval_recur(items, env, loop_state),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "set!" => eval_set_bang(items, env),
         NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
         _ => eval_apply(items, env, loop_state),
     }
@@ -97,19 +98,30 @@ fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         _ => return Err(EvalError::Arity),
     };
 
-    if bindings.len() % 2 != 0 {
-        return Err(EvalError::Arity);
-    }
-
     let child_env = Rc::new(Env::child(Rc::clone(env)));
 
-    // evaluate bindings sequentially
-    for pair in bindings.chunks_exact(2) {
-        let (name_node, value_node) = (&pair[0], &pair[1]);
+    // Parse bindings with optional `mut` modifier: [mut? name value ...]
+    let mut i = 0;
+    while i < bindings.len() {
+        // Consume optional `mut` modifier (noted but not enforced in M1).
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &bindings[i].kind
+            && name == "mut"
+        {
+            i += 1;
+        }
+
+        // Binding name.
+        let name_node = bindings.get(i).ok_or(EvalError::Arity)?;
         let name = match &name_node.kind {
             NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
             _ => return Err(EvalError::InvalidBindingTarget),
         };
+        i += 1;
+
+        // Binding value.
+        let value_node = bindings.get(i).ok_or(EvalError::Arity)?;
+        i += 1;
+
         let value = match eval_with_loop(value_node, &child_env, None)? {
             EvalReturn::Value(v) => v,
             EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
@@ -117,7 +129,7 @@ fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         child_env.define(name, value);
     }
 
-    // body expressions
+    // Body expressions.
     let mut last = Value::Unit;
     for expr in &items[2..] {
         match eval_with_loop(expr, &child_env, None)? {
@@ -398,4 +410,21 @@ fn eval_apply<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFram
         }
     }
     Ok(EvalReturn::Value(last))
+}
+
+fn eval_set_bang(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    if items.len() != 3 {
+        return Err(EvalError::Arity);
+    }
+    let name = match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => return Err(EvalError::InvalidBindingTarget),
+    };
+    let value = match eval_with_loop(&items[2], env, None)? {
+        EvalReturn::Value(v) => v,
+        EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+    };
+    env.set(&name, value)
+        .map_err(|crate::EnvError::Unbound(n)| EvalError::UnboundSymbol(n))?;
+    Ok(EvalReturn::Value(Value::Unit))
 }
