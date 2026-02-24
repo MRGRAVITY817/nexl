@@ -64,6 +64,18 @@ pub enum Type {
 
     /// Tuple type (spec §5.3), 2–8 elements.
     Tuple(Vec<Type>),
+
+    /// Persistent vector type: `(Vec a)` (spec §5.3).
+    Vec(Box<Type>),
+
+    /// Persistent map type: `(Map k v)` (spec §5.3).
+    Map {
+        key: Box<Type>,
+        val: Box<Type>,
+    },
+
+    /// Persistent set type: `(Set a)` (spec §5.3).
+    Set(Box<Type>),
 }
 
 impl fmt::Display for Type {
@@ -119,6 +131,9 @@ impl fmt::Display for Type {
                 }
                 write!(f, ")")
             }
+            Type::Vec(elem) => write!(f, "(Vec {elem})"),
+            Type::Map { key, val } => write!(f, "(Map {key} {val})"),
+            Type::Set(elem) => write!(f, "(Set {elem})"),
         }
     }
 }
@@ -243,6 +258,12 @@ impl Type {
                     item.collect_free_vars(result);
                 }
             }
+            Type::Vec(elem) => elem.collect_free_vars(result),
+            Type::Map { key, val } => {
+                key.collect_free_vars(result);
+                val.collect_free_vars(result);
+            }
+            Type::Set(elem) => elem.collect_free_vars(result),
             _ => {}
         }
     }
@@ -556,6 +577,170 @@ mod tests {
         let c = Constructor::nary("Some", vec![Type::Var(t0)]);
         assert_eq!(c.name, "Some");
         assert_eq!(c.fields, vec![Type::Var(t0)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Collection type tests (M4)
+    // -----------------------------------------------------------------------
+
+    // -- Collection Test 1 --
+    #[test]
+    fn vec_type_display() {
+        let ty = Type::Vec(Box::new(Type::Int));
+        assert_eq!(ty.to_string(), "(Vec Int)");
+    }
+
+    // -- Collection Test 2 --
+    #[test]
+    fn vec_type_display_nested() {
+        let ty = Type::Vec(Box::new(Type::Vec(Box::new(Type::Int))));
+        assert_eq!(ty.to_string(), "(Vec (Vec Int))");
+    }
+
+    // -- Collection Test 3 --
+    #[test]
+    fn map_type_display() {
+        let ty = Type::Map {
+            key: Box::new(Type::Str),
+            val: Box::new(Type::Int),
+        };
+        assert_eq!(ty.to_string(), "(Map Str Int)");
+    }
+
+    // -- Collection Test 4 --
+    #[test]
+    fn set_type_display() {
+        let ty = Type::Set(Box::new(Type::Int));
+        assert_eq!(ty.to_string(), "(Set Int)");
+    }
+
+    // -- Collection Test 5 --
+    #[test]
+    fn vec_type_equality() {
+        assert_eq!(
+            Type::Vec(Box::new(Type::Int)),
+            Type::Vec(Box::new(Type::Int))
+        );
+        assert_ne!(
+            Type::Vec(Box::new(Type::Int)),
+            Type::Vec(Box::new(Type::Str))
+        );
+    }
+
+    // -- Collection Test 6 --
+    #[test]
+    fn map_type_equality() {
+        let a = Type::Map {
+            key: Box::new(Type::Str),
+            val: Box::new(Type::Int),
+        };
+        let b = Type::Map {
+            key: Box::new(Type::Str),
+            val: Box::new(Type::Int),
+        };
+        let c = Type::Map {
+            key: Box::new(Type::Str),
+            val: Box::new(Type::Bool),
+        };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // -- Collection Test 7 --
+    #[test]
+    fn set_type_equality() {
+        assert_eq!(
+            Type::Set(Box::new(Type::Int)),
+            Type::Set(Box::new(Type::Int))
+        );
+        assert_ne!(
+            Type::Set(Box::new(Type::Int)),
+            Type::Set(Box::new(Type::Bool))
+        );
+    }
+
+    // -- Collection Test 8 --
+    #[test]
+    fn vec_type_free_vars() {
+        let ty = Type::Vec(Box::new(Type::Var(TypeVar(0))));
+        let fvs = ty.free_vars();
+        assert_eq!(fvs.len(), 1);
+        assert!(fvs.contains(&TypeVar(0)));
+    }
+
+    // -- Collection Test 9 --
+    #[test]
+    fn map_type_free_vars() {
+        let ty = Type::Map {
+            key: Box::new(Type::Var(TypeVar(0))),
+            val: Box::new(Type::Var(TypeVar(1))),
+        };
+        let fvs = ty.free_vars();
+        assert_eq!(fvs.len(), 2);
+        assert!(fvs.contains(&TypeVar(0)));
+        assert!(fvs.contains(&TypeVar(1)));
+    }
+
+    // -- Collection Test 10 --
+    #[test]
+    fn set_type_free_vars() {
+        let ty = Type::Set(Box::new(Type::Var(TypeVar(0))));
+        let fvs = ty.free_vars();
+        assert_eq!(fvs.len(), 1);
+        assert!(fvs.contains(&TypeVar(0)));
+    }
+
+    // -- Collection Test 11 --
+    #[test]
+    fn vec_type_free_vars_concrete() {
+        let ty = Type::Vec(Box::new(Type::Int));
+        assert!(ty.free_vars().is_empty());
+    }
+
+    // -- Collection Test 12 --
+    #[test]
+    fn subst_apply_vec() {
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Int);
+        let ty = Type::Vec(Box::new(Type::Var(TypeVar(0))));
+        assert_eq!(s.apply(&ty), Type::Vec(Box::new(Type::Int)));
+    }
+
+    // -- Collection Test 13 --
+    #[test]
+    fn subst_apply_map() {
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Str);
+        s.insert(TypeVar(1), Type::Int);
+        let ty = Type::Map {
+            key: Box::new(Type::Var(TypeVar(0))),
+            val: Box::new(Type::Var(TypeVar(1))),
+        };
+        assert_eq!(
+            s.apply(&ty),
+            Type::Map {
+                key: Box::new(Type::Str),
+                val: Box::new(Type::Int),
+            }
+        );
+    }
+
+    // -- Collection Test 14 --
+    #[test]
+    fn subst_apply_set() {
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Bool);
+        let ty = Type::Set(Box::new(Type::Var(TypeVar(0))));
+        assert_eq!(s.apply(&ty), Type::Set(Box::new(Type::Bool)));
+    }
+
+    // -- Collection Test 15 --
+    #[test]
+    fn subst_apply_vec_no_match() {
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Int);
+        let ty = Type::Vec(Box::new(Type::Var(TypeVar(1))));
+        assert_eq!(s.apply(&ty), Type::Vec(Box::new(Type::Var(TypeVar(1)))));
     }
 
     // -- Test 1 --

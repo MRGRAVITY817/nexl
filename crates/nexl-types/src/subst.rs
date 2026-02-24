@@ -48,6 +48,12 @@ impl Subst {
                     .collect(),
             },
             Type::Tuple(items) => Type::Tuple(items.iter().map(|item| self.apply(item)).collect()),
+            Type::Vec(elem) => Type::Vec(Box::new(self.apply(elem))),
+            Type::Map { key, val } => Type::Map {
+                key: Box::new(self.apply(key)),
+                val: Box::new(self.apply(val)),
+            },
+            Type::Set(elem) => Type::Set(Box::new(self.apply(elem))),
             // Primitives and fixed-width types are unchanged.
             _ => ty.clone(),
         }

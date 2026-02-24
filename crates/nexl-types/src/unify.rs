@@ -126,6 +126,9 @@ fn occurs_in(tv: TypeVar, ty: &Type) -> bool {
         Type::Adt { args, .. } => args.iter().any(|a| occurs_in(tv, a)),
         Type::Record { fields, .. } => fields.iter().any(|(_, field_ty)| occurs_in(tv, field_ty)),
         Type::Tuple(items) => items.iter().any(|item| occurs_in(tv, item)),
+        Type::Vec(elem) => occurs_in(tv, elem),
+        Type::Map { key, val } => occurs_in(tv, key) || occurs_in(tv, val),
+        Type::Set(elem) => occurs_in(tv, elem),
         _ => false,
     }
 }
@@ -235,15 +238,10 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
                     found: pb.len(),
                 }));
             }
-            // Clone to avoid borrow issues while mutating `subst`.
-            let pa = pa.clone();
-            let pb = pb.clone();
-            let ra = (**ra).clone();
-            let rb = (**rb).clone();
             for (p_a, p_b) in pa.iter().zip(pb.iter()) {
                 unify(p_a, p_b, subst)?;
             }
-            unify(&ra, &rb, subst)
+            unify(ra, rb, subst)
         }
 
         // Two ADT types: same name and same number of args → unify args pairwise.
@@ -254,8 +252,6 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
                     found: b.clone(),
                 }));
             }
-            let aa = aa.clone();
-            let ab = ab.clone();
             for (arg_a, arg_b) in aa.iter().zip(ab.iter()) {
                 unify(arg_a, arg_b, subst)?;
             }
@@ -306,6 +302,18 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
             }
             Ok(())
         }
+
+        // Two Vec types: unify element types.
+        (Type::Vec(ea), Type::Vec(eb)) => unify(ea, eb, subst),
+
+        // Two Map types: unify key and value types pairwise.
+        (Type::Map { key: ka, val: va }, Type::Map { key: kb, val: vb }) => {
+            unify(ka, kb, subst)?;
+            unify(va, vb, subst)
+        }
+
+        // Two Set types: unify element types.
+        (Type::Set(ea), Type::Set(eb)) => unify(ea, eb, subst),
 
         // Mismatch — two distinct concrete types.
         _ => Err(TypeError::new(TypeErrorKind::Mismatch {
@@ -954,6 +962,118 @@ mod tests {
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Collection unification tests (M4)
+    // -----------------------------------------------------------------------
+
+    // -- Collection Unify 1 --
+    #[test]
+    fn unify_vec_same_elem() {
+        let mut s = Subst::empty();
+        let a = Type::Vec(Box::new(Type::Int));
+        let b = Type::Vec(Box::new(Type::Int));
+        assert!(unify(&a, &b, &mut s).is_ok());
+    }
+
+    // -- Collection Unify 2 --
+    #[test]
+    fn unify_vec_var_resolves() {
+        // (Vec t0) = (Vec Int) → t0 = Int
+        let mut s = Subst::empty();
+        let a = Type::Vec(Box::new(tv(0)));
+        let b = Type::Vec(Box::new(Type::Int));
+        unify(&a, &b, &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), Type::Int);
+    }
+
+    // -- Collection Unify 3 --
+    #[test]
+    fn unify_vec_elem_mismatch() {
+        let mut s = Subst::empty();
+        let a = Type::Vec(Box::new(Type::Int));
+        let b = Type::Vec(Box::new(Type::Str));
+        let err = unify(&a, &b, &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }));
+    }
+
+    // -- Collection Unify 4 --
+    #[test]
+    fn unify_map_var_resolves() {
+        // (Map t0 t1) = (Map Str Int) → t0=Str, t1=Int
+        let mut s = Subst::empty();
+        let a = Type::Map {
+            key: Box::new(tv(0)),
+            val: Box::new(tv(1)),
+        };
+        let b = Type::Map {
+            key: Box::new(Type::Str),
+            val: Box::new(Type::Int),
+        };
+        unify(&a, &b, &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), Type::Str);
+        assert_eq!(s.apply(&tv(1)), Type::Int);
+    }
+
+    // -- Collection Unify 5 --
+    #[test]
+    fn unify_set_var_resolves() {
+        // (Set t0) = (Set Bool) → t0 = Bool
+        let mut s = Subst::empty();
+        let a = Type::Set(Box::new(tv(0)));
+        let b = Type::Set(Box::new(Type::Bool));
+        unify(&a, &b, &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), Type::Bool);
+    }
+
+    // -- Collection Unify 6 --
+    #[test]
+    fn unify_vec_map_mismatch() {
+        // (Vec Int) ≠ (Map Str Int)
+        let mut s = Subst::empty();
+        let a = Type::Vec(Box::new(Type::Int));
+        let b = Type::Map {
+            key: Box::new(Type::Str),
+            val: Box::new(Type::Int),
+        };
+        let err = unify(&a, &b, &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }));
+    }
+
+    // -- Collection Unify 7 --
+    #[test]
+    fn occurs_check_vec() {
+        // t0 = (Vec t0) → InfiniteType
+        let mut s = Subst::empty();
+        let cyclic = Type::Vec(Box::new(tv(0)));
+        let err = unify(&tv(0), &cyclic, &mut s).unwrap_err();
+        assert!(matches!(
+            err.kind,
+            TypeErrorKind::InfiniteType {
+                var: TypeVar(0),
+                ..
+            }
+        ));
+    }
+
+    // -- Collection Unify 8 --
+    #[test]
+    fn occurs_check_map() {
+        // t0 = (Map t0 Int) → InfiniteType
+        let mut s = Subst::empty();
+        let cyclic = Type::Map {
+            key: Box::new(tv(0)),
+            val: Box::new(Type::Int),
+        };
+        let err = unify(&tv(0), &cyclic, &mut s).unwrap_err();
+        assert!(matches!(
+            err.kind,
+            TypeErrorKind::InfiniteType {
+                var: TypeVar(0),
+                ..
+            }
+        ));
     }
 
     // -- Test 23 (error-messages) --
