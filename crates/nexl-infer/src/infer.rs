@@ -222,10 +222,58 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
 
     // Unify the callee with the expected function shape.
     // Any arity or type mismatch surfaces here.
-    let expected_fn = Type::Fn { params: arg_types, ret: Box::new(ret_var.clone()) };
-    nexl_types::unify(&callee_ty, &expected_fn, &mut state.subst)?;
+    let expected_fn = Type::Fn { params: arg_types.clone(), ret: Box::new(ret_var.clone()) };
+    nexl_types::unify(&callee_ty, &expected_fn, &mut state.subst).map_err(|e| {
+        arithmetic_help(e, head_sym(items), &arg_types)
+    })?;
 
     Ok(state.subst.apply(&ret_var))
+}
+
+/// If `err` is a type mismatch from a known arithmetic operator applied to
+/// mixed Int-like and Float-like operands, attach an ADR-006 help suggestion.
+fn arithmetic_help(err: nexl_types::TypeError, callee: Option<&str>, args: &[Type]) -> nexl_types::TypeError {
+    if err.help.is_some() {
+        return err;
+    }
+    let verb = match callee {
+        Some("+") => "add",
+        Some("-") => "subtract",
+        Some("*") => "multiply",
+        Some("/") => "divide",
+        _ => return err,
+    };
+    let int_ty = args.iter().find(|t| is_int_like(t));
+    let float_ty = args.iter().find(|t| is_float_like(t));
+    if let (Some(int_ty), Some(float_ty)) = (int_ty, float_ty) {
+        let help = format!(
+            "cannot {verb} {int_ty} and {float_ty}; use (->float n) to convert the Int to Float"
+        );
+        err.with_help(help)
+    } else {
+        err
+    }
+}
+
+/// Returns `true` if `ty` is an integer-family type.
+fn is_int_like(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Int
+            | Type::Int8
+            | Type::Int16
+            | Type::Int32
+            | Type::Int64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+    )
+}
+
+/// Returns `true` if `ty` is a floating-point-family type.
+fn is_float_like(ty: &Type) -> bool {
+    matches!(ty, Type::Float | Type::F32 | Type::F64)
 }
 
 /// Synthesize the type of a `(do e1 e2 ... eN)` form.
@@ -2554,5 +2602,119 @@ mod tests {
             "expected UnboundVariable(z), got {err:?}"
         );
         assert_eq!(err.span, Some(real_span), "error should carry the node's span");
+    }
+
+    // -- Test 6 (adr-006) --
+    #[test]
+    fn non_arithmetic_mismatch_has_no_help() {
+        // A type mismatch that is NOT from an arithmetic operator must not
+        // accidentally receive arithmetic help text (no false positives).
+        let env = Env::new().extend(
+            "stringify",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Str),
+            }),
+        );
+        let mut state = InferState::new();
+        // (stringify 42) — Int passed where Str expected, not an arithmetic op
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("stringify"), int_node(42)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            err.help.is_none(),
+            "non-arithmetic mismatch must not have arithmetic help, got: {:?}",
+            err.help
+        );
+    }
+
+    // -- Test 5 (adr-006) --
+    #[test]
+    fn arithmetic_minus_int_float_has_help() {
+        // ADR-006 applies to all four arithmetic operators, not just +.
+        let env = Env::new().extend(
+            "-",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Int, Type::Int],
+                ret: Box::new(Type::Int),
+            }),
+        );
+        let mut state = InferState::new();
+        // (- 1 1.0) — mismatch: - expects Int but gets Float
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("-"), int_node(1), float_node(1.0)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            err.help.is_some(),
+            "expected help for (- int float), got {err:?}"
+        );
+        let help = err.help.as_deref().unwrap();
+        assert!(
+            help.contains("subtract"),
+            "help for '-' should say 'subtract', got: '{help}'"
+        );
+    }
+
+    // -- Test 4 (adr-006) --
+    #[test]
+    fn arithmetic_help_text_appears_in_display() {
+        // The help text set by arithmetic_help() must appear in err.to_string().
+        let env = Env::new().extend(
+            "+",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Int, Type::Int],
+                ret: Box::new(Type::Int),
+            }),
+        );
+        let mut state = InferState::new();
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("+"), int_node(1), float_node(1.0)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("help:"), "expected 'help:' in display, got: '{msg}'");
+        assert!(
+            msg.contains("->float") || msg.contains("convert"),
+            "expected conversion hint in display, got: '{msg}'"
+        );
+    }
+
+    // -- Test 3 (adr-006) --
+    #[test]
+    fn arithmetic_plus_int_float_has_help() {
+        // ADR-006: calling `+` with Int and Float args must produce an error
+        // whose `help` field is set and mentions the conversion function.
+        let env = Env::new().extend(
+            "+",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Int, Type::Int],
+                ret: Box::new(Type::Int),
+            }),
+        );
+        let mut state = InferState::new();
+        // (+ 1 1.0) — second arg is Float, + expects Int
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("+"), int_node(1), float_node(1.0)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            err.help.is_some(),
+            "expected help text for arithmetic type mismatch, got {err:?}"
+        );
+        let help = err.help.as_deref().unwrap();
+        assert!(
+            help.contains("Int") && help.contains("Float"),
+            "help should mention Int and Float, got: '{help}'"
+        );
+        assert!(
+            help.contains("->float") || help.contains("convert"),
+            "help should mention conversion, got: '{help}'"
+        );
     }
 }

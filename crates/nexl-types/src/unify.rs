@@ -30,21 +30,31 @@ pub enum TypeErrorKind {
 ///
 /// The `span` field is left as `None` by the unifier itself; the inference
 /// engine (nexl-infer) fills it in when it has source-location context.
+/// The `help` field carries an optional suggestion shown below the main
+/// message (Principle 6 — the compiler as a conversational partner).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeError {
     pub kind: TypeErrorKind,
     pub span: Option<Span>,
+    /// Optional fix suggestion, e.g. "use (->float n) to convert".
+    pub help: Option<String>,
 }
 
 impl TypeError {
-    /// Create an error without a source span.
+    /// Create an error without a source span or help text.
     pub fn new(kind: TypeErrorKind) -> Self {
-        Self { kind, span: None }
+        Self { kind, span: None, help: None }
     }
 
     /// Attach a source span to this error.
     pub fn with_span(mut self, span: Span) -> Self {
         self.span = Some(span);
+        self
+    }
+
+    /// Attach a help/suggestion string to this error (Principle 6).
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
         self
     }
 }
@@ -59,24 +69,28 @@ impl fmt::Display for TypeError {
         }
         match &self.kind {
             TypeErrorKind::Mismatch { expected, found } => {
-                write!(f, "expected {expected} but got {found}")
+                write!(f, "expected {expected} but got {found}")?;
             }
             TypeErrorKind::InfiniteType { var, ty } => {
-                write!(f, "infinite type: {var} = {ty}", var = Type::Var(*var))
+                write!(f, "infinite type: {var} = {ty}", var = Type::Var(*var))?;
             }
             TypeErrorKind::ArityMismatch { expected, found } => {
                 write!(
                     f,
                     "function arity mismatch: expected {expected} parameter(s), found {found}"
-                )
+                )?;
             }
             TypeErrorKind::UnboundVariable { name } => {
-                write!(f, "unbound variable: {name}")
+                write!(f, "unbound variable: {name}")?;
             }
             TypeErrorKind::MalformedForm { description } => {
-                write!(f, "malformed form: {description}")
+                write!(f, "malformed form: {description}")?;
             }
         }
+        if let Some(help) = &self.help {
+            write!(f, "\nhelp: {help}")?;
+        }
+        Ok(())
     }
 }
 
@@ -482,6 +496,33 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains('2'), "missing '2' in '{msg}'");
         assert!(msg.contains('3'), "missing '3' in '{msg}'");
+    }
+
+    // -- Test 26 (suggest-fixes) --
+    #[test]
+    fn error_display_with_help_text() {
+        // TypeError with help set should include "help: {text}" in Display.
+        let err = TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Int,
+            found: Type::Float,
+        })
+        .with_help("use (->float n) to convert Int to Float");
+        let msg = err.to_string();
+        assert!(msg.contains("help:"), "expected 'help:' in '{msg}'");
+        assert!(msg.contains("->float"), "expected conversion hint in '{msg}'");
+    }
+
+    // -- Test 27 (suggest-fixes) --
+    #[test]
+    fn error_display_without_help_is_unchanged() {
+        // When no help is set, Display must not include "help:" — no noise.
+        let err = TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Int,
+            found: Type::Float,
+        });
+        assert!(err.help.is_none());
+        let msg = err.to_string();
+        assert!(!msg.contains("help:"), "unexpected 'help:' in '{msg}'");
     }
 
     // -- Test 24 (error-messages) --
