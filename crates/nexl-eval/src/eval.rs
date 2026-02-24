@@ -32,6 +32,7 @@ fn eval_with_loop<'a>(
         NodeKind::Atom(atom) => eval_atom(atom, env),
         NodeKind::List(items) => eval_list(items, env, loop_state),
         NodeKind::Vector(items) => eval_vector(items, env, loop_state),
+        NodeKind::Map(entries) => eval_map(entries, env, loop_state),
         _ => todo!("non-atom evaluation not yet implemented"),
     }
 }
@@ -107,6 +108,26 @@ fn eval_vector<'a>(
         values.push(value);
     }
     Ok(EvalReturn::Value(Value::Vec(Rc::new(values))))
+}
+
+fn eval_map<'a>(
+    entries: &[(Node, Node)],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    let mut values = Vec::with_capacity(entries.len());
+    for (key_node, value_node) in entries {
+        let key = match eval_with_loop(key_node, env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        };
+        let value = match eval_with_loop(value_node, env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        };
+        values.push((key, value));
+    }
+    Ok(EvalReturn::Value(Value::Map(Rc::new(values))))
 }
 
 fn eval_def(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {

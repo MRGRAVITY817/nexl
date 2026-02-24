@@ -10,7 +10,7 @@
 
 ## Evaluation (`nexl-eval`)
 - [x] Evaluate vector literals `[1 2 3]` → `Value::Vec`
-- [ ] Evaluate map literals `{:a 1 :b 2}` → `Value::Map`
+- [x] Evaluate map literals `{:a 1 :b 2}` → `Value::Map`
 - [ ] Evaluate set literals `#{1 2 3}` → `Value::Set`
 
 ## Type Inference (`nexl-infer`)

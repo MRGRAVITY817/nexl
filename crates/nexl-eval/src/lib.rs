@@ -825,6 +825,15 @@ mod tests {
         }
     }
 
+    fn map(entries: Vec<(Node, Node)>) -> Node {
+        Node {
+            kind: NodeKind::Map(entries),
+            span: meta::span::Span::synthetic(),
+            leading_comments: vec![],
+            trailing_comment: None,
+        }
+    }
+
     #[test]
     fn eval_vector_literal_ints() {
         let env = Rc::new(Env::new());
@@ -876,6 +885,95 @@ mod tests {
         let expr = vector(vec![]);
         let result = eval(&expr, &env).unwrap();
         assert_eq!(result, Value::Vec(Rc::new(vec![])));
+    }
+
+    #[test]
+    fn eval_map_literal_keywords() {
+        let env = Rc::new(Env::new());
+        let expr = map(vec![
+            (
+                lit(Atom::Keyword {
+                    ns: None,
+                    name: "a".into(),
+                }),
+                lit(Atom::Int {
+                    value: 1,
+                    suffix: None,
+                }),
+            ),
+            (
+                lit(Atom::Keyword {
+                    ns: None,
+                    name: "b".into(),
+                }),
+                lit(Atom::Int {
+                    value: 2,
+                    suffix: None,
+                }),
+            ),
+        ]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(
+            result,
+            Value::Map(Rc::new(vec![
+                (
+                    Value::Keyword {
+                        ns: None,
+                        name: Rc::from("a"),
+                    },
+                    Value::Int(1),
+                ),
+                (
+                    Value::Keyword {
+                        ns: None,
+                        name: Rc::from("b"),
+                    },
+                    Value::Int(2),
+                ),
+            ]))
+        );
+    }
+
+    #[test]
+    fn eval_map_literal_evaluates_entries() {
+        let env = Rc::new(Env::new());
+        env.define(
+            "k",
+            Value::Keyword {
+                ns: None,
+                name: Rc::from("status"),
+            },
+        );
+        env.define("v", Value::Int(10));
+        let expr = map(vec![(
+            lit(Atom::Symbol {
+                ns: None,
+                name: "k".into(),
+            }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "v".into(),
+            }),
+        )]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(
+            result,
+            Value::Map(Rc::new(vec![(
+                Value::Keyword {
+                    ns: None,
+                    name: Rc::from("status"),
+                },
+                Value::Int(10),
+            )]))
+        );
+    }
+
+    #[test]
+    fn eval_map_literal_empty() {
+        let env = Rc::new(Env::new());
+        let expr = map(vec![]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Map(Rc::new(vec![])));
     }
 
     #[test]
