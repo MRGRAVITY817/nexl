@@ -15,11 +15,11 @@
 - [x] `Subst::apply` and `free_vars` for `Type::Adt`
 
 ### nexl-types — Record & Tuple Types
-- [ ] `Type::Record { name, fields }` — named record type (nominal, not structural)
-- [ ] `Type::Tuple(Vec<Type>)` — heterogeneous product, 2–8 elements
-- [ ] `Display` impl for Record and Tuple types
-- [ ] Unification for Record and Tuple types
-- [ ] `Subst::apply` and `free_vars` for Record and Tuple
+- [x] `Type::Record { name, fields }` — named record type (nominal, not structural)
+- [x] `Type::Tuple(Vec<Type>)` — heterogeneous product, 2–8 elements
+- [x] `Display` impl for Record and Tuple types
+- [x] Unification for Record and Tuple types
+- [x] `Subst::apply` and `free_vars` for Record and Tuple
 
 ### nexl-infer — deftype Form
 - [ ] Parse `(deftype Name | Ctor1 | (Ctor2 a))` — sum type declarations

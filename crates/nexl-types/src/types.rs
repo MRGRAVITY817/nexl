@@ -55,6 +55,15 @@ pub enum Type {
         name: String,
         args: Vec<Type>,
     },
+
+    /// Nominal record type with named fields (spec §5.7).
+    Record {
+        name: String,
+        fields: Vec<(String, Type)>,
+    },
+
+    /// Tuple type (spec §5.3), 2–8 elements.
+    Tuple(Vec<Type>),
 }
 
 impl fmt::Display for Type {
@@ -101,6 +110,14 @@ impl fmt::Display for Type {
                     }
                     write!(f, ")")
                 }
+            }
+            Type::Record { name, .. } => write!(f, "{name}"),
+            Type::Tuple(items) => {
+                write!(f, "(Tuple")?;
+                for item in items {
+                    write!(f, " {item}")?;
+                }
+                write!(f, ")")
             }
         }
     }
@@ -203,6 +220,16 @@ impl Type {
             }
             Type::Adt { args, .. } => {
                 for arg in args { arg.collect_free_vars(result); }
+            }
+            Type::Record { fields, .. } => {
+                for (_, field_ty) in fields {
+                    field_ty.collect_free_vars(result);
+                }
+            }
+            Type::Tuple(items) => {
+                for item in items {
+                    item.collect_free_vars(result);
+                }
             }
             _ => {}
         }
@@ -497,6 +524,89 @@ mod tests {
         assert_eq!(Type::Var(TypeVar(0)).to_string(), "t0");
         assert_eq!(Type::Var(TypeVar(1)).to_string(), "t1");
         assert_eq!(Type::Var(TypeVar(42)).to_string(), "t42");
+    }
+
+    // -- Record Test 1 --
+    #[test]
+    fn record_display_nominal() {
+        let ty = Type::Record {
+            name: "Point".to_string(),
+            fields: vec![
+                ("x".to_string(), Type::Float),
+                ("y".to_string(), Type::Float),
+            ],
+        };
+        assert_eq!(ty.to_string(), "Point");
+    }
+
+    // -- Record Test 2 --
+    #[test]
+    fn record_free_vars_from_fields() {
+        let ty = Type::Record {
+            name: "Pair".to_string(),
+            fields: vec![
+                ("fst".to_string(), Type::Var(TypeVar(0))),
+                ("snd".to_string(), Type::Var(TypeVar(1))),
+            ],
+        };
+        let vars = ty.free_vars();
+        assert_eq!(vars.len(), 2);
+        assert!(vars.contains(&TypeVar(0)));
+        assert!(vars.contains(&TypeVar(1)));
+    }
+
+    // -- Record Test 3 --
+    #[test]
+    fn record_subst_apply_fields() {
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Int);
+        let ty = Type::Record {
+            name: "Point".to_string(),
+            fields: vec![
+                ("x".to_string(), Type::Var(TypeVar(0))),
+                ("y".to_string(), Type::Float),
+            ],
+        };
+        let applied = s.apply(&ty);
+        assert_eq!(
+            applied,
+            Type::Record {
+                name: "Point".to_string(),
+                fields: vec![
+                    ("x".to_string(), Type::Int),
+                    ("y".to_string(), Type::Float),
+                ],
+            }
+        );
+    }
+
+    // -- Tuple Test 1 --
+    #[test]
+    fn tuple_display_two_three() {
+        let two = Type::Tuple(vec![Type::Int, Type::Str]);
+        let three = Type::Tuple(vec![Type::Int, Type::Str, Type::Bool]);
+        assert_eq!(two.to_string(), "(Tuple Int Str)");
+        assert_eq!(three.to_string(), "(Tuple Int Str Bool)");
+    }
+
+    // -- Tuple Test 2 --
+    #[test]
+    fn tuple_free_vars_from_elems() {
+        let ty = Type::Tuple(vec![Type::Var(TypeVar(0)), Type::Var(TypeVar(1))]);
+        let vars = ty.free_vars();
+        assert_eq!(vars.len(), 2);
+        assert!(vars.contains(&TypeVar(0)));
+        assert!(vars.contains(&TypeVar(1)));
+    }
+
+    // -- Tuple Test 3 --
+    #[test]
+    fn tuple_subst_apply_elems() {
+        let mut s = Subst::empty();
+        s.insert(TypeVar(0), Type::Int);
+        let ty = Type::Tuple(vec![Type::Var(TypeVar(0)), Type::Bool]);
+        let applied = s.apply(&ty);
+        assert_eq!(applied, Type::Tuple(vec![Type::Int, Type::Bool]));
     }
 
     // -- Test 6 --

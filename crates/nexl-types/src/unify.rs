@@ -122,6 +122,10 @@ fn occurs_in(tv: TypeVar, ty: &Type) -> bool {
             params.iter().any(|p| occurs_in(tv, p)) || occurs_in(tv, ret)
         }
         Type::Adt { args, .. } => args.iter().any(|a| occurs_in(tv, a)),
+        Type::Record { fields, .. } => {
+            fields.iter().any(|(_, field_ty)| occurs_in(tv, field_ty))
+        }
+        Type::Tuple(items) => items.iter().any(|item| occurs_in(tv, item)),
         _ => false,
     }
 }
@@ -143,6 +147,18 @@ fn occurs_in(tv: TypeVar, ty: &Type) -> bool {
 pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
     let a = normalize(subst.apply(a));
     let b = normalize(subst.apply(b));
+
+    // Enforce tuple arity (spec §5.3) even when both sides are equal.
+    for ty in [&a, &b] {
+        if let Type::Tuple(items) = ty {
+            let len = items.len();
+            if !(2..=8).contains(&len) {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!("tuple arity {len} is invalid; expected 2..=8"),
+                }));
+            }
+        }
+    }
 
     // Reflexivity short-circuit — avoids spurious occurs-check failure for t0 = t0.
     if a == b {
@@ -242,6 +258,42 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
             let ab = ab.clone();
             for (arg_a, arg_b) in aa.iter().zip(ab.iter()) {
                 unify(arg_a, arg_b, subst)?;
+            }
+            Ok(())
+        }
+
+        // Two nominal record types: names must match, fields unify by name.
+        (Type::Record { name: na, fields: fa }, Type::Record { name: nb, fields: fb }) => {
+            if na != nb || fa.len() != fb.len() {
+                return Err(TypeError::new(TypeErrorKind::Mismatch {
+                    expected: a.clone(),
+                    found: b.clone(),
+                }));
+            }
+            for (field_a, ty_a) in fa.iter() {
+                match fb.iter().find(|(field_b, _)| field_b == field_a) {
+                    Some((_, ty_b)) => unify(ty_a, ty_b, subst)?,
+                    None => {
+                        return Err(TypeError::new(TypeErrorKind::Mismatch {
+                            expected: a.clone(),
+                            found: b.clone(),
+                        }));
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        // Two tuple types: same arity → unify elements pairwise.
+        (Type::Tuple(a_items), Type::Tuple(b_items)) => {
+            if a_items.len() != b_items.len() {
+                return Err(TypeError::new(TypeErrorKind::Mismatch {
+                    expected: a.clone(),
+                    found: b.clone(),
+                }));
+            }
+            for (a_item, b_item) in a_items.iter().zip(b_items.iter()) {
+                unify(a_item, b_item, subst)?;
             }
             Ok(())
         }
@@ -585,6 +637,16 @@ mod tests {
         Type::Adt { name: name.to_string(), args }
     }
 
+    fn record(name: &str, fields: Vec<(&str, Type)>) -> Type {
+        Type::Record {
+            name: name.to_string(),
+            fields: fields
+                .into_iter()
+                .map(|(field, ty)| (field.to_string(), ty))
+                .collect(),
+        }
+    }
+
     // -- ADT Test 15 --
     #[test]
     fn unify_adt_same_concrete() {
@@ -643,6 +705,171 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
             "expected InfiniteType(t0), got {err:?}"
+        );
+    }
+
+    // -- Record Test 1 --
+    #[test]
+    fn unify_record_same_name_fields() {
+        // Point{x: t0, y: Float} = Point{x: Int, y: Float} → t0 = Int
+        let mut s = Subst::empty();
+        let a = record(
+            "Point",
+            vec![("x", tv(0)), ("y", Type::Float)],
+        );
+        let b = record(
+            "Point",
+            vec![("x", Type::Int), ("y", Type::Float)],
+        );
+        unify(&a, &b, &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), Type::Int);
+    }
+
+    // -- Record Test 2 --
+    #[test]
+    fn unify_record_name_mismatch() {
+        // Point ≠ Vec2 even if fields align (nominal types).
+        let mut s = Subst::empty();
+        let a = record(
+            "Point",
+            vec![("x", Type::Float), ("y", Type::Float)],
+        );
+        let b = record(
+            "Vec2",
+            vec![("x", Type::Float), ("y", Type::Float)],
+        );
+        let err = unify(&a, &b, &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+    }
+
+    // -- Record Test 3 --
+    #[test]
+    fn unify_record_field_name_mismatch() {
+        // Same nominal type, different field set → mismatch.
+        let mut s = Subst::empty();
+        let a = record(
+            "Point",
+            vec![("x", Type::Float), ("y", Type::Float)],
+        );
+        let b = record(
+            "Point",
+            vec![("x", Type::Float), ("z", Type::Float)],
+        );
+        let err = unify(&a, &b, &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+    }
+
+    // -- Record Test 4 --
+    #[test]
+    fn unify_record_field_order_irrelevant() {
+        // Field order should not matter for nominal records.
+        let mut s = Subst::empty();
+        let a = record(
+            "Point",
+            vec![("x", Type::Int), ("y", Type::Bool)],
+        );
+        let b = record(
+            "Point",
+            vec![("y", Type::Bool), ("x", Type::Int)],
+        );
+        unify(&a, &b, &mut s).unwrap();
+    }
+
+    // -- Record Test 6 --
+    #[test]
+    fn unify_record_missing_field() {
+        // Same nominal type, but missing a field on one side → mismatch.
+        let mut s = Subst::empty();
+        let a = record(
+            "Point",
+            vec![("x", Type::Float), ("y", Type::Float)],
+        );
+        let b = record("Point", vec![("x", Type::Float)]);
+        let err = unify(&a, &b, &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+    }
+
+    // -- Record Test 5 --
+    #[test]
+    fn occurs_check_record() {
+        // t0 = (Record Point {x: t0}) → InfiniteType
+        let mut s = Subst::empty();
+        let cyclic = record("Point", vec![("x", tv(0))]);
+        let err = unify(&tv(0), &cyclic, &mut s).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
+            "expected InfiniteType(t0), got {err:?}"
+        );
+    }
+
+    // -- Tuple Test 3 --
+    #[test]
+    fn occurs_check_tuple() {
+        // t0 = (Tuple t0 Int) → InfiniteType
+        let mut s = Subst::empty();
+        let cyclic = Type::Tuple(vec![tv(0), Type::Int]);
+        let err = unify(&tv(0), &cyclic, &mut s).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::InfiniteType { var: TypeVar(0), .. }),
+            "expected InfiniteType(t0), got {err:?}"
+        );
+    }
+
+    // -- Tuple Test 1 --
+    #[test]
+    fn unify_tuple_same_len() {
+        // (Tuple t0 Bool) = (Tuple Int Bool) → t0 = Int
+        let mut s = Subst::empty();
+        let a = Type::Tuple(vec![tv(0), Type::Bool]);
+        let b = Type::Tuple(vec![Type::Int, Type::Bool]);
+        unify(&a, &b, &mut s).unwrap();
+        assert_eq!(s.apply(&tv(0)), Type::Int);
+    }
+
+    // -- Tuple Test 2 --
+    #[test]
+    fn unify_tuple_len_mismatch() {
+        // (Tuple Int Bool) ≠ (Tuple Int Bool Str)
+        let mut s = Subst::empty();
+        let a = Type::Tuple(vec![Type::Int, Type::Bool]);
+        let b = Type::Tuple(vec![Type::Int, Type::Bool, Type::Str]);
+        let err = unify(&a, &b, &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }), "expected Mismatch, got {err:?}");
+    }
+
+    // -- Tuple Test 4 --
+    #[test]
+    fn unify_tuple_arity_too_small() {
+        // Tuple arity must be at least 2 (spec §5.3).
+        let mut s = Subst::empty();
+        let a = Type::Tuple(vec![Type::Int]);
+        let err = unify(&a, &a, &mut s).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Tuple Test 5 --
+    #[test]
+    fn unify_tuple_arity_too_large() {
+        // Tuple arity must be at most 8 (spec §5.3).
+        let mut s = Subst::empty();
+        let a = Type::Tuple(vec![
+            Type::Int,
+            Type::Int,
+            Type::Int,
+            Type::Int,
+            Type::Int,
+            Type::Int,
+            Type::Int,
+            Type::Int,
+            Type::Int,
+        ]);
+        let err = unify(&a, &a, &mut s).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
         );
     }
 

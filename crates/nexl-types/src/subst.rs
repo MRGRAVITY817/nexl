@@ -40,6 +40,14 @@ impl Subst {
                 name: name.clone(),
                 args: args.iter().map(|a| self.apply(a)).collect(),
             },
+            Type::Record { name, fields } => Type::Record {
+                name: name.clone(),
+                fields: fields
+                    .iter()
+                    .map(|(field, ty)| (field.clone(), self.apply(ty)))
+                    .collect(),
+            },
+            Type::Tuple(items) => Type::Tuple(items.iter().map(|item| self.apply(item)).collect()),
             // Primitives and fixed-width types are unchanged.
             _ => ty.clone(),
         }
