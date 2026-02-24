@@ -50,7 +50,7 @@
 - [x] "Expected X but got Y" with source span
 - [x] "Cannot add Int and Float. Use (->float n) to convert." (ADR-006)
 - [x] Suggest fixes for common mismatches
-- [ ] Multiple errors collected (don't stop at first)
+- [x] Multiple errors collected (don't stop at first)
 
 ### Test Suite
 - [x] Unit tests for `Type` construction and display

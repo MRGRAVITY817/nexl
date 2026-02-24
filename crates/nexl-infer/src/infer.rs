@@ -21,17 +21,32 @@ pub struct InferState {
     pub subst: Subst,
     /// The loop-variable types that a `recur` in the current loop must match.
     pub recur_types: Option<Vec<Type>>,
+    /// Non-fatal errors accumulated during inference (Principle 6: don't stop at first).
+    ///
+    /// Sequential forms (`do`, `let` bindings, function arguments) push errors here
+    /// instead of short-circuiting, so the caller sees all type errors at once.
+    pub errors: Vec<TypeError>,
 }
 
 impl InferState {
     /// Create a fresh inference state with no bindings.
     pub fn new() -> Self {
-        Self { supply: TypeVarSupply::new(), subst: Subst::empty(), recur_types: None }
+        Self {
+            supply: TypeVarSupply::new(),
+            subst: Subst::empty(),
+            recur_types: None,
+            errors: Vec::new(),
+        }
     }
 
     /// Allocate a fresh unification variable and return it as a `Type`.
     pub fn fresh_var(&mut self) -> Type {
         Type::Var(self.supply.fresh())
+    }
+
+    /// Push a non-fatal error into the accumulated error list.
+    pub fn push_error(&mut self, e: TypeError) {
+        self.errors.push(e);
     }
 }
 
@@ -211,11 +226,18 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
     // Synthesize the callee type.
     let callee_ty = synth(callee_node, env, state)?;
 
-    // Synthesize each argument type in order.
-    let arg_types: Vec<Type> = arg_nodes
-        .iter()
-        .map(|a| synth(a, env, state))
-        .collect::<Result<Vec<_>, _>>()?;
+    // Synthesize each argument type in order, collecting errors rather than
+    // stopping at the first bad argument (Principle 6).
+    let mut arg_types: Vec<Type> = Vec::with_capacity(arg_nodes.len());
+    for arg in arg_nodes {
+        match synth(arg, env, state) {
+            Ok(ty) => arg_types.push(ty),
+            Err(e) => {
+                state.push_error(e);
+                arg_types.push(state.fresh_var());
+            }
+        }
+    }
 
     // Introduce a fresh return type variable.
     let ret_var = state.fresh_var();
@@ -292,7 +314,15 @@ fn synth_do(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, T
 
     let mut last_ty = Type::Unit; // placeholder; overwritten by the loop
     for expr in exprs {
-        last_ty = synth(expr, env, state)?;
+        match synth(expr, env, state) {
+            Ok(ty) => last_ty = ty,
+            // On failure, record the error and continue with a fresh type variable
+            // so subsequent expressions are still checked (Principle 6).
+            Err(e) => {
+                state.push_error(e);
+                last_ty = state.fresh_var();
+            }
+        }
     }
     Ok(last_ty)
 }
@@ -465,7 +495,15 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         i += 1;
 
         // Synthesize, check annotation, generalize.
-        let ty = synth(expr_node, &current_env, state)?;
+        // On init-expression failure, collect the error and use a fresh var so
+        // subsequent bindings are still checked (Principle 6).
+        let ty = match synth(expr_node, &current_env, state) {
+            Ok(t) => t,
+            Err(e) => {
+                state.push_error(e);
+                state.fresh_var()
+            }
+        };
         if let Some(ann_ty) = annotation {
             nexl_types::unify(&ann_ty, &ty, &mut state.subst)?;
         }
@@ -1667,26 +1705,29 @@ mod tests {
     // -- Test 4 (do) --
     #[test]
     fn infer_do_error_in_early_expr() {
-        // (do unknown 42) → UnboundVariable("unknown")
+        // (do unknown 42): early failure is collected, last expr still gives Int.
         let (env, mut state) = empty();
         let node = do_node(vec![sym_node("unknown"), int_node(42)]);
-        let err = synth(&node, &env, &mut state).unwrap_err();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int, "body type should still be Int");
+        assert_eq!(state.errors.len(), 1, "one error should be collected");
         assert!(
-            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
-            "expected UnboundVariable(unknown), got {err:?}"
+            matches!(state.errors[0].kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "collected error should be UnboundVariable(unknown)"
         );
     }
 
     // -- Test 5 (do) --
     #[test]
     fn infer_do_error_in_last_expr() {
-        // (do 42 unknown) → UnboundVariable("unknown")
+        // (do 42 unknown): the last expr fails; its error is collected.
         let (env, mut state) = empty();
         let node = do_node(vec![int_node(42), sym_node("unknown")]);
-        let err = synth(&node, &env, &mut state).unwrap_err();
+        let _ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(state.errors.len(), 1, "one error should be collected");
         assert!(
-            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
-            "expected UnboundVariable(unknown), got {err:?}"
+            matches!(state.errors[0].kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "collected error should be UnboundVariable(unknown)"
         );
     }
 
@@ -1776,13 +1817,15 @@ mod tests {
     // -- Test 7 (let) --
     #[test]
     fn infer_let_binding_expr_error() {
-        // (let [x unknown] x) → UnboundVariable("unknown") from the binding expr
+        // (let [x unknown] x): binding init fails; error is collected and x gets a
+        // fresh type var so the body is still checked.
         let (env, mut state) = empty();
         let node = let_node(vec![(sym_node("x"), sym_node("unknown"))], sym_node("x"));
-        let err = synth(&node, &env, &mut state).unwrap_err();
+        let _ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(state.errors.len(), 1, "one error should be collected");
         assert!(
-            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
-            "expected UnboundVariable(unknown), got {err:?}"
+            matches!(state.errors[0].kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "collected error should be UnboundVariable(unknown)"
         );
     }
 
@@ -2716,5 +2759,78 @@ mod tests {
             help.contains("->float") || help.contains("convert"),
             "help should mention conversion, got: '{help}'"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-error collection tests (Principle 6: don't stop at first)
+    // -----------------------------------------------------------------------
+
+    // -- Test 4 (multi-error) --
+    #[test]
+    fn let_collects_binding_init_errors() {
+        // (let [x unbound-a y unbound-b] 42): both init expressions fail.
+        // Both errors should be collected; body is still checked and Ok(Int) returned.
+        let (env, mut state) = empty();
+        let bvec = Node::new(
+            NodeKind::Vector(vec![
+                sym_node("x"), sym_node("unbound_a"),
+                sym_node("y"), sym_node("unbound_b"),
+            ]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let"), bvec, int_node(42)]),
+            syn_span(),
+        );
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int, "body type should be Int");
+        assert_eq!(state.errors.len(), 2, "both binding-init errors must be collected");
+    }
+
+    // -- Test 3 (multi-error) --
+    #[test]
+    fn application_collects_arg_errors() {
+        // (f unbound-a unbound-b) with f: (Fn [Bool Bool] -> Int).
+        // Both argument syntheses fail; both errors should be collected rather
+        // than stopping at the first bad argument.
+        let env = Env::new().extend(
+            "f",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Bool, Type::Bool],
+                ret: Box::new(Type::Int),
+            }),
+        );
+        let mut state = InferState::new();
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("f"), sym_node("unbound_a"), sym_node("unbound_b")]),
+            syn_span(),
+        );
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int, "return type should still be resolved");
+        assert_eq!(state.errors.len(), 2, "both arg errors must be collected");
+    }
+
+    // -- Test 2 (multi-error) --
+    #[test]
+    fn do_successful_leaves_errors_empty() {
+        // A fully successful (do 1 2 3) must not leave anything in state.errors.
+        let (env, mut state) = empty();
+        let node = do_node(vec![int_node(1), int_node(2), int_node(3)]);
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+        assert!(state.errors.is_empty(), "no errors expected for successful do");
+    }
+
+    // -- Test 1 (multi-error) --
+    #[test]
+    fn do_collects_multiple_errors() {
+        // (do unbound-x unbound-y 42): two failing sub-expressions followed by a
+        // successful one.  synth should return Ok(Int) and state.errors should
+        // hold both unbound-variable errors rather than stopping at the first.
+        let (env, mut state) = empty();
+        let node = do_node(vec![sym_node("unbound_x"), sym_node("unbound_y"), int_node(42)]);
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int, "last expr type should be Int");
+        assert_eq!(state.errors.len(), 2, "both unbound-var errors must be collected");
     }
 }
