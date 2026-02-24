@@ -156,6 +156,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexl-infer"
+version = "0.1.0"
+dependencies = [
+ "nexl-ast",
+ "nexl-types",
+]
+
+[[package]]
 name = "nexl-reader"
 version = "0.1.0"
 dependencies = [

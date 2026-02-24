@@ -1,0 +1,10 @@
+[package]
+name = "nexl-infer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bidirectional type inference for Nexl"
+
+[dependencies]
+nexl-ast   = { path = "../nexl-ast" }
+nexl-types = { path = "../nexl-types" }

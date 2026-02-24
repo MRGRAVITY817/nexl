@@ -24,10 +24,10 @@
 - [x] Type error representation with source spans
 
 ### nexl-infer — Bidirectional Inference Engine
-- [ ] Add `nexl-infer` crate to workspace
-- [ ] Context type: typing environment (name → Scheme), substitution state
-- [ ] Synthesize mode: literal → type (Int literal → Int, Float → Float, etc.)
-- [ ] Synthesize mode: variable lookup (instantiate polymorphic schemes)
+- [x] Add `nexl-infer` crate to workspace
+- [x] Context type: typing environment (name → Scheme), substitution state
+- [x] Synthesize mode: literal → type (Int literal → Int, Float → Float, etc.)
+- [x] Synthesize mode: variable lookup (instantiate polymorphic schemes)
 - [ ] Check mode: expression against expected type
 - [ ] Infer `def` form — bind inferred type in context
 - [ ] Infer `let` form — sequential bindings with let-generalization
@@ -38,7 +38,7 @@
 - [ ] Infer function application — callee must be Fn, unify arg types
 - [ ] Infer `loop`/`recur` — loop vars typed from init, recur must match
 - [ ] Polymorphic let-generalization (generalize unbound type vars)
-- [ ] Literal suffix inference: `42i32` → Int32, `3.14f32` → F32
+- [x] Literal suffix inference: `42i32` → Int32, `3.14f32` → F32
 
 ### nexl-infer — Type Annotations
 - [ ] Parse `: Type` annotations on `def` bindings
@@ -56,7 +56,7 @@
 - [x] Unit tests for `Type` construction and display
 - [x] Unit tests for substitution and occurs check
 - [x] Unit tests for unification (success and failure cases)
-- [ ] Unit tests for literal type synthesis
+- [x] Unit tests for literal type synthesis
 - [ ] Unit tests for each core form inference
 - [ ] Unit tests for let-generalization (polymorphism)
 - [ ] Unit tests for type annotation checking

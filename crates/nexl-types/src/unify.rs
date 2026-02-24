@@ -20,6 +20,8 @@ pub enum TypeErrorKind {
     InfiniteType { var: TypeVar, ty: Type },
     /// Two function types have different numbers of parameters.
     ArityMismatch { expected: usize, found: usize },
+    /// A name was used but is not bound in the typing environment.
+    UnboundVariable { name: String },
 }
 
 /// A type error produced during unification.
@@ -59,6 +61,9 @@ impl fmt::Display for TypeError {
                     f,
                     "function arity mismatch: expected {expected} parameter(s), found {found}"
                 )
+            }
+            TypeErrorKind::UnboundVariable { name } => {
+                write!(f, "unbound variable: {name}")
             }
         }
     }
