@@ -45,8 +45,84 @@ impl Default for InferState {
 pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     match &node.kind {
         NodeKind::Atom(atom) => synth_atom(atom, env, state),
+        NodeKind::List(items) => synth_list(items, env, state),
         _ => unimplemented!("synth: {:?}", node.kind),
     }
+}
+
+/// Dispatch on the head symbol of a list form.
+fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    match head_sym(items) {
+        Some("let") => synth_let(items, env, state),
+        _ => unimplemented!("synth_list: {:?}", items.first().map(|n| &n.kind)),
+    }
+}
+
+/// Return the name string if the first item in `items` is an unqualified symbol.
+fn head_sym(items: &[Node]) -> Option<&str> {
+    match items.first() {
+        Some(Node { kind: NodeKind::Atom(Atom::Symbol { ns: None, name }), .. }) => Some(name),
+        _ => None,
+    }
+}
+
+/// Synthesize the type of a `(let [x e1 y e2 ...] body)` form.
+///
+/// Bindings are evaluated sequentially; each binding is in scope for
+/// subsequent bindings and for the body (spec §4.4).
+fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // Structure: (let <bindings-vec> <body>)
+    if items.len() != 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "let expects (let [bindings...] body), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    // items[1] must be a Vector of name/expr pairs.
+    let bvec = match &items[1].kind {
+        NodeKind::Vector(elems) => elems,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "let bindings must be a vector".to_string(),
+            }));
+        }
+    };
+
+    if bvec.len() % 2 != 0 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "let binding vector must have an even number of elements, got {}",
+                bvec.len()
+            ),
+        }));
+    }
+
+    // Process each name/expr pair sequentially, extending the env.
+    let mut current_env = env.clone();
+    for pair in bvec.chunks(2) {
+        let name_node = &pair[0];
+        let expr_node = &pair[1];
+
+        // Binding name must be an unqualified symbol.
+        let name = match &name_node.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "let binding name must be an unqualified symbol".to_string(),
+                }));
+            }
+        };
+
+        // Synthesize the binding expression in the current env.
+        let ty = synth(expr_node, &current_env, state)?;
+        current_env = current_env.extend(name, Scheme::mono(ty));
+    }
+
+    // Synthesize the body in the fully-extended env.
+    synth(&items[2], &current_env, state)
 }
 
 /// Synthesize a type for a literal atom.
@@ -192,6 +268,14 @@ mod tests {
     use nexl_ast::NodeKind;
     use super::{InferState, check, infer_def, synth};
     use crate::Env;
+
+    /// Build `(let [k0 v0 k1 v1 ...] body)` as a List node.
+    fn let_node(bindings: Vec<(Node, Node)>, body: Node) -> Node {
+        let head = sym_node("let");
+        let bvec: Vec<Node> = bindings.into_iter().flat_map(|(k, v)| [k, v]).collect();
+        let bvec_node = Node::new(NodeKind::Vector(bvec), syn_span());
+        Node::new(NodeKind::List(vec![head, bvec_node, body]), syn_span())
+    }
 
     fn syn_span() -> Span {
         Span::synthetic()
@@ -523,6 +607,180 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
             "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // let form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (let) --
+    #[test]
+    fn infer_let_empty_bindings() {
+        // (let [] 42) → Int
+        let (env, mut state) = empty();
+        let node = let_node(vec![], int_node(42));
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 2 (let) --
+    #[test]
+    fn infer_let_single_binding() {
+        // (let [x 42] x) → Int
+        let (env, mut state) = empty();
+        let node = let_node(vec![(sym_node("x"), int_node(42))], sym_node("x"));
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 3 (let) --
+    #[test]
+    fn infer_let_binding_bool_type() {
+        // (let [x true] x) → Bool
+        let (env, mut state) = empty();
+        let node = let_node(
+            vec![(sym_node("x"), atom_node(Atom::Bool(true)))],
+            sym_node("x"),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Bool);
+    }
+
+    // -- Test 4 (let) --
+    #[test]
+    fn infer_let_sequential_bindings_in_scope() {
+        // (let [x 42 y x] y) → Int
+        // 'y' is bound to 'x', which is bound to 42 : Int
+        let (env, mut state) = empty();
+        let node = let_node(
+            vec![(sym_node("x"), int_node(42)), (sym_node("y"), sym_node("x"))],
+            sym_node("y"),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 5 (let) --
+    #[test]
+    fn infer_let_shadows_outer_env() {
+        // outer: x : Bool; (let [x 42] x) → Int (inner shadows outer)
+        let env = Env::new().extend("x", Scheme::mono(Type::Bool));
+        let mut state = InferState::new();
+        let node = let_node(vec![(sym_node("x"), int_node(42))], sym_node("x"));
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 6 (let) --
+    #[test]
+    fn infer_let_body_error() {
+        // (let [x 42] unknown) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = let_node(vec![(sym_node("x"), int_node(42))], sym_node("unknown"));
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 7 (let) --
+    #[test]
+    fn infer_let_binding_expr_error() {
+        // (let [x unknown] x) → UnboundVariable("unknown") from the binding expr
+        let (env, mut state) = empty();
+        let node = let_node(vec![(sym_node("x"), sym_node("unknown"))], sym_node("x"));
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 8 (let) --
+    #[test]
+    fn infer_let_malformed_not_list() {
+        // passing an atom to synth with a List dispatch → only reachable via
+        // direct synth_let call; test via a malformed node with wrong element count.
+        // Use a let list with only 1 element: (let)
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let")]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 9 (let) --
+    #[test]
+    fn infer_let_malformed_wrong_arity() {
+        // (let [x 1]) — missing body → MalformedForm
+        let (env, mut state) = empty();
+        let bvec = Node::new(
+            NodeKind::Vector(vec![sym_node("x"), int_node(1)]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let"), bvec]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 10 (let) --
+    #[test]
+    fn infer_let_malformed_bindings_not_vector() {
+        // (let 42 body) — bindings not a Vector → MalformedForm
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let"), int_node(42), int_node(99)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 11 (let) --
+    #[test]
+    fn infer_let_malformed_odd_bindings() {
+        // (let [x] body) — odd binding vector → MalformedForm
+        let (env, mut state) = empty();
+        let bvec = Node::new(NodeKind::Vector(vec![sym_node("x")]), syn_span());
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let"), bvec, int_node(42)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 12 (let) --
+    #[test]
+    fn infer_let_binding_name_not_symbol() {
+        // (let [42 x] body) — binding name is not a symbol → MalformedForm
+        let (env, mut state) = empty();
+        let bvec = Node::new(
+            NodeKind::Vector(vec![int_node(42), int_node(99)]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let"), bvec, int_node(42)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
         );
     }
 }

@@ -30,7 +30,7 @@
 - [x] Synthesize mode: variable lookup (instantiate polymorphic schemes)
 - [x] Check mode: expression against expected type
 - [x] Infer `def` form — bind inferred type in context
-- [ ] Infer `let` form — sequential bindings with let-generalization
+- [x] Infer `let` form — sequential bindings with let-generalization
 - [ ] Infer `do` form — check each expr, return type of last
 - [ ] Infer `if` form — condition must be Bool, branches must unify
 - [ ] Infer `fn` form — fresh type vars for params, infer body
