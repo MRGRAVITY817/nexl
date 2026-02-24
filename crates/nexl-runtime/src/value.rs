@@ -65,6 +65,13 @@ pub enum Value {
     /// Exact rational number, stored in lowest terms.
     Ratio(i64, i64),
 
+    /// Persistent vector value.
+    Vec(Rc<Vec<Value>>),
+    /// Persistent map value.
+    Map(Rc<Vec<(Value, Value)>>),
+    /// Persistent set value.
+    Set(Rc<Vec<Value>>),
+
     /// Function value — captures an environment and callable body.
     Function(Rc<Function>),
 
@@ -102,11 +109,32 @@ impl PartialEq for Value {
                 },
             ) => ans == bns && aname == bname,
             (Value::Ratio(an, ad), Value::Ratio(bn, bd)) => an == bn && ad == bd,
+            (Value::Vec(a), Value::Vec(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => multiset_eq(a, b),
+            (Value::Set(a), Value::Set(b)) => multiset_eq(a, b),
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
             _ => false,
         }
     }
+}
+
+fn multiset_eq<T: PartialEq>(a: &[T], b: &[T]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    let mut used = vec![false; b.len()];
+    'outer: for item in a {
+        for (idx, other) in b.iter().enumerate() {
+            if !used[idx] && item == other {
+                used[idx] = true;
+                continue 'outer;
+            }
+        }
+        return false;
+    }
+    true
 }
 
 impl Value {
@@ -122,6 +150,9 @@ impl Value {
             Value::Keyword { .. } => "Keyword",
             Value::Symbol { .. } => "Symbol",
             Value::Ratio(_, _) => "Ratio",
+            Value::Vec(_) => "Vec",
+            Value::Map(_) => "Map",
+            Value::Set(_) => "Set",
             Value::Function(_) => "Function",
             Value::NativeFunction(_) => "Function",
         }
@@ -174,6 +205,36 @@ impl std::fmt::Display for Value {
                 None => write!(f, "{name}"),
             },
             Value::Ratio(n, d) => write!(f, "{n}/{d}"),
+            Value::Vec(items) => {
+                write!(f, "[")?;
+                for (idx, item) in items.iter().enumerate() {
+                    if idx > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
+            Value::Map(entries) => {
+                write!(f, "{{")?;
+                for (idx, (key, value)) in entries.iter().enumerate() {
+                    if idx > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{key} {value}")?;
+                }
+                write!(f, "}}")
+            }
+            Value::Set(items) => {
+                write!(f, "#{{")?;
+                for (idx, item) in items.iter().enumerate() {
+                    if idx > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "}}")
+            }
             Value::Function(func) => {
                 let name = func.name.as_deref().unwrap_or("<anon>");
                 if func.variadic {
@@ -304,6 +365,125 @@ mod tests {
     #[test]
     fn value_ratio_display() {
         assert_eq!(Value::Ratio(1, 3).to_string(), "1/3");
+    }
+
+    #[test]
+    fn value_vec_display() {
+        let v = Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+        assert_eq!(v.to_string(), "[1 2 3]");
+    }
+
+    #[test]
+    fn value_map_display() {
+        let v = Value::Map(Rc::new(vec![
+            (
+                Value::Keyword {
+                    ns: None,
+                    name: Rc::from("a"),
+                },
+                Value::Int(1),
+            ),
+            (
+                Value::Keyword {
+                    ns: None,
+                    name: Rc::from("b"),
+                },
+                Value::Int(2),
+            ),
+        ]));
+        assert_eq!(v.to_string(), "{:a 1 :b 2}");
+    }
+
+    #[test]
+    fn value_set_display() {
+        let v = Value::Set(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+        assert_eq!(v.to_string(), "#{1 2 3}");
+    }
+
+    #[test]
+    fn value_vec_equality_structural() {
+        let a = Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2)]));
+        let b = Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2)]));
+        let c = Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(1)]));
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn value_map_equality_structural() {
+        let a = Value::Map(Rc::new(vec![
+            (
+                Value::Keyword {
+                    ns: None,
+                    name: Rc::from("a"),
+                },
+                Value::Int(1),
+            ),
+            (
+                Value::Keyword {
+                    ns: None,
+                    name: Rc::from("b"),
+                },
+                Value::Int(2),
+            ),
+        ]));
+        let b = Value::Map(Rc::new(vec![
+            (
+                Value::Keyword {
+                    ns: None,
+                    name: Rc::from("b"),
+                },
+                Value::Int(2),
+            ),
+            (
+                Value::Keyword {
+                    ns: None,
+                    name: Rc::from("a"),
+                },
+                Value::Int(1),
+            ),
+        ]));
+        let c = Value::Map(Rc::new(vec![(
+            Value::Keyword {
+                ns: None,
+                name: Rc::from("a"),
+            },
+            Value::Int(2),
+        )]));
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn value_set_equality_structural() {
+        let a = Value::Set(Rc::new(vec![Value::Int(1), Value::Int(2)]));
+        let b = Value::Set(Rc::new(vec![Value::Int(2), Value::Int(1)]));
+        let c = Value::Set(Rc::new(vec![Value::Int(1), Value::Int(3)]));
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn value_type_name_collections() {
+        assert_eq!(
+            Value::Vec(Rc::new(vec![Value::Int(1)])).type_name(),
+            "Vec"
+        );
+        assert_eq!(
+            Value::Map(Rc::new(vec![(
+                Value::Keyword {
+                    ns: None,
+                    name: Rc::from("a"),
+                },
+                Value::Int(1),
+            )]))
+            .type_name(),
+            "Map"
+        );
+        assert_eq!(
+            Value::Set(Rc::new(vec![Value::Int(1)])).type_name(),
+            "Set"
+        );
     }
 
     #[test]

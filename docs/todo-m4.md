@@ -5,8 +5,8 @@
 - [x] Add substitution, free-vars, display, and unification support for collection types
 
 ## Runtime Values (`nexl-runtime`)
-- [ ] Add `Vec`, `Map`, `Set` value variants to `Value` enum
-- [ ] Implement Display, PartialEq, type_name for collection values
+- [x] Add `Vec`, `Map`, `Set` value variants to `Value` enum
+- [x] Implement Display, PartialEq, type_name for collection values
 
 ## Evaluation (`nexl-eval`)
 - [ ] Evaluate vector literals `[1 2 3]` → `Value::Vec`
