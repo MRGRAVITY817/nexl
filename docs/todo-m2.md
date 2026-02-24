@@ -35,7 +35,7 @@
 - [x] Infer `if` form — condition must be Bool, branches must unify
 - [x] Infer `fn` form — fresh type vars for params, infer body
 - [x] Infer `defn` form — sugar for def + fn, same as fn
-- [ ] Infer function application — callee must be Fn, unify arg types
+- [x] Infer function application — callee must be Fn, unify arg types
 - [ ] Infer `loop`/`recur` — loop vars typed from init, recur must match
 - [ ] Polymorphic let-generalization (generalize unbound type vars)
 - [x] Literal suffix inference: `42i32` → Int32, `3.14f32` → F32

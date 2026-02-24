@@ -57,8 +57,51 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("do") => synth_do(items, env, state),
         Some("if") => synth_if(items, env, state),
         Some("fn") => synth_fn(items, env, state),
-        _ => unimplemented!("synth_list: {:?}", items.first().map(|n| &n.kind)),
+        _ => synth_application(items, env, state),
     }
+}
+
+/// Synthesize the type of a function application `(callee arg0 arg1 ...)`.
+///
+/// The callee is synthesized first, then each argument.  A fresh return type
+/// variable is introduced; the callee type is unified with
+/// `(Fn [arg_types...] -> ret_var)`.  The resolved return type is returned.
+///
+/// This handles:
+/// - Correct calls: argument types are unified against parameter types.
+/// - Arity errors: caught by [`nexl_types::unify`] as `ArityMismatch`.
+/// - Non-callable callee: unifying e.g. `Int` with `(Fn [...] -> t)` yields
+///   `Mismatch`.
+/// - Type variable callee: the unification binds the variable to the inferred
+///   `Fn` shape.
+fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    if items.is_empty() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "empty application — a callee is required".to_string(),
+        }));
+    }
+
+    let callee_node = &items[0];
+    let arg_nodes = &items[1..];
+
+    // Synthesize the callee type.
+    let callee_ty = synth(callee_node, env, state)?;
+
+    // Synthesize each argument type in order.
+    let arg_types: Vec<Type> = arg_nodes
+        .iter()
+        .map(|a| synth(a, env, state))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Introduce a fresh return type variable.
+    let ret_var = state.fresh_var();
+
+    // Unify the callee with the expected function shape.
+    // Any arity or type mismatch surfaces here.
+    let expected_fn = Type::Fn { params: arg_types, ret: Box::new(ret_var.clone()) };
+    nexl_types::unify(&callee_ty, &expected_fn, &mut state.subst)?;
+
+    Ok(state.subst.apply(&ret_var))
 }
 
 /// Synthesize the type of a `(do e1 e2 ... eN)` form.
@@ -1402,6 +1445,157 @@ mod tests {
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Function application tests
+    // -----------------------------------------------------------------------
+
+    /// Build `(callee arg0 arg1 ...)` as a List node.
+    fn app_node(callee: Node, args: Vec<Node>) -> Node {
+        let mut items = vec![callee];
+        items.extend(args);
+        Node::new(NodeKind::List(items), syn_span())
+    }
+
+    // -- Test 10 (apply) --
+    #[test]
+    fn apply_callee_unbound() {
+        // (unknown 1) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = app_node(sym_node("unknown"), vec![int_node(1)]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 9 (apply) --
+    #[test]
+    fn apply_inline_lambda() {
+        // ((fn [x] x) 42) → Int
+        let (env, mut state) = empty();
+        let lambda = fn_node(vec!["x"], sym_node("x"));
+        let node = app_node(lambda, vec![int_node(42)]);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 8 (apply) --
+    #[test]
+    fn apply_polymorphic_identity() {
+        // id : ∀a. (Fn [a] -> a); (id 42) → Int
+        use std::collections::HashSet;
+        let mut state = InferState::new();
+        let t0 = state.supply.fresh(); // consume t0 for the scheme
+        let scheme = nexl_types::Scheme {
+            forall: [t0].into_iter().collect::<HashSet<_>>(),
+            body: Type::Fn { params: vec![Type::Var(t0)], ret: Box::new(Type::Var(t0)) },
+        };
+        let env = Env::new().extend("id", scheme);
+        let node = app_node(sym_node("id"), vec![int_node(42)]);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 7 (apply) --
+    #[test]
+    fn apply_not_a_function() {
+        // (42 1) — Int is not callable → Mismatch
+        let (env, mut state) = empty();
+        let node = app_node(int_node(42), vec![int_node(1)]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch (Int is not a function), got {err:?}"
+        );
+    }
+
+    // -- Test 6 (apply) --
+    #[test]
+    fn apply_arity_too_few() {
+        // (f) where f : (Fn [Int] -> Bool) → ArityMismatch {expected: 1, found: 0}
+        let f_ty = Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Bool) };
+        let env = Env::new().extend("f", Scheme::mono(f_ty));
+        let mut state = InferState::new();
+        let node = app_node(sym_node("f"), vec![]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::ArityMismatch { expected: 1, found: 0 }
+            ),
+            "expected ArityMismatch(1,0), got {err:?}"
+        );
+    }
+
+    // -- Test 5 (apply) --
+    #[test]
+    fn apply_arity_too_many() {
+        // (f 1 2) where f : (Fn [Int] -> Bool) → ArityMismatch {expected: 1, found: 2}
+        let f_ty = Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Bool) };
+        let env = Env::new().extend("f", Scheme::mono(f_ty));
+        let mut state = InferState::new();
+        let node = app_node(sym_node("f"), vec![int_node(1), int_node(2)]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::ArityMismatch { expected: 1, found: 2 }
+            ),
+            "expected ArityMismatch(1,2), got {err:?}"
+        );
+    }
+
+    // -- Test 4 (apply) --
+    #[test]
+    fn apply_arg_type_mismatch() {
+        // (f true) where f : (Fn [Int] -> Bool) → Mismatch {expected: Int, found: Bool}
+        let f_ty = Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Bool) };
+        let env = Env::new().extend("f", Scheme::mono(f_ty));
+        let mut state = InferState::new();
+        let node = app_node(sym_node("f"), vec![atom_node(Atom::Bool(true))]);
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::Mismatch { ref expected, ref found }
+                if *expected == Type::Int && *found == Type::Bool
+            ),
+            "expected Mismatch(Int, Bool), got {err:?}"
+        );
+    }
+
+    // -- Test 3 (apply) --
+    #[test]
+    fn apply_two_arg_fn() {
+        // (f 42 "hello") where f : (Fn [Int Str] -> Float) → Float
+        let f_ty = Type::Fn { params: vec![Type::Int, Type::Str], ret: Box::new(Type::Float) };
+        let env = Env::new().extend("f", Scheme::mono(f_ty));
+        let mut state = InferState::new();
+        let node = app_node(sym_node("f"), vec![int_node(42), atom_node(Atom::Str("hello".into()))]);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Float);
+    }
+
+    // -- Test 2 (apply) --
+    #[test]
+    fn apply_one_arg_fn() {
+        // (f 42) where f : (Fn [Int] -> Bool) → Bool
+        let f_ty = Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Bool) };
+        let env = Env::new().extend("f", Scheme::mono(f_ty));
+        let mut state = InferState::new();
+        let node = app_node(sym_node("f"), vec![int_node(42)]);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Bool);
+    }
+
+    // -- Test 1 (apply) --
+    #[test]
+    fn apply_zero_arg_fn() {
+        // (f) where f : (Fn [] -> Int) → Int
+        let f_ty = Type::Fn { params: vec![], ret: Box::new(Type::Int) };
+        let env = Env::new().extend("f", Scheme::mono(f_ty));
+        let mut state = InferState::new();
+        let node = app_node(sym_node("f"), vec![]);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
     }
 
     // -- Test 12 (let) --
