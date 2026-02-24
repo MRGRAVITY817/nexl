@@ -239,6 +239,14 @@ fn synth_do(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, T
     Ok(last_ty)
 }
 
+/// Return `true` if `node` is the bare colon annotation separator `Symbol(":")`.
+fn is_colon_node(node: &Node) -> bool {
+    matches!(
+        &node.kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == ":"
+    )
+}
+
 /// Return the name string if the first item in `items` is an unqualified symbol.
 fn head_sym(items: &[Node]) -> Option<&str> {
     match items.first() {
@@ -355,22 +363,15 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         }
     };
 
-    if bvec.len() % 2 != 0 {
-        return Err(TypeError::new(TypeErrorKind::MalformedForm {
-            description: format!(
-                "let binding vector must have an even number of elements, got {}",
-                bvec.len()
-            ),
-        }));
-    }
-
-    // Process each name/expr pair sequentially, extending the env.
+    // Parse the binding vector.  Each binding is either:
+    //   name expr           (2 elements — no annotation)
+    //   name : Type expr    (4 elements — with annotation)
+    // Bindings of both kinds may be mixed freely.
     let mut current_env = env.clone();
-    for pair in bvec.chunks(2) {
-        let name_node = &pair[0];
-        let expr_node = &pair[1];
-
-        // Binding name must be an unqualified symbol.
+    let mut i = 0;
+    while i < bvec.len() {
+        // Every binding starts with a name symbol.
+        let name_node = &bvec[i];
         let name = match &name_node.kind {
             NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
             _ => {
@@ -379,10 +380,37 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
                 }));
             }
         };
+        i += 1;
 
-        // Synthesize the binding expression in the current env, then
-        // generalize: quantify type variables not constrained by the outer env.
+        // Peek: if the next element is Symbol(":"), consume an annotation.
+        let annotation: Option<Type> = if bvec.get(i).is_some_and(is_colon_node) {
+            i += 1; // consume ":"
+            if i >= bvec.len() {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "expected type after `:` in let annotation".to_string(),
+                }));
+            }
+            let ann = parse_type_expr(&bvec[i])?;
+            i += 1; // consume the type node
+            Some(ann)
+        } else {
+            None
+        };
+
+        // The init expression must follow.
+        if i >= bvec.len() {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "let binding is missing its init expression".to_string(),
+            }));
+        }
+        let expr_node = &bvec[i];
+        i += 1;
+
+        // Synthesize, check annotation, generalize.
         let ty = synth(expr_node, &current_env, state)?;
+        if let Some(ann_ty) = annotation {
+            nexl_types::unify(&ann_ty, &ty, &mut state.subst)?;
+        }
         let scheme = generalize(&ty, &current_env, state);
         current_env = current_env.extend(name, scheme);
     }
@@ -467,15 +495,33 @@ pub fn infer_defn(
         }
     };
 
-    // Structure: (defn <name> <params-vec> <body>) — exactly 4 elements.
-    if items.len() != 4 {
-        return Err(TypeError::new(TypeErrorKind::MalformedForm {
-            description: format!(
-                "defn expects (defn name [params...] body), got {} elements",
-                items.len()
-            ),
-        }));
-    }
+    // Accept (defn name params body) — 4 elements
+    // or     (defn name params -> RetType body) — 6 elements.
+    let (param_node, ret_annotation, body_node) = match items.len() {
+        4 => (&items[2], None, &items[3]),
+        6 => {
+            let is_arrow = matches!(
+                &items[3].kind,
+                NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "->"
+            );
+            if !is_arrow {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "defn with 6 elements expects (defn name params -> RetType body)"
+                        .to_string(),
+                }));
+            }
+            let ret_ty = parse_type_expr(&items[4])?;
+            (&items[2], Some(ret_ty), &items[5])
+        }
+        n => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!(
+                    "defn expects (defn name [params...] body) or \
+                     (defn name [params...] -> RetType body), got {n} elements"
+                ),
+            }));
+        }
+    };
 
     // items[1] must be an unqualified symbol (the function name).
     let name = match &items[1].kind {
@@ -487,17 +533,152 @@ pub fn infer_defn(
         }
     };
 
-    // Desugar: build a synthetic `fn` items slice and reuse synth_fn.
-    // items[2] = params vector, items[3] = body.
-    let fn_head = Node::new(
-        NodeKind::Atom(Atom::Symbol { ns: None, name: "fn".to_string() }),
-        node.span,
-    );
-    let fn_items = [fn_head, items[2].clone(), items[3].clone()];
-    let fn_ty = synth_fn(&fn_items, env, state)?;
+    // Parse params with optional `: Type` annotations (scan-style).
+    let param_nodes = match &param_node.kind {
+        NodeKind::Vector(elems) => elems,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defn parameter list must be a vector".to_string(),
+            }));
+        }
+    };
 
+    let mut param_types: Vec<Type> = Vec::new();
+    let mut body_env = env.clone();
+    let mut i = 0;
+    while i < param_nodes.len() {
+        let param_name = match &param_nodes[i].kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "defn parameter names must be unqualified symbols".to_string(),
+                }));
+            }
+        };
+        i += 1;
+
+        let param_ty = if param_nodes.get(i).is_some_and(is_colon_node) {
+            i += 1; // consume ":"
+            let ann = parse_type_expr(&param_nodes[i])?;
+            i += 1;
+            ann
+        } else {
+            state.fresh_var()
+        };
+
+        param_types.push(param_ty.clone());
+        body_env = body_env.extend(param_name, Scheme::mono(param_ty));
+    }
+
+    // Infer the body in the extended environment.
+    let body_ty = synth(body_node, &body_env, state)?;
+
+    // If a return annotation was provided, unify it with the body type.
+    if let Some(ann_ret) = ret_annotation {
+        nexl_types::unify(&ann_ret, &body_ty, &mut state.subst)?;
+    }
+
+    let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
+    let ret_ty = state.subst.apply(&body_ty);
+
+    let fn_ty = Type::Fn { params: param_types, ret: Box::new(ret_ty) };
     let new_env = env.extend(name.clone(), Scheme::mono(fn_ty.clone()));
     Ok((name, fn_ty, new_env))
+}
+
+// ---------------------------------------------------------------------------
+// Type expression parser
+// ---------------------------------------------------------------------------
+
+/// Parse an AST node that appears in annotation position into a [`Type`].
+///
+/// Handles:
+/// - Primitive type names: `Int`, `Float`, `Bool`, … (spec §5.2)
+/// - Fixed-width numeric types: `Int8`, `Int32`, `U64`, `F32`, …
+/// - Function types: `(Fn [param-types...] -> ret-type)` (spec §5.3)
+pub fn parse_type_expr(node: &Node) -> Result<Type, TypeError> {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => parse_type_name(name, node),
+        NodeKind::List(items) => parse_fn_type(items, node),
+        _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!("expected a type expression, got {:?}", node.kind),
+        })),
+    }
+}
+
+/// Parse a bare type name symbol (e.g. `Int`, `Bool`, `Fn`).
+fn parse_type_name(name: &str, node: &Node) -> Result<Type, TypeError> {
+    match name {
+        "Int" | "Int64" => Ok(Type::Int),
+        "Float" | "F64" => Ok(Type::Float),
+        "Ratio" => Ok(Type::Ratio),
+        "Bool" => Ok(Type::Bool),
+        "Char" => Ok(Type::Char),
+        "Str" => Ok(Type::Str),
+        "Keyword" => Ok(Type::Keyword),
+        "Symbol" => Ok(Type::Symbol),
+        "Unit" => Ok(Type::Unit),
+        "Never" => Ok(Type::Never),
+        "Int8" => Ok(Type::Int8),
+        "Int16" => Ok(Type::Int16),
+        "Int32" => Ok(Type::Int32),
+        "U8" => Ok(Type::U8),
+        "U16" => Ok(Type::U16),
+        "U32" => Ok(Type::U32),
+        "U64" => Ok(Type::U64),
+        "F32" => Ok(Type::F32),
+        _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!("unknown type name `{name}`"),
+        })
+        .with_span(node.span)),
+    }
+}
+
+/// Parse `(Fn [param-types...] -> ret-type)`.
+fn parse_fn_type(items: &[Node], node: &Node) -> Result<Type, TypeError> {
+    // Structure: (Fn <params-vec> -> <ret>)  — exactly 4 elements.
+    let bad = || {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: "Fn type expects (Fn [param-types...] -> ret-type)".to_string(),
+        })
+        .with_span(node.span)
+    };
+
+    if items.len() != 4 {
+        return Err(bad());
+    }
+
+    // items[0] must be Symbol("Fn")
+    let is_fn_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "Fn"
+    );
+    if !is_fn_head {
+        return Err(bad());
+    }
+
+    // items[1] must be a Vector of type nodes
+    let param_nodes = match &items[1].kind {
+        NodeKind::Vector(elems) => elems,
+        _ => return Err(bad()),
+    };
+
+    // items[2] must be Symbol("->")
+    let is_arrow = matches!(
+        &items[2].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "->"
+    );
+    if !is_arrow {
+        return Err(bad());
+    }
+
+    let params: Vec<Type> = param_nodes
+        .iter()
+        .map(parse_type_expr)
+        .collect::<Result<_, _>>()?;
+    let ret = parse_type_expr(&items[3])?;
+
+    Ok(Type::Fn { params, ret: Box::new(ret) })
 }
 
 // ---------------------------------------------------------------------------
@@ -554,14 +735,21 @@ pub fn infer_def(
     env: &Env,
     state: &mut InferState,
 ) -> Result<(String, Type, Env), TypeError> {
-    let (name, body) = parse_def(node)?;
+    let (name, annotation, body) = parse_def(node)?;
     let ty = synth(body, env, state)?;
-    let new_env = env.extend(name.clone(), Scheme::mono(ty.clone()));
-    Ok((name, ty, new_env))
+    if let Some(ann_ty) = annotation {
+        // Check: annotation must match the inferred type.
+        nexl_types::unify(&ann_ty, &ty, &mut state.subst)?;
+    }
+    let resolved = state.subst.apply(&ty);
+    let new_env = env.extend(name.clone(), Scheme::mono(resolved.clone()));
+    Ok((name, resolved, new_env))
 }
 
-/// Parse `(def name expr)` and return the binding name and body node.
-fn parse_def(node: &Node) -> Result<(String, &Node), TypeError> {
+/// Parse `(def name expr)` or `(def name : Type expr)`.
+///
+/// Returns the binding name, an optional type annotation, and the body node.
+fn parse_def(node: &Node) -> Result<(String, Option<Type>, &Node), TypeError> {
     let items = match &node.kind {
         NodeKind::List(items) => items,
         _ => {
@@ -571,9 +759,13 @@ fn parse_def(node: &Node) -> Result<(String, &Node), TypeError> {
         }
     };
 
-    if items.len() != 3 {
+    // Accept either 3 elements (no annotation) or 5 (with `: Type`).
+    if items.len() != 3 && items.len() != 5 {
         return Err(TypeError::new(TypeErrorKind::MalformedForm {
-            description: format!("def expects (def name expr), got {} elements", items.len()),
+            description: format!(
+                "def expects (def name expr) or (def name : Type expr), got {} elements",
+                items.len()
+            ),
         }));
     }
 
@@ -598,7 +790,23 @@ fn parse_def(node: &Node) -> Result<(String, &Node), TypeError> {
         }
     };
 
-    Ok((binding_name, &items[2]))
+    if items.len() == 3 {
+        return Ok((binding_name, None, &items[2]));
+    }
+
+    // 5-element form: items[2] must be Symbol(":"), items[3] is the type, items[4] is the body.
+    let is_colon = matches!(
+        &items[2].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == ":"
+    );
+    if !is_colon {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "expected `:` after binding name in def annotation".to_string(),
+        }));
+    }
+
+    let annotation = parse_type_expr(&items[3])?;
+    Ok((binding_name, Some(annotation), &items[4]))
 }
 
 // ---------------------------------------------------------------------------
@@ -1583,6 +1791,247 @@ mod tests {
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Type annotation tests
+    // -----------------------------------------------------------------------
+
+    use super::parse_type_expr;
+
+    fn type_sym(name: &str) -> Node {
+        sym_node(name)
+    }
+
+    /// Build `(Fn [param-types...] -> ret)` as a List node.
+    fn fn_type_node(params: Vec<Node>, ret: Node) -> Node {
+        let pvec = Node::new(NodeKind::Vector(params), syn_span());
+        Node::new(
+            NodeKind::List(vec![sym_node("Fn"), pvec, sym_node("->"), ret]),
+            syn_span(),
+        )
+    }
+
+    // -- Test 10 (annot) --
+    #[test]
+    fn defn_param_annotation() {
+        // (defn f [x : Int] x) → (Fn [Int] -> Int); param type is Int, not a free var
+        let (env, mut state) = empty();
+        let pvec = Node::new(
+            NodeKind::Vector(vec![sym_node("x"), sym_node(":"), sym_node("Int")]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("defn"), sym_node("f"), pvec, sym_node("x")]),
+            syn_span(),
+        );
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Int) });
+    }
+
+    // -- Test 11 (annot) --
+    #[test]
+    fn defn_return_annotation_matches() {
+        // (defn f [] -> Int 42) → succeeds
+        let (env, mut state) = empty();
+        let pvec = Node::new(NodeKind::Vector(vec![]), syn_span());
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("defn"), sym_node("f"), pvec,
+                sym_node("->"), sym_node("Int"), int_node(42),
+            ]),
+            syn_span(),
+        );
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Fn { params: vec![], ret: Box::new(Type::Int) });
+    }
+
+    // -- Test 12 (annot) --
+    #[test]
+    fn defn_return_annotation_mismatch() {
+        // (defn f [] -> Bool 42) → Mismatch { expected: Bool, found: Int }
+        let (env, mut state) = empty();
+        let pvec = Node::new(NodeKind::Vector(vec![]), syn_span());
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("defn"), sym_node("f"), pvec,
+                sym_node("->"), sym_node("Bool"), int_node(42),
+            ]),
+            syn_span(),
+        );
+        let err = infer_defn(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
+    }
+
+    // -- Test 13 (annot) --
+    #[test]
+    fn defn_full_annotation() {
+        // (defn f [x : Int] -> Int x) → (Fn [Int] -> Int); both param and return annotated
+        let (env, mut state) = empty();
+        let pvec = Node::new(
+            NodeKind::Vector(vec![sym_node("x"), sym_node(":"), sym_node("Int")]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("defn"), sym_node("f"), pvec,
+                sym_node("->"), sym_node("Int"), sym_node("x"),
+            ]),
+            syn_span(),
+        );
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Fn { params: vec![Type::Int], ret: Box::new(Type::Int) });
+    }
+
+    // -- Test 7 (annot) --
+    #[test]
+    fn let_annotation_matches() {
+        // (let [x : Int 42] x) → Int
+        let (env, mut state) = empty();
+        let bvec = Node::new(
+            NodeKind::Vector(vec![sym_node("x"), sym_node(":"), sym_node("Int"), int_node(42)]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let"), bvec, sym_node("x")]),
+            syn_span(),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 8 (annot) --
+    #[test]
+    fn let_annotation_mismatch() {
+        // (let [x : Bool 42] x) → Mismatch { expected: Bool, found: Int }
+        let (env, mut state) = empty();
+        let bvec = Node::new(
+            NodeKind::Vector(vec![sym_node("x"), sym_node(":"), sym_node("Bool"), int_node(42)]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let"), bvec, sym_node("x")]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
+    }
+
+    // -- Test 9 (annot) --
+    #[test]
+    fn let_mixed_annotated_and_plain() {
+        // (let [x : Int 42 y "hi"] x) → Int
+        // First binding is annotated, second is plain.
+        let (env, mut state) = empty();
+        let bvec = Node::new(
+            NodeKind::Vector(vec![
+                sym_node("x"), sym_node(":"), sym_node("Int"), int_node(42),
+                sym_node("y"), atom_node(Atom::Str("hi".into())),
+            ]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("let"), bvec, sym_node("x")]),
+            syn_span(),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 5 (annot) --
+    #[test]
+    fn def_annotation_matches() {
+        // (def x : Int 42) → succeeds; x has type Int
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("def"), sym_node("x"),
+                sym_node(":"), sym_node("Int"), int_node(42),
+            ]),
+            syn_span(),
+        );
+        let (_name, ty, _env) = infer_def(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+    }
+
+    // -- Test 6 (annot) --
+    #[test]
+    fn def_annotation_mismatch() {
+        // (def x : Bool 42) → Mismatch { expected: Bool, found: Int }
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("def"), sym_node("x"),
+                sym_node(":"), sym_node("Bool"), int_node(42),
+            ]),
+            syn_span(),
+        );
+        let err = infer_def(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::Mismatch { ref expected, ref found }
+                if *expected == Type::Bool && *found == Type::Int
+            ),
+            "expected Mismatch(Bool, Int), got {err:?}"
+        );
+    }
+
+    // -- Test 2 (annot) --
+    #[test]
+    fn parse_type_expr_fn_two_params() {
+        // (Fn [Int Str] -> Bool) → Fn { params: [Int, Str], ret: Bool }
+        let node = fn_type_node(vec![type_sym("Int"), type_sym("Str")], type_sym("Bool"));
+        assert_eq!(
+            parse_type_expr(&node).unwrap(),
+            Type::Fn { params: vec![Type::Int, Type::Str], ret: Box::new(Type::Bool) }
+        );
+    }
+
+    // -- Test 3 (annot) --
+    #[test]
+    fn parse_type_expr_fn_no_params() {
+        // (Fn [] -> Int) → Fn { params: [], ret: Int }
+        let node = fn_type_node(vec![], type_sym("Int"));
+        assert_eq!(
+            parse_type_expr(&node).unwrap(),
+            Type::Fn { params: vec![], ret: Box::new(Type::Int) }
+        );
+    }
+
+    // -- Test 4 (annot) --
+    #[test]
+    fn parse_type_expr_unknown_name() {
+        // Symbol("Blorp") → MalformedForm (unknown type name)
+        let err = parse_type_expr(&type_sym("Blorp")).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 1 (annot) --
+    #[test]
+    fn parse_type_expr_primitives() {
+        assert_eq!(parse_type_expr(&type_sym("Int")).unwrap(), Type::Int);
+        assert_eq!(parse_type_expr(&type_sym("Float")).unwrap(), Type::Float);
+        assert_eq!(parse_type_expr(&type_sym("Bool")).unwrap(), Type::Bool);
+        assert_eq!(parse_type_expr(&type_sym("Str")).unwrap(), Type::Str);
+        assert_eq!(parse_type_expr(&type_sym("Char")).unwrap(), Type::Char);
+        assert_eq!(parse_type_expr(&type_sym("Unit")).unwrap(), Type::Unit);
+        assert_eq!(parse_type_expr(&type_sym("Never")).unwrap(), Type::Never);
+        assert_eq!(parse_type_expr(&type_sym("Ratio")).unwrap(), Type::Ratio);
+        assert_eq!(parse_type_expr(&type_sym("Int8")).unwrap(), Type::Int8);
+        assert_eq!(parse_type_expr(&type_sym("Int32")).unwrap(), Type::Int32);
+        assert_eq!(parse_type_expr(&type_sym("U64")).unwrap(), Type::U64);
+        assert_eq!(parse_type_expr(&type_sym("F32")).unwrap(), Type::F32);
+        // Aliases
+        assert_eq!(parse_type_expr(&type_sym("Int64")).unwrap(), Type::Int);
+        assert_eq!(parse_type_expr(&type_sym("F64")).unwrap(), Type::Float);
     }
 
     // -----------------------------------------------------------------------

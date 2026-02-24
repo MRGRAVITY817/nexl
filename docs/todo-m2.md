@@ -41,10 +41,10 @@
 - [x] Literal suffix inference: `42i32` → Int32, `3.14f32` → F32
 
 ### nexl-infer — Type Annotations
-- [ ] Parse `: Type` annotations on `def` bindings
-- [ ] Parse `: Type` annotations on `defn` params and `-> RetType`
-- [ ] Parse `: Type` annotations on `let` bindings
-- [ ] Check annotations: unify annotation with inferred type
+- [x] Parse `: Type` annotations on `def` bindings
+- [x] Parse `: Type` annotations on `defn` params and `-> RetType`
+- [x] Parse `: Type` annotations on `let` bindings
+- [x] Check annotations: unify annotation with inferred type
 
 ### nexl-infer — Error Messages (Principle 6)
 - [ ] "Expected X but got Y" with source span
