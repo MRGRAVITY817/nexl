@@ -51,9 +51,15 @@ impl TypeError {
 
 impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Prefix with byte range when a real (non-synthetic) span is attached.
+        if let Some(span) = self.span
+            && !span.is_synthetic()
+        {
+            write!(f, "[byte {}..{}] ", span.start, span.end())?;
+        }
         match &self.kind {
             TypeErrorKind::Mismatch { expected, found } => {
-                write!(f, "expected {expected}, found {found}")
+                write!(f, "expected {expected} but got {found}")
             }
             TypeErrorKind::InfiniteType { var, ty } => {
                 write!(f, "infinite type: {var} = {ty}", var = Type::Var(*var))
@@ -453,6 +459,7 @@ mod tests {
         });
         let msg = err.to_string();
         assert!(msg.contains("expected"), "missing 'expected' in '{msg}'");
+        assert!(msg.contains("but got"), "missing 'but got' in '{msg}'");
         assert!(msg.contains("Int"), "missing 'Int' in '{msg}'");
         assert!(msg.contains("Float"), "missing 'Float' in '{msg}'");
     }
@@ -475,5 +482,48 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains('2'), "missing '2' in '{msg}'");
         assert!(msg.contains('3'), "missing '3' in '{msg}'");
+    }
+
+    // -- Test 24 (error-messages) --
+    #[test]
+    fn error_display_with_real_span_shows_byte_range() {
+        use nexl_ast::{FileId, Span};
+        let span = Span::new(FileId(0), 5, 3); // bytes 5..8
+        let err = TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Bool,
+            found: Type::Int,
+        })
+        .with_span(span);
+        let msg = err.to_string();
+        assert!(msg.contains("byte"), "expected 'byte' in '{msg}'");
+        assert!(msg.contains('5'), "expected start offset 5 in '{msg}'");
+        assert!(msg.contains('8'), "expected end offset 8 in '{msg}'"); // 5+3=8
+    }
+
+    // -- Test 25 (error-messages) --
+    #[test]
+    fn error_display_without_span_is_clean() {
+        // No span → no "[byte N..M]" prefix; message is the bare kind description.
+        let err = TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Bool,
+            found: Type::Int,
+        });
+        assert!(err.span.is_none());
+        let msg = err.to_string();
+        assert!(!msg.contains("byte"), "unexpected 'byte' in '{msg}'");
+        assert!(!msg.contains('['), "unexpected '[' in '{msg}'");
+    }
+
+    // -- Test 23 (error-messages) --
+    #[test]
+    fn mismatch_display_uses_but_got() {
+        // Principle 6: "expected X but got Y" is more conversational than "expected X, found Y".
+        let err = TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Int,
+            found: Type::Float,
+        });
+        let msg = err.to_string();
+        assert!(msg.contains("but got"), "expected 'but got' in '{msg}'");
+        assert!(!msg.contains(", found"), "old 'found' phrasing still present in '{msg}'");
     }
 }

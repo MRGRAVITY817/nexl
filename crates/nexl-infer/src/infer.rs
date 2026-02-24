@@ -50,11 +50,21 @@ impl Default for InferState {
 /// Returns the synthesized type, or a [`TypeError`] if synthesis fails.
 /// New variable bindings produced by unification are recorded in `state`.
 pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
-    match &node.kind {
+    let result = match &node.kind {
         NodeKind::Atom(atom) => synth_atom(atom, env, state),
         NodeKind::List(items) => synth_list(items, env, state),
         _ => unimplemented!("synth: {:?}", node.kind),
-    }
+    };
+    // Attach this node's span to any error that doesn't already carry one.
+    // The innermost span wins: if an error already has a span from a deeper
+    // call, we don't overwrite it.
+    result.map_err(|e| {
+        if e.span.is_none() && !node.span.is_synthetic() {
+            e.with_span(node.span)
+        } else {
+            e
+        }
+    })
 }
 
 /// Dispatch on the head symbol of a list form.
@@ -718,8 +728,14 @@ pub fn check(
     state: &mut InferState,
 ) -> Result<(), TypeError> {
     let actual = synth(node, env, state)?;
-    // Put `expected` first so Mismatch errors read "expected X, found Y".
-    nexl_types::unify(expected, &actual, &mut state.subst)
+    // Put `expected` first so Mismatch errors read "expected X but got Y".
+    nexl_types::unify(expected, &actual, &mut state.subst).map_err(|e| {
+        if e.span.is_none() && !node.span.is_synthetic() {
+            e.with_span(node.span)
+        } else {
+            e
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -815,7 +831,7 @@ fn parse_def(node: &Node) -> Result<(String, Option<Type>, &Node), TypeError> {
 
 #[cfg(test)]
 mod tests {
-    use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, Span};
+    use nexl_ast::{Atom, FileId, FloatSuffix, IntSuffix, Node, Span};
     use nexl_types::{Scheme, Type, TypeErrorKind};
 
     use nexl_ast::NodeKind;
@@ -2477,5 +2493,66 @@ mod tests {
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Error message / span propagation tests (Principle 6)
+    // -----------------------------------------------------------------------
+
+    // -- Test 6 (span) --
+    #[test]
+    fn synth_inner_span_preserved_over_outer() {
+        // When an error originates inside a nested expression (the condition of an `if`),
+        // the error's span should be the inner node's span, not the outer `if` form's span.
+        let (env, mut state) = empty();
+        let inner_span = Span::new(FileId(0), 4, 1); // "x" at offset 4
+        let outer_span = Span::new(FileId(0), 0, 10); // "(if x 1 0)" at offset 0
+        let cond = Node::new(
+            NodeKind::Atom(Atom::Symbol { ns: None, name: "x".to_string() }),
+            inner_span,
+        );
+        let if_form = Node::new(
+            NodeKind::List(vec![sym_node("if"), cond, int_node(1), int_node(0)]),
+            outer_span,
+        );
+        let err = synth(&if_form, &env, &mut state).unwrap_err();
+        // Error originates at the unbound variable "x" — inner_span must win.
+        assert_eq!(err.span, Some(inner_span), "inner span must be preserved");
+        assert_ne!(err.span, Some(outer_span), "outer span must not overwrite inner");
+    }
+
+    // -- Test 5 (span) --
+    #[test]
+    fn check_attaches_real_span_to_mismatch() {
+        // check() calls synth() then unify(). The unify() mismatch error has no span;
+        // check() should attach the node's span to it.
+        let (env, mut state) = empty();
+        let real_span = Span::new(FileId(0), 5, 2);
+        let node = Node::new(NodeKind::Atom(Atom::Int { value: 42, suffix: None }), real_span);
+        let err = check(&node, &Type::Bool, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
+        assert_eq!(err.span, Some(real_span), "check should attach the node's span");
+    }
+
+    // -- Test 4 (span) --
+    #[test]
+    fn synth_attaches_real_span_to_unbound_var() {
+        // When synth encounters an unbound variable in a node with a real span,
+        // the UnboundVariable error should carry that span.
+        let (env, mut state) = empty();
+        let real_span = Span::new(FileId(0), 10, 3);
+        let node = Node::new(
+            NodeKind::Atom(Atom::Symbol { ns: None, name: "z".to_string() }),
+            real_span,
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "z"),
+            "expected UnboundVariable(z), got {err:?}"
+        );
+        assert_eq!(err.span, Some(real_span), "error should carry the node's span");
     }
 }

@@ -47,7 +47,7 @@
 - [x] Check annotations: unify annotation with inferred type
 
 ### nexl-infer — Error Messages (Principle 6)
-- [ ] "Expected X but got Y" with source span
+- [x] "Expected X but got Y" with source span
 - [ ] "Cannot add Int and Float. Use (->float n) to convert." (ADR-006)
 - [ ] Suggest fixes for common mismatches
 - [ ] Multiple errors collected (don't stop at first)
