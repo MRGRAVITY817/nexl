@@ -9,3 +9,6 @@ description = "Tree-walk evaluator for Nexl (M1)"
 nexl-runtime = { path = "../nexl-runtime" }
 meta = { package = "nexl-ast", path = "../nexl-ast" }
 thiserror = "1.0"
+
+[dev-dependencies]
+nexl-reader = { path = "../nexl-reader" }

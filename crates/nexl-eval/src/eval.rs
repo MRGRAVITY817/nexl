@@ -365,6 +365,19 @@ fn eval_apply<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFram
         EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
     };
 
+    // Dispatch native built-ins before the closure path.
+    if let Value::NativeFunction(native) = &callee {
+        let mut args = Vec::with_capacity(items.len() - 1);
+        for arg_node in &items[1..] {
+            match eval_with_loop(arg_node, env, loop_state)? {
+                EvalReturn::Value(v) => args.push(v),
+                recur @ EvalReturn::Recur(_) => return Ok(recur),
+            }
+        }
+        let result = (native.f)(&args).map_err(EvalError::NativeError)?;
+        return Ok(EvalReturn::Value(result));
+    }
+
     let Value::Function(func) = callee else {
         return Err(EvalError::InvalidCallable);
     };

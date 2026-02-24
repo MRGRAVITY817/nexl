@@ -1,6 +1,25 @@
 use std::rc::Rc;
 use meta::Node;
 
+/// A built-in function implemented natively in Rust.
+///
+/// Uses a raw function pointer (not a trait object) so that `NativeFn`
+/// implements `PartialEq` via pointer equality without heap allocation.
+#[derive(Debug, Clone)]
+pub struct NativeFn {
+    /// Canonical name, used in `Display` and error messages.
+    pub name: &'static str,
+    /// The implementation. Receives the already-evaluated arguments and returns
+    /// a [`Value`] or a runtime error message.
+    pub f: fn(&[Value]) -> Result<Value, String>,
+}
+
+impl PartialEq for NativeFn {
+    fn eq(&self, other: &Self) -> bool {
+        (self.f as usize) == (other.f as usize)
+    }
+}
+
 /// A runtime function closure.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
@@ -54,6 +73,9 @@ pub enum Value {
 
     /// Function value — captures an environment and callable body.
     Function(Rc<Function>),
+
+    /// A built-in (native Rust) function.
+    NativeFunction(Rc<NativeFn>),
 }
 
 impl PartialEq for Value {
@@ -75,6 +97,7 @@ impl PartialEq for Value {
             ) => ans == bns && aname == bname,
             (Value::Ratio(an, ad), Value::Ratio(bn, bd)) => an == bn && ad == bd,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
+            (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
             _ => false,
         }
     }
@@ -92,8 +115,9 @@ impl Value {
             Value::Char(_)    => "Char",
             Value::Keyword { .. } => "Keyword",
             Value::Symbol { .. }  => "Symbol",
-            Value::Ratio(_, _)    => "Ratio",
-            Value::Function(_)    => "Function",
+            Value::Ratio(_, _)        => "Ratio",
+            Value::Function(_)        => "Function",
+            Value::NativeFunction(_)  => "Function",
         }
     }
 }
@@ -148,6 +172,7 @@ impl std::fmt::Display for Value {
                     write!(f, "fn {name}/{}", func.arity)
                 }
             }
+            Value::NativeFunction(native) => write!(f, "fn {}/native", native.name),
         }
     }
 }
@@ -323,7 +348,7 @@ mod tests {
 
     #[test]
     fn function_captures_preserved() {
-        let captured = vec![Value::Int(10), Value::Str(Rc::from("hi"))];
+        let captured = [Value::Int(10), Value::Str(Rc::from("hi"))];
         let func = Value::Function(Rc::new(Function {
             name: Some(Rc::from("adder")),
             params: vec![],

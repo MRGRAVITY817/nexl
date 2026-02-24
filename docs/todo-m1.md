@@ -30,17 +30,17 @@
 - [x] `var` / `set!` — mutable locals within function scope (`let [mut ...]` + `set!`)
 
 ### nexl-runtime — Built-in Functions
-- [ ] Arithmetic: `+`, `-`, `*`, `/`, `mod` (Int-only and Float-only; ADR-006)
-- [ ] Comparison: `=`, `<`, `>`, `<=`, `>=`
-- [ ] Logic: `not`, `and`, `or`
-- [ ] String: `str` (concatenation/coercion), `count`
+- [x] Arithmetic: `+`, `-`, `*`, `/`, `mod` (Int-only and Float-only; ADR-006)
+- [x] Comparison: `=`, `<`, `>`, `<=`, `>=`
+- [x] Logic: `not`, `and`, `or`
+- [x] String: `str` (concatenation/coercion), `count`
 
 ### Test Suite
 - [x] Unit tests for `Env` (bind, lookup, scoping, parent chain)
-- [ ] Unit tests for atom evaluation (each literal type)
-- [ ] Unit tests for each core form
-- [ ] Unit tests for arithmetic/comparison builtins
-- [ ] Integration test: Fibonacci via `loop`/`recur`
+- [x] Unit tests for atom evaluation (each literal type)
+- [x] Unit tests for each core form
+- [x] Unit tests for arithmetic/comparison builtins
+- [x] Integration test: Fibonacci via `loop`/`recur`
 
 ### Minimal REPL (stretch)
 - [ ] `nexl-eval` binary: stdin → reader → eval → print loop

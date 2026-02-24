@@ -6,6 +6,7 @@ use nexl_runtime::Value;
 use thiserror::Error;
 
 pub mod eval;
+pub mod stdlib;
 
 /// Lexical environment: a frame of bindings plus an optional parent link.
 #[derive(Debug)]
@@ -114,6 +115,9 @@ pub enum EvalError {
     /// `recur` used outside of a loop.
     #[error("recur outside loop")]
     InvalidRecur,
+    /// A native built-in function signalled a runtime error.
+    #[error("runtime error: {0}")]
+    NativeError(String),
 }
 
 #[cfg(test)]
@@ -1404,6 +1408,269 @@ mod tests {
         assert_eq!(child.get("p"), Some(int(1)));
         assert_eq!(child.get("c"), Some(int(2)));
         assert_eq!(parent.get("c"), None);
+    }
+
+    // --- stdlib helpers ---
+
+    /// Parse a Nexl snippet and evaluate it in the standard environment.
+    fn eval_str(src: &str) -> Result<Value, EvalError> {
+        use nexl_reader::read;
+        use meta::FileId;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse error");
+        assert_eq!(nodes.len(), 1, "eval_str expects exactly one form");
+        let env = crate::stdlib::standard_env();
+        eval::eval(&nodes[0], &env)
+    }
+
+    // --- arithmetic builtin tests ---
+
+    #[test]
+    fn add_int_basic() {
+        assert_eq!(eval_str("(+ 2 3)").unwrap(), Value::Int(5));
+    }
+
+    #[test]
+    fn add_int_identity_zero_args() {
+        assert_eq!(eval_str("(+)").unwrap(), Value::Int(0));
+    }
+
+    #[test]
+    fn add_int_multi() {
+        assert_eq!(eval_str("(+ 1 2 3)").unwrap(), Value::Int(6));
+    }
+
+    #[test]
+    fn sub_int_binary() {
+        assert_eq!(eval_str("(- 5 3)").unwrap(), Value::Int(2));
+    }
+
+    #[test]
+    fn sub_int_unary_negation() {
+        assert_eq!(eval_str("(- 7)").unwrap(), Value::Int(-7));
+    }
+
+    #[test]
+    fn mul_int_basic() {
+        assert_eq!(eval_str("(* 3 4)").unwrap(), Value::Int(12));
+    }
+
+    #[test]
+    fn mul_int_identity_zero_args() {
+        assert_eq!(eval_str("(*)").unwrap(), Value::Int(1));
+    }
+
+    #[test]
+    fn div_int_exact() {
+        assert_eq!(eval_str("(/ 10 2)").unwrap(), Value::Int(5));
+    }
+
+    #[test]
+    fn div_int_by_zero_error() {
+        assert!(matches!(
+            eval_str("(/ 1 0)").unwrap_err(),
+            EvalError::NativeError(_)
+        ));
+    }
+
+    #[test]
+    fn mod_int() {
+        assert_eq!(eval_str("(mod 10 3)").unwrap(), Value::Int(1));
+    }
+
+    #[test]
+    fn mod_int_by_zero_error() {
+        assert!(matches!(
+            eval_str("(mod 5 0)").unwrap_err(),
+            EvalError::NativeError(_)
+        ));
+    }
+
+    #[test]
+    fn add_float_basic() {
+        assert_eq!(eval_str("(+ 1.5 2.5)").unwrap(), Value::Float(4.0));
+    }
+
+    #[test]
+    fn sub_float() {
+        assert_eq!(eval_str("(- 3.0 1.5)").unwrap(), Value::Float(1.5));
+    }
+
+    #[test]
+    fn mul_float() {
+        assert_eq!(eval_str("(* 2.0 3.0)").unwrap(), Value::Float(6.0));
+    }
+
+    #[test]
+    fn div_float() {
+        assert_eq!(eval_str("(/ 7.0 2.0)").unwrap(), Value::Float(3.5));
+    }
+
+    #[test]
+    fn type_mismatch_int_float_error() {
+        // ADR-006: cross-type arithmetic is a runtime error in M1
+        assert!(matches!(
+            eval_str("(+ 1 2.0)").unwrap_err(),
+            EvalError::NativeError(_)
+        ));
+    }
+
+    // --- comparison builtin tests ---
+
+    #[test]
+    fn eq_int_equal() {
+        assert_eq!(eval_str("(= 1 1)").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn eq_int_unequal() {
+        assert_eq!(eval_str("(= 1 2)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn eq_different_types() {
+        // Int 1 and Float 1.0 are different Value variants — not equal.
+        assert_eq!(eval_str("(= 1 1.0)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn lt_int() {
+        assert_eq!(eval_str("(< 1 2)").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str("(< 2 1)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn gt_int() {
+        assert_eq!(eval_str("(> 3 2)").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn le_int_boundary() {
+        assert_eq!(eval_str("(<= 2 2)").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str("(<= 3 2)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn ge_int_boundary() {
+        assert_eq!(eval_str("(>= 3 3)").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str("(>= 2 3)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn compare_floats() {
+        assert_eq!(eval_str("(< 1.5 2.5)").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str("(> 2.5 1.5)").unwrap(), Value::Bool(true));
+    }
+
+    // --- logic builtin tests ---
+
+    #[test]
+    fn not_true() {
+        assert_eq!(eval_str("(not true)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn not_false() {
+        assert_eq!(eval_str("(not false)").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn not_non_bool_error() {
+        assert!(matches!(
+            eval_str("(not 1)").unwrap_err(),
+            EvalError::NativeError(_)
+        ));
+    }
+
+    #[test]
+    fn and_all_true() {
+        assert_eq!(eval_str("(and true true)").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn and_one_false() {
+        assert_eq!(eval_str("(and true false)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn or_one_true() {
+        assert_eq!(eval_str("(or false true)").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn or_all_false() {
+        assert_eq!(eval_str("(or false false)").unwrap(), Value::Bool(false));
+    }
+
+    // --- string builtin tests ---
+
+    #[test]
+    fn str_concat() {
+        assert_eq!(
+            eval_str(r#"(str "hello" " " "world")"#).unwrap(),
+            Value::Str(Rc::from("hello world"))
+        );
+    }
+
+    #[test]
+    fn str_coerce_int() {
+        assert_eq!(eval_str("(str 42)").unwrap(), Value::Str(Rc::from("42")));
+    }
+
+    #[test]
+    fn str_empty() {
+        assert_eq!(eval_str("(str)").unwrap(), Value::Str(Rc::from("")));
+    }
+
+    #[test]
+    fn count_str_ascii() {
+        assert_eq!(eval_str(r#"(count "hello")"#).unwrap(), Value::Int(5));
+    }
+
+    #[test]
+    fn count_str_unicode() {
+        // "café" has 4 Unicode scalar values (spec §3.1)
+        assert_eq!(eval_str(r#"(count "café")"#).unwrap(), Value::Int(4));
+    }
+
+    // --- integration test ---
+
+    #[test]
+    fn integration_fibonacci_10() {
+        // Example from milestones.md:
+        //   (defn fibonacci [n]
+        //     (loop [i n, a 0, b 1]
+        //       (if (= i 0) a (recur (- i 1) b (+ a b)))))
+        //   (fibonacci 10)  ;; => 55
+        let src = r#"
+            (do
+              (defn fibonacci [n]
+                (loop [i n a 0 b 1]
+                  (if (= i 0) a (recur (- i 1) b (+ a b)))))
+              (fibonacci 10))
+        "#;
+        assert_eq!(eval_str(src).unwrap(), Value::Int(55));
+    }
+
+    // --- native function tests ---
+
+    #[test]
+    fn native_fn_value_is_callable() {
+        // A NativeFunction bound in the env can be called like any function.
+        let env = Rc::new(Env::new());
+        env.define("inc", Value::NativeFunction(Rc::new(nexl_runtime::NativeFn {
+            name: "inc",
+            f: |args| match args {
+                [Value::Int(n)] => Ok(Value::Int(n + 1)),
+                _ => Err("expected 1 Int".into()),
+            },
+        })));
+
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "inc".into() }),
+            lit(Atom::Int { value: 5, suffix: None }),
+        ]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(6));
     }
 
     // --- set! / let [mut ...] tests ---
