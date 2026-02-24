@@ -118,7 +118,37 @@ pub struct Scheme {
     pub body: Type,
 }
 
+impl Type {
+    /// Collect all type variables that appear free in this type.
+    pub fn free_vars(&self) -> HashSet<TypeVar> {
+        let mut result = HashSet::new();
+        self.collect_free_vars(&mut result);
+        result
+    }
+
+    fn collect_free_vars(&self, result: &mut HashSet<TypeVar>) {
+        match self {
+            Type::Var(tv) => { result.insert(*tv); }
+            Type::Fn { params, ret } => {
+                for p in params { p.collect_free_vars(result); }
+                ret.collect_free_vars(result);
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Scheme {
+    /// Collect all type variables that appear free in this scheme
+    /// (i.e., free in the body but not universally quantified).
+    pub fn free_vars(&self) -> HashSet<TypeVar> {
+        let mut vars = self.body.free_vars();
+        for tv in &self.forall {
+            vars.remove(tv);
+        }
+        vars
+    }
+
     /// Create a monomorphic scheme (no quantified variables).
     pub fn mono(ty: Type) -> Self {
         Self {
@@ -384,6 +414,54 @@ mod tests {
             ret: Box::new(Type::Var(TypeVar(1))),
         };
         assert_eq!(instantiated, expected);
+    }
+
+    // -- Test 22 --
+    #[test]
+    fn type_free_vars_primitive_is_empty() {
+        assert!(Type::Int.free_vars().is_empty());
+        assert!(Type::Bool.free_vars().is_empty());
+        assert!(Type::Never.free_vars().is_empty());
+    }
+
+    // -- Test 23 --
+    #[test]
+    fn type_free_vars_var_is_singleton() {
+        let vars = Type::Var(TypeVar(0)).free_vars();
+        assert_eq!(vars.len(), 1);
+        assert!(vars.contains(&TypeVar(0)));
+    }
+
+    // -- Test 24 --
+    #[test]
+    fn type_free_vars_fn_collects_all() {
+        // (Fn [t0] -> t1) has free vars {t0, t1}
+        let ty = Type::Fn {
+            params: vec![Type::Var(TypeVar(0))],
+            ret: Box::new(Type::Var(TypeVar(1))),
+        };
+        let vars = ty.free_vars();
+        assert_eq!(vars.len(), 2);
+        assert!(vars.contains(&TypeVar(0)));
+        assert!(vars.contains(&TypeVar(1)));
+    }
+
+    // -- Test 25 --
+    #[test]
+    fn scheme_free_vars_excludes_quantified() {
+        // ∀t0. (Fn [t0] -> t1) — t0 is quantified, t1 is free
+        let t0 = TypeVar(0);
+        let t1 = TypeVar(1);
+        let scheme = Scheme {
+            forall: [t0].into_iter().collect(),
+            body: Type::Fn {
+                params: vec![Type::Var(t0)],
+                ret: Box::new(Type::Var(t1)),
+            },
+        };
+        let free = scheme.free_vars();
+        assert!(!free.contains(&t0), "t0 is quantified, not free");
+        assert!(free.contains(&t1), "t1 is free");
     }
 
     // -- Test 21 --

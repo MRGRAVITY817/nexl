@@ -380,9 +380,11 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
             }
         };
 
-        // Synthesize the binding expression in the current env.
+        // Synthesize the binding expression in the current env, then
+        // generalize: quantify type variables not constrained by the outer env.
         let ty = synth(expr_node, &current_env, state)?;
-        current_env = current_env.extend(name, Scheme::mono(ty));
+        let scheme = generalize(&ty, &current_env, state);
+        current_env = current_env.extend(name, scheme);
     }
 
     // Synthesize the body in the fully-extended env.
@@ -496,6 +498,28 @@ pub fn infer_defn(
 
     let new_env = env.extend(name.clone(), Scheme::mono(fn_ty.clone()));
     Ok((name, fn_ty, new_env))
+}
+
+// ---------------------------------------------------------------------------
+// Generalization
+// ---------------------------------------------------------------------------
+
+/// Generalize `ty` relative to the outer environment `env`.
+///
+/// Applies `subst` to `ty`, then computes the set of type variables that are
+/// free in the resolved type but NOT free in the outer environment.  These
+/// "unconstrained" variables are universally quantified, producing a
+/// polymorphic [`Scheme`].
+///
+/// Variables that are free in the environment are NOT generalized because
+/// they are constrained by an outer context and must remain monomorphic.
+fn generalize(ty: &Type, env: &Env, state: &InferState) -> Scheme {
+    let ty = state.subst.apply(ty);
+    let ty_free = ty.free_vars();
+    let env_free = env.free_vars(&state.subst);
+    let forall: std::collections::HashSet<_> =
+        ty_free.difference(&env_free).copied().collect();
+    Scheme { forall, body: ty }
 }
 
 // ---------------------------------------------------------------------------
@@ -1559,6 +1583,99 @@ mod tests {
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // let-generalization tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (let-gen) --
+    #[test]
+    fn let_gen_identity_at_int() {
+        // (let [id (fn [x] x)] (id 42)) → Int
+        let (env, mut state) = empty();
+        let node = let_node(
+            vec![(sym_node("id"), fn_node(vec!["x"], sym_node("x")))],
+            app_node(sym_node("id"), vec![int_node(42)]),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 2 (let-gen) --
+    #[test]
+    fn let_gen_identity_at_bool() {
+        // (let [id (fn [x] x)] (id true)) → Bool
+        let (env, mut state) = empty();
+        let node = let_node(
+            vec![(sym_node("id"), fn_node(vec!["x"], sym_node("x")))],
+            app_node(sym_node("id"), vec![atom_node(Atom::Bool(true))]),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Bool);
+    }
+
+    // -- Test 3 (let-gen) — the distinguishing test --
+    #[test]
+    fn let_gen_identity_used_twice_different_types() {
+        // (let [id (fn [x] x)] (if (id true) (id 42) 0)) → Int
+        //
+        // Without generalization, (id true) binds t0→Bool, then (id 42)
+        // tries t0→Int and gets a Mismatch.  With generalization, id gets
+        // scheme ∀a. (Fn [a] -> a) and each call instantiates a fresh var.
+        let (env, mut state) = empty();
+        let id_fn = fn_node(vec!["x"], sym_node("x"));
+        let body = if_node(
+            app_node(sym_node("id"), vec![atom_node(Atom::Bool(true))]),
+            app_node(sym_node("id"), vec![int_node(42)]),
+            int_node(0),
+        );
+        let node = let_node(vec![(sym_node("id"), id_fn)], body);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 4 (let-gen) --
+    #[test]
+    fn let_gen_two_independent_poly_bindings() {
+        // (let [f (fn [x] x) g (fn [y] y)] (if (f true) (g 42) 0)) → Int
+        // Both f and g are independently generalized; each can be used
+        // at different types without conflict.
+        let (env, mut state) = empty();
+        let node = let_node(
+            vec![
+                (sym_node("f"), fn_node(vec!["x"], sym_node("x"))),
+                (sym_node("g"), fn_node(vec!["y"], sym_node("y"))),
+            ],
+            if_node(
+                app_node(sym_node("f"), vec![atom_node(Atom::Bool(true))]),
+                app_node(sym_node("g"), vec![int_node(42)]),
+                int_node(0),
+            ),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 5 (let-gen) --
+    #[test]
+    fn let_gen_sequential_poly_then_apply() {
+        // (let [id (fn [x] x) y (id 42)] y) → Int
+        // Second binding uses the generalized first binding.
+        let (env, mut state) = empty();
+        let node = let_node(
+            vec![
+                (sym_node("id"), fn_node(vec!["x"], sym_node("x"))),
+                (sym_node("y"), app_node(sym_node("id"), vec![int_node(42)])),
+            ],
+            sym_node("y"),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 6 (let-gen) --
+    #[test]
+    fn let_gen_mono_literal_unchanged() {
+        // (let [n 42] n) → Int — monomorphic literal, no free vars to generalize.
+        let (env, mut state) = empty();
+        let node = let_node(vec![(sym_node("n"), int_node(42))], sym_node("n"));
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
     }
 
     // -----------------------------------------------------------------------
