@@ -1,5 +1,5 @@
-use std::rc::Rc;
 use meta::Node;
+use std::rc::Rc;
 
 /// A built-in function implemented natively in Rust.
 ///
@@ -59,15 +59,9 @@ pub enum Value {
     /// Unicode scalar value.
     Char(char),
     /// Keyword, e.g. `:foo` or `:bar/baz`.
-    Keyword {
-        ns: Option<Rc<str>>,
-        name: Rc<str>,
-    },
+    Keyword { ns: Option<Rc<str>>, name: Rc<str> },
     /// Symbol (an identifier), e.g. `add` or `math/sqrt`.
-    Symbol {
-        ns: Option<Rc<str>>,
-        name: Rc<str>,
-    },
+    Symbol { ns: Option<Rc<str>>, name: Rc<str> },
     /// Exact rational number, stored in lowest terms.
     Ratio(i64, i64),
 
@@ -88,12 +82,24 @@ impl PartialEq for Value {
             (Value::Unit, Value::Unit) => true,
             (Value::Char(a), Value::Char(b)) => a == b,
             (
-                Value::Keyword { ns: ans, name: aname },
-                Value::Keyword { ns: bns, name: bname },
+                Value::Keyword {
+                    ns: ans,
+                    name: aname,
+                },
+                Value::Keyword {
+                    ns: bns,
+                    name: bname,
+                },
             ) => ans == bns && aname == bname,
             (
-                Value::Symbol { ns: ans, name: aname },
-                Value::Symbol { ns: bns, name: bname },
+                Value::Symbol {
+                    ns: ans,
+                    name: aname,
+                },
+                Value::Symbol {
+                    ns: bns,
+                    name: bname,
+                },
             ) => ans == bns && aname == bname,
             (Value::Ratio(an, ad), Value::Ratio(bn, bd)) => an == bn && ad == bd,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
@@ -107,17 +113,17 @@ impl Value {
     /// Return the name of this value's type, used in error messages.
     pub fn type_name(&self) -> &'static str {
         match self {
-            Value::Int(_)     => "Int",
-            Value::Float(_)   => "Float",
-            Value::Bool(_)    => "Bool",
-            Value::Str(_)     => "Str",
-            Value::Unit       => "Unit",
-            Value::Char(_)    => "Char",
+            Value::Int(_) => "Int",
+            Value::Float(_) => "Float",
+            Value::Bool(_) => "Bool",
+            Value::Str(_) => "Str",
+            Value::Unit => "Unit",
+            Value::Char(_) => "Char",
             Value::Keyword { .. } => "Keyword",
-            Value::Symbol { .. }  => "Symbol",
-            Value::Ratio(_, _)        => "Ratio",
-            Value::Function(_)        => "Function",
-            Value::NativeFunction(_)  => "Function",
+            Value::Symbol { .. } => "Symbol",
+            Value::Ratio(_, _) => "Ratio",
+            Value::Function(_) => "Function",
+            Value::NativeFunction(_) => "Function",
         }
     }
 }
@@ -128,7 +134,11 @@ impl std::fmt::Display for Value {
             Value::Int(n) => write!(f, "{n}"),
             Value::Float(n) => {
                 if n.is_infinite() {
-                    if *n > 0.0 { write!(f, "Infinity") } else { write!(f, "-Infinity") }
+                    if *n > 0.0 {
+                        write!(f, "Infinity")
+                    } else {
+                        write!(f, "-Infinity")
+                    }
                 } else if n.is_nan() {
                     write!(f, "NaN")
                 } else {
@@ -143,9 +153,9 @@ impl std::fmt::Display for Value {
                     '\n' => Some("newline"),
                     '\t' => Some("tab"),
                     '\r' => Some("return"),
-                    ' '  => Some("space"),
+                    ' ' => Some("space"),
                     '\0' => Some("null"),
-                    _    => None,
+                    _ => None,
                 };
                 if let Some(name) = named {
                     write!(f, r"\{name}")
@@ -273,11 +283,19 @@ mod tests {
         assert_eq!(Value::Unit.type_name(), "Unit");
         assert_eq!(Value::Char('a').type_name(), "Char");
         assert_eq!(
-            Value::Keyword { ns: None, name: Rc::from("k") }.type_name(),
+            Value::Keyword {
+                ns: None,
+                name: Rc::from("k")
+            }
+            .type_name(),
             "Keyword"
         );
         assert_eq!(
-            Value::Symbol { ns: None, name: Rc::from("s") }.type_name(),
+            Value::Symbol {
+                ns: None,
+                name: Rc::from("s")
+            }
+            .type_name(),
             "Symbol"
         );
         assert_eq!(Value::Ratio(1, 2).type_name(), "Ratio");
@@ -290,25 +308,37 @@ mod tests {
 
     #[test]
     fn value_keyword_bare() {
-        let v = Value::Keyword { ns: None, name: Rc::from("foo") };
+        let v = Value::Keyword {
+            ns: None,
+            name: Rc::from("foo"),
+        };
         assert_eq!(v.to_string(), ":foo");
     }
 
     #[test]
     fn value_keyword_namespaced() {
-        let v = Value::Keyword { ns: Some(Rc::from("bar")), name: Rc::from("baz") };
+        let v = Value::Keyword {
+            ns: Some(Rc::from("bar")),
+            name: Rc::from("baz"),
+        };
         assert_eq!(v.to_string(), ":bar/baz");
     }
 
     #[test]
     fn value_symbol_bare() {
-        let v = Value::Symbol { ns: None, name: Rc::from("add") };
+        let v = Value::Symbol {
+            ns: None,
+            name: Rc::from("add"),
+        };
         assert_eq!(v.to_string(), "add");
     }
 
     #[test]
     fn value_symbol_qualified() {
-        let v = Value::Symbol { ns: Some(Rc::from("math")), name: Rc::from("sqrt") };
+        let v = Value::Symbol {
+            ns: Some(Rc::from("math")),
+            name: Rc::from("sqrt"),
+        };
         assert_eq!(v.to_string(), "math/sqrt");
     }
 
@@ -363,7 +393,9 @@ mod tests {
             body: vec![Node::atom(meta::Atom::Unit, meta::span::Span::synthetic())],
         }));
 
-        let Value::Function(rc_func) = func else { panic!("not a function") };
+        let Value::Function(rc_func) = func else {
+            panic!("not a function")
+        };
         assert_eq!(rc_func.captures.len(), captured.len());
     }
 

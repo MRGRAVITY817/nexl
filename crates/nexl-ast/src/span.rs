@@ -29,7 +29,11 @@ pub struct Span {
 impl Span {
     /// Create a new span from a file, start offset, and length.
     pub fn new(file_id: FileId, start: u32, len: u32) -> Self {
-        Self { file_id, start, len }
+        Self {
+            file_id,
+            start,
+            len,
+        }
     }
 
     /// Create a span covering a byte range `start..end` (exclusive end).
@@ -118,7 +122,7 @@ mod tests {
     #[test]
     fn span_merge_covers_both() {
         let id = FileId(0);
-        let a = Span::new(id, 5, 3);  // bytes 5..8
+        let a = Span::new(id, 5, 3); // bytes 5..8
         let b = Span::new(id, 10, 4); // bytes 10..14
         let m = a.merge(b);
         assert_eq!(m.start, 5);
@@ -129,8 +133,8 @@ mod tests {
     #[test]
     fn span_merge_overlapping() {
         let id = FileId(0);
-        let a = Span::new(id, 2, 8);  // bytes 2..10
-        let b = Span::new(id, 6, 6);  // bytes 6..12
+        let a = Span::new(id, 2, 8); // bytes 2..10
+        let b = Span::new(id, 6, 6); // bytes 6..12
         let m = a.merge(b);
         assert_eq!(m.start, 2);
         assert_eq!(m.end(), 12);

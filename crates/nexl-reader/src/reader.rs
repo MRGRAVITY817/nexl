@@ -1,5 +1,5 @@
 use nexl_ast::{Atom, Comment, FileId, Node, NodeKind, Span};
-use nexl_errors::{codes, Diagnostic, Label, Severity};
+use nexl_errors::{Diagnostic, Label, Severity, codes};
 
 use crate::lexer::{Lexer, StringPart, Token, TokenKind};
 
@@ -14,7 +14,11 @@ use crate::lexer::{Lexer, StringPart, Token, TokenKind};
 /// as `leading_comments` / `trailing_comment` for round-trip formatting.
 pub fn read(src: &str, file_id: FileId) -> Result<Vec<Node>, Box<Diagnostic>> {
     let tokens = Lexer::new(src, file_id).tokenize()?;
-    let mut reader = Reader { tokens, pos: 0, src };
+    let mut reader = Reader {
+        tokens,
+        pos: 0,
+        src,
+    };
     reader.read_all()
 }
 
@@ -55,9 +59,7 @@ impl<'src> Reader<'src> {
     /// Dispatch on `tok` to build the appropriate AST node.
     fn dispatch(&mut self, tok: Token) -> Result<Node, Box<Diagnostic>> {
         match tok.kind.clone() {
-            TokenKind::Int(value, suffix) => {
-                Ok(Node::atom(Atom::Int { value, suffix }, tok.span))
-            }
+            TokenKind::Int(value, suffix) => Ok(Node::atom(Atom::Int { value, suffix }, tok.span)),
             TokenKind::Float(value, suffix) => {
                 Ok(Node::atom(Atom::Float { value, suffix }, tok.span))
             }
@@ -68,15 +70,11 @@ impl<'src> Reader<'src> {
             TokenKind::Bool(b) => Ok(Node::atom(Atom::Bool(b), tok.span)),
             TokenKind::Unit => Ok(Node::atom(Atom::Unit, tok.span)),
             TokenKind::Char(c) => Ok(Node::atom(Atom::Char(c), tok.span)),
-            TokenKind::Str(parts) => {
-                Ok(Node::atom(Atom::Str(reassemble_str(&parts)), tok.span))
-            }
+            TokenKind::Str(parts) => Ok(Node::atom(Atom::Str(reassemble_str(&parts)), tok.span)),
             TokenKind::Keyword { ns, name, .. } => {
                 Ok(Node::atom(Atom::Keyword { ns, name }, tok.span))
             }
-            TokenKind::Symbol { ns, name } => {
-                Ok(Node::atom(Atom::Symbol { ns, name }, tok.span))
-            }
+            TokenKind::Symbol { ns, name } => Ok(Node::atom(Atom::Symbol { ns, name }, tok.span)),
             TokenKind::LParen => self.read_list(tok.span),
             TokenKind::LBracket => self.read_vector(tok.span),
             TokenKind::LBrace => self.read_map(tok.span),
@@ -104,10 +102,34 @@ impl<'src> Reader<'src> {
             }
             // Operator/separator tokens — treated as symbol atoms so they can
             // appear as elements inside collections (e.g. `[x : Int]`, `| Red`).
-            TokenKind::Dot => Ok(Node::atom(Atom::Symbol { ns: None, name: ".".into() }, tok.span)),
-            TokenKind::Pipe => Ok(Node::atom(Atom::Symbol { ns: None, name: "|".into() }, tok.span)),
-            TokenKind::Amp => Ok(Node::atom(Atom::Symbol { ns: None, name: "&".into() }, tok.span)),
-            TokenKind::Colon => Ok(Node::atom(Atom::Symbol { ns: None, name: ":".into() }, tok.span)),
+            TokenKind::Dot => Ok(Node::atom(
+                Atom::Symbol {
+                    ns: None,
+                    name: ".".into(),
+                },
+                tok.span,
+            )),
+            TokenKind::Pipe => Ok(Node::atom(
+                Atom::Symbol {
+                    ns: None,
+                    name: "|".into(),
+                },
+                tok.span,
+            )),
+            TokenKind::Amp => Ok(Node::atom(
+                Atom::Symbol {
+                    ns: None,
+                    name: "&".into(),
+                },
+                tok.span,
+            )),
+            TokenKind::Colon => Ok(Node::atom(
+                Atom::Symbol {
+                    ns: None,
+                    name: ":".into(),
+                },
+                tok.span,
+            )),
             // Quasiquote / unquote / unquote-splice reader macros.
             TokenKind::Quasiquote => {
                 let inner = self.require_form("`", tok.span)?;
@@ -135,7 +157,10 @@ impl<'src> Reader<'src> {
                 Some(t) if matches!(t.kind, TokenKind::RParen) => {
                     self.skip_comments();
                     let close = self.advance().unwrap();
-                    return Ok(Node::new(NodeKind::List(items), open_span.merge(close.span)));
+                    return Ok(Node::new(
+                        NodeKind::List(items),
+                        open_span.merge(close.span),
+                    ));
                 }
                 Some(t) if is_close(&t) => return Err(self.unmatched_delimiter(&t)),
                 _ => self.read_forms_into(&mut items)?,
@@ -151,7 +176,10 @@ impl<'src> Reader<'src> {
                 Some(t) if matches!(t.kind, TokenKind::RBracket) => {
                     self.skip_comments();
                     let close = self.advance().unwrap();
-                    return Ok(Node::new(NodeKind::Vector(items), open_span.merge(close.span)));
+                    return Ok(Node::new(
+                        NodeKind::Vector(items),
+                        open_span.merge(close.span),
+                    ));
                 }
                 Some(t) if is_close(&t) => return Err(self.unmatched_delimiter(&t)),
                 _ => self.read_forms_into(&mut items)?,
@@ -235,7 +263,9 @@ impl<'src> Reader<'src> {
 
         // Step 2: build nodes.
         if discard_spans.is_empty() {
-            let tok = self.advance().expect("called after verifying peek_no_comment is Some");
+            let tok = self
+                .advance()
+                .expect("called after verifying peek_no_comment is Some");
             let mut form = self.dispatch(tok)?;
             form.leading_comments = leading;
             form.trailing_comment = self.try_trailing(form.span.end());
@@ -292,10 +322,15 @@ impl<'src> Reader<'src> {
                     format!("expected a form after `{prefix}`, found end of file"),
                 );
                 d.code = Some(codes::UNCLOSED_DELIMITER);
-                d.push_label(Label::new(prefix_span, format!("this `{prefix}` expects a following form")));
+                d.push_label(Label::new(
+                    prefix_span,
+                    format!("this `{prefix}` expects a following form"),
+                ));
                 let help = match prefix {
                     "'" => "add the quoted form, e.g. `'x`, or remove the `'`".to_string(),
-                    "@" => "add the form to dereference, e.g. `@value`, or remove the `@`".to_string(),
+                    "@" => {
+                        "add the form to dereference, e.g. `@value`, or remove the `@`".to_string()
+                    }
                     _ => format!("add a form after `{prefix}`, or remove the `{prefix}`"),
                 };
                 d.set_help(help);
@@ -347,7 +382,9 @@ impl<'src> Reader<'src> {
     /// `after_byte`, consume it and return it as a trailing [`Comment`].
     fn try_trailing(&mut self, after_byte: u32) -> Option<Comment> {
         let tok = self.tokens.get(self.pos)?;
-        let TokenKind::Comment(text) = &tok.kind else { return None };
+        let TokenKind::Comment(text) = &tok.kind else {
+            return None;
+        };
         let start = tok.span.start as usize;
         let end = after_byte as usize;
         // Guard: comment must start after `after_byte` (it always should).
@@ -396,7 +433,9 @@ impl<'src> Reader<'src> {
         );
         d.code = Some(codes::UNMATCHED_DELIMITER);
         d.push_label(Label::new(tok.span, "unmatched closing delimiter"));
-        d.set_help(format!("remove this `{delim}` or add a matching opening `{opener}` earlier"));
+        d.set_help(format!(
+            "remove this `{delim}` or add a matching opening `{opener}` earlier"
+        ));
         Box::new(d)
     }
 
@@ -443,7 +482,10 @@ impl<'src> Reader<'src> {
 
 /// `true` if the token is a closing delimiter (`)`/`]`/`}`).
 fn is_close(tok: &Token) -> bool {
-    matches!(tok.kind, TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace)
+    matches!(
+        tok.kind,
+        TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace
+    )
 }
 
 /// Reduce `numer/denom` to lowest terms.
@@ -451,7 +493,11 @@ fn is_close(tok: &Token) -> bool {
 /// The lexer guarantees `denom != 0`.
 fn reduce_ratio(numer: i64, denom: i64) -> (i64, i64) {
     let g = gcd(numer.abs(), denom.abs());
-    if g == 0 { (numer, denom) } else { (numer / g, denom / g) }
+    if g == 0 {
+        (numer, denom)
+    } else {
+        (numer / g, denom / g)
+    }
 }
 
 fn gcd(a: i64, b: i64) -> i64 {
@@ -500,7 +546,13 @@ mod tests {
     fn parse_integer_atom() {
         let nodes = read("42", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Int { value: 42, suffix: None }));
+        assert_eq!(
+            nodes[0].kind,
+            NodeKind::Atom(Atom::Int {
+                value: 42,
+                suffix: None
+            })
+        );
     }
 
     // ── 2. parse_symbol_atom ──────────────────────────────────────────────
@@ -510,7 +562,10 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(
             nodes[0].kind,
-            NodeKind::Atom(Atom::Symbol { ns: None, name: "foo".into() })
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "foo".into()
+            })
         );
     }
 
@@ -538,7 +593,10 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(
             nodes[0].kind,
-            NodeKind::Atom(Atom::Keyword { ns: Some("http".into()), name: "ok".into() })
+            NodeKind::Atom(Atom::Keyword {
+                ns: Some("http".into()),
+                name: "ok".into()
+            })
         );
     }
 
@@ -563,11 +621,31 @@ mod tests {
     fn parse_non_empty_list() {
         let nodes = read("(+ 1 2)", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::List(items) = &nodes[0].kind else { panic!("expected List") };
+        let NodeKind::List(items) = &nodes[0].kind else {
+            panic!("expected List")
+        };
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "+".into() }));
-        assert_eq!(items[1].kind, NodeKind::Atom(Atom::Int { value: 1, suffix: None }));
-        assert_eq!(items[2].kind, NodeKind::Atom(Atom::Int { value: 2, suffix: None }));
+        assert_eq!(
+            items[0].kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "+".into()
+            })
+        );
+        assert_eq!(
+            items[1].kind,
+            NodeKind::Atom(Atom::Int {
+                value: 1,
+                suffix: None
+            })
+        );
+        assert_eq!(
+            items[2].kind,
+            NodeKind::Atom(Atom::Int {
+                value: 2,
+                suffix: None
+            })
+        );
     }
 
     // ── 9. parse_nested_list ──────────────────────────────────────────────
@@ -575,7 +653,9 @@ mod tests {
     fn parse_nested_list() {
         let nodes = read("((a b) c)", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::List(outer) = &nodes[0].kind else { panic!("expected List") };
+        let NodeKind::List(outer) = &nodes[0].kind else {
+            panic!("expected List")
+        };
         assert_eq!(outer.len(), 2);
         assert!(matches!(outer[0].kind, NodeKind::List(_)));
         assert!(matches!(outer[1].kind, NodeKind::Atom(Atom::Symbol { .. })));
@@ -594,7 +674,9 @@ mod tests {
     fn parse_non_empty_vector() {
         let nodes = read("[1 2 3]", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Vector(items) = &nodes[0].kind else { panic!("expected Vector") };
+        let NodeKind::Vector(items) = &nodes[0].kind else {
+            panic!("expected Vector")
+        };
         assert_eq!(items.len(), 3);
     }
 
@@ -611,10 +693,24 @@ mod tests {
     fn parse_non_empty_map() {
         let nodes = read("{:a 1 :b 2}", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Map(pairs) = &nodes[0].kind else { panic!("expected Map") };
+        let NodeKind::Map(pairs) = &nodes[0].kind else {
+            panic!("expected Map")
+        };
         assert_eq!(pairs.len(), 2);
-        assert_eq!(pairs[0].0.kind, NodeKind::Atom(Atom::Keyword { ns: None, name: "a".into() }));
-        assert_eq!(pairs[0].1.kind, NodeKind::Atom(Atom::Int { value: 1, suffix: None }));
+        assert_eq!(
+            pairs[0].0.kind,
+            NodeKind::Atom(Atom::Keyword {
+                ns: None,
+                name: "a".into()
+            })
+        );
+        assert_eq!(
+            pairs[0].1.kind,
+            NodeKind::Atom(Atom::Int {
+                value: 1,
+                suffix: None
+            })
+        );
     }
 
     // ── 14. parse_set ─────────────────────────────────────────────────────
@@ -622,7 +718,9 @@ mod tests {
     fn parse_set() {
         let nodes = read("#{1 2 3}", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Set(items) = &nodes[0].kind else { panic!("expected Set") };
+        let NodeKind::Set(items) = &nodes[0].kind else {
+            panic!("expected Set")
+        };
         assert_eq!(items.len(), 3);
     }
 
@@ -631,8 +729,16 @@ mod tests {
     fn parse_quote_macro() {
         let nodes = read("'x", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Quote(inner) = &nodes[0].kind else { panic!("expected Quote") };
-        assert_eq!(inner.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "x".into() }));
+        let NodeKind::Quote(inner) = &nodes[0].kind else {
+            panic!("expected Quote")
+        };
+        assert_eq!(
+            inner.kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "x".into()
+            })
+        );
     }
 
     // ── 16. parse_deref_macro ─────────────────────────────────────────────
@@ -640,8 +746,16 @@ mod tests {
     fn parse_deref_macro() {
         let nodes = read("@x", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Deref(inner) = &nodes[0].kind else { panic!("expected Deref") };
-        assert_eq!(inner.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "x".into() }));
+        let NodeKind::Deref(inner) = &nodes[0].kind else {
+            panic!("expected Deref")
+        };
+        assert_eq!(
+            inner.kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "x".into()
+            })
+        );
     }
 
     // ── 17. parse_discard_macro ───────────────────────────────────────────
@@ -650,8 +764,16 @@ mod tests {
     fn parse_discard_macro() {
         let nodes = read("#_ 42 \"hi\"", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 2);
-        let NodeKind::Discard(inner) = &nodes[0].kind else { panic!("expected Discard") };
-        assert_eq!(inner.kind, NodeKind::Atom(Atom::Int { value: 42, suffix: None }));
+        let NodeKind::Discard(inner) = &nodes[0].kind else {
+            panic!("expected Discard")
+        };
+        assert_eq!(
+            inner.kind,
+            NodeKind::Atom(Atom::Int {
+                value: 42,
+                suffix: None
+            })
+        );
         assert_eq!(nodes[1].kind, NodeKind::Atom(Atom::Str("hi".into())));
     }
 
@@ -661,7 +783,10 @@ mod tests {
         let nodes = read("42 :key \"str\"", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 3);
         assert!(matches!(nodes[0].kind, NodeKind::Atom(Atom::Int { .. })));
-        assert!(matches!(nodes[1].kind, NodeKind::Atom(Atom::Keyword { .. })));
+        assert!(matches!(
+            nodes[1].kind,
+            NodeKind::Atom(Atom::Keyword { .. })
+        ));
         assert!(matches!(nodes[2].kind, NodeKind::Atom(Atom::Str(_))));
     }
 
@@ -735,7 +860,10 @@ mod tests {
         let nodes = read("42i32", fid()).expect("parse failed");
         assert_eq!(
             nodes[0].kind,
-            NodeKind::Atom(Atom::Int { value: 42, suffix: Some(IntSuffix::I32) })
+            NodeKind::Atom(Atom::Int {
+                value: 42,
+                suffix: Some(IntSuffix::I32)
+            })
         );
     }
 
@@ -743,14 +871,20 @@ mod tests {
     #[test]
     fn parse_ratio_reduced() {
         let nodes = read("6/4", fid()).expect("parse failed");
-        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Ratio { numer: 3, denom: 2 }));
+        assert_eq!(
+            nodes[0].kind,
+            NodeKind::Atom(Atom::Ratio { numer: 3, denom: 2 })
+        );
     }
 
     // ── Extra: string interpolation preserved ─────────────────────────────
     #[test]
     fn parse_string_with_interp() {
         let nodes = read("\"hello {name}!\"", fid()).expect("parse failed");
-        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Str("hello {name}!".into())));
+        assert_eq!(
+            nodes[0].kind,
+            NodeKind::Atom(Atom::Str("hello {name}!".into()))
+        );
     }
 
     // ── Discard nesting ───────────────────────────────────────────────────
@@ -763,10 +897,26 @@ mod tests {
         assert_eq!(nodes.len(), 2);
         assert!(matches!(nodes[0].kind, NodeKind::Discard(_)));
         assert!(matches!(nodes[1].kind, NodeKind::Discard(_)));
-        let NodeKind::Discard(inner0) = &nodes[0].kind else { panic!() };
-        let NodeKind::Discard(inner1) = &nodes[1].kind else { panic!() };
-        assert_eq!(inner0.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "a".into() }));
-        assert_eq!(inner1.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "b".into() }));
+        let NodeKind::Discard(inner0) = &nodes[0].kind else {
+            panic!()
+        };
+        let NodeKind::Discard(inner1) = &nodes[1].kind else {
+            panic!()
+        };
+        assert_eq!(
+            inner0.kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "a".into()
+            })
+        );
+        assert_eq!(
+            inner1.kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "b".into()
+            })
+        );
     }
 
     // ── D2. discard_chain_three_forms ─────────────────────────────────────
@@ -775,7 +925,11 @@ mod tests {
         let nodes = read("#_ #_ #_ a b c", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 3);
         for n in &nodes {
-            assert!(matches!(n.kind, NodeKind::Discard(_)), "expected all Discard, got {:?}", n.kind);
+            assert!(
+                matches!(n.kind, NodeKind::Discard(_)),
+                "expected all Discard, got {:?}",
+                n.kind
+            );
         }
     }
 
@@ -784,12 +938,26 @@ mod tests {
     fn discard_chain_inside_list() {
         let nodes = read("(1 #_ #_ a b 2)", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::List(items) = &nodes[0].kind else { panic!("expected List") };
+        let NodeKind::List(items) = &nodes[0].kind else {
+            panic!("expected List")
+        };
         assert_eq!(items.len(), 4);
-        assert_eq!(items[0].kind, NodeKind::Atom(Atom::Int { value: 1, suffix: None }));
+        assert_eq!(
+            items[0].kind,
+            NodeKind::Atom(Atom::Int {
+                value: 1,
+                suffix: None
+            })
+        );
         assert!(matches!(items[1].kind, NodeKind::Discard(_)));
         assert!(matches!(items[2].kind, NodeKind::Discard(_)));
-        assert_eq!(items[3].kind, NodeKind::Atom(Atom::Int { value: 2, suffix: None }));
+        assert_eq!(
+            items[3].kind,
+            NodeKind::Atom(Atom::Int {
+                value: 2,
+                suffix: None
+            })
+        );
     }
 
     // ── D4. discard_chain_inside_vector ───────────────────────────────────
@@ -797,11 +965,19 @@ mod tests {
     fn discard_chain_inside_vector() {
         let nodes = read("[#_ #_ x y z]", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Vector(items) = &nodes[0].kind else { panic!("expected Vector") };
+        let NodeKind::Vector(items) = &nodes[0].kind else {
+            panic!("expected Vector")
+        };
         assert_eq!(items.len(), 3);
         assert!(matches!(items[0].kind, NodeKind::Discard(_)));
         assert!(matches!(items[1].kind, NodeKind::Discard(_)));
-        assert_eq!(items[2].kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "z".into() }));
+        assert_eq!(
+            items[2].kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "z".into()
+            })
+        );
     }
 
     // ── D5. single_discard_unchanged ──────────────────────────────────────
@@ -810,9 +986,23 @@ mod tests {
     fn single_discard_unchanged() {
         let nodes = read("#_ a b", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 2);
-        let NodeKind::Discard(inner) = &nodes[0].kind else { panic!("expected Discard") };
-        assert_eq!(inner.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "a".into() }));
-        assert_eq!(nodes[1].kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "b".into() }));
+        let NodeKind::Discard(inner) = &nodes[0].kind else {
+            panic!("expected Discard")
+        };
+        assert_eq!(
+            inner.kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "a".into()
+            })
+        );
+        assert_eq!(
+            nodes[1].kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "b".into()
+            })
+        );
     }
 
     // ── D6. discard_chain_with_comment_between ────────────────────────────
@@ -841,10 +1031,10 @@ mod tests {
     #[test]
     fn multiple_leading_comments() {
         let nodes = read("; a\n; b\n42", fid()).expect("parse failed");
-        assert_eq!(nodes[0].leading_comments, vec![
-            Comment(" a".into()),
-            Comment(" b".into()),
-        ]);
+        assert_eq!(
+            nodes[0].leading_comments,
+            vec![Comment(" a".into()), Comment(" b".into()),]
+        );
     }
 
     // ── RT3. trailing_comment_on_atom ─────────────────────────────────────
@@ -887,7 +1077,9 @@ mod tests {
     #[test]
     fn inner_trailing_comment() {
         let nodes = read("(1 ; first\n2)", fid()).expect("parse failed");
-        let NodeKind::List(items) = &nodes[0].kind else { panic!("expected List") };
+        let NodeKind::List(items) = &nodes[0].kind else {
+            panic!("expected List")
+        };
         assert_eq!(items[0].trailing_comment, Some(Comment(" first".into())));
         assert_eq!(items[1].trailing_comment, None);
     }
@@ -908,7 +1100,9 @@ mod tests {
     #[test]
     fn leading_comment_inside_list() {
         let nodes = read("(; inner\n42)", fid()).expect("parse failed");
-        let NodeKind::List(items) = &nodes[0].kind else { panic!("expected List") };
+        let NodeKind::List(items) = &nodes[0].kind else {
+            panic!("expected List")
+        };
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].leading_comments, vec![Comment(" inner".into())]);
     }
@@ -944,10 +1138,22 @@ mod tests {
         use nexl_ast::FloatSuffix;
         let nodes = read("3.75", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Float { value: 3.75, suffix: None }));
+        assert_eq!(
+            nodes[0].kind,
+            NodeKind::Atom(Atom::Float {
+                value: 3.75,
+                suffix: None
+            })
+        );
 
         let nodes = read("1.5f32", fid()).expect("parse failed");
-        assert_eq!(nodes[0].kind, NodeKind::Atom(Atom::Float { value: 1.5, suffix: Some(FloatSuffix::F32) }));
+        assert_eq!(
+            nodes[0].kind,
+            NodeKind::Atom(Atom::Float {
+                value: 1.5,
+                suffix: Some(FloatSuffix::F32)
+            })
+        );
     }
 
     // ── 13. parse_char_single ─────────────────────────────────────────────────
@@ -979,7 +1185,10 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(
             nodes[0].kind,
-            NodeKind::Atom(Atom::Symbol { ns: Some("my-mod".into()), name: "my-fn".into() }),
+            NodeKind::Atom(Atom::Symbol {
+                ns: Some("my-mod".into()),
+                name: "my-fn".into()
+            }),
         );
     }
 
@@ -992,7 +1201,10 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         assert_eq!(
             nodes[0].kind,
-            NodeKind::Atom(Atom::Keyword { ns: None, name: "local".into() }),
+            NodeKind::Atom(Atom::Keyword {
+                ns: None,
+                name: "local".into()
+            }),
         );
     }
 
@@ -1020,10 +1232,24 @@ mod tests {
     fn parse_comma_in_map() {
         let nodes = read("{:a 1, :b 2}", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Map(pairs) = &nodes[0].kind else { panic!("expected Map") };
+        let NodeKind::Map(pairs) = &nodes[0].kind else {
+            panic!("expected Map")
+        };
         assert_eq!(pairs.len(), 2);
-        assert_eq!(pairs[0].0.kind, NodeKind::Atom(Atom::Keyword { ns: None, name: "a".into() }));
-        assert_eq!(pairs[1].0.kind, NodeKind::Atom(Atom::Keyword { ns: None, name: "b".into() }));
+        assert_eq!(
+            pairs[0].0.kind,
+            NodeKind::Atom(Atom::Keyword {
+                ns: None,
+                name: "a".into()
+            })
+        );
+        assert_eq!(
+            pairs[1].0.kind,
+            NodeKind::Atom(Atom::Keyword {
+                ns: None,
+                name: "b".into()
+            })
+        );
     }
 
     // ── 21. parse_deeply_nested ───────────────────────────────────────────────
@@ -1032,11 +1258,25 @@ mod tests {
         // `((((a))))` — four levels of list nesting; must unpack all four
         let nodes = read("((((a))))", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::List(l1) = &nodes[0].kind else { panic!("expected List at level 1") };
-        let NodeKind::List(l2) = &l1[0].kind else { panic!("expected List at level 2") };
-        let NodeKind::List(l3) = &l2[0].kind else { panic!("expected List at level 3") };
-        let NodeKind::List(l4) = &l3[0].kind else { panic!("expected List at level 4") };
-        assert_eq!(l4[0].kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "a".into() }));
+        let NodeKind::List(l1) = &nodes[0].kind else {
+            panic!("expected List at level 1")
+        };
+        let NodeKind::List(l2) = &l1[0].kind else {
+            panic!("expected List at level 2")
+        };
+        let NodeKind::List(l3) = &l2[0].kind else {
+            panic!("expected List at level 3")
+        };
+        let NodeKind::List(l4) = &l3[0].kind else {
+            panic!("expected List at level 4")
+        };
+        assert_eq!(
+            l4[0].kind,
+            NodeKind::Atom(Atom::Symbol {
+                ns: None,
+                name: "a".into()
+            })
+        );
     }
 
     // ── 22. parse_quote_wrapping_list ─────────────────────────────────────────
@@ -1044,7 +1284,9 @@ mod tests {
     fn parse_quote_wrapping_list() {
         let nodes = read("'(1 2)", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Quote(inner) = &nodes[0].kind else { panic!("expected Quote") };
+        let NodeKind::Quote(inner) = &nodes[0].kind else {
+            panic!("expected Quote")
+        };
         assert!(matches!(inner.kind, NodeKind::List(_)));
     }
 
@@ -1053,7 +1295,9 @@ mod tests {
     fn parse_deref_wrapping_compound() {
         let nodes = read("@[1 2]", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Deref(inner) = &nodes[0].kind else { panic!("expected Deref") };
+        let NodeKind::Deref(inner) = &nodes[0].kind else {
+            panic!("expected Deref")
+        };
         assert!(matches!(inner.kind, NodeKind::Vector(_)));
     }
 
@@ -1063,9 +1307,13 @@ mod tests {
         // `{:x [1 #{:k}]}` — Map -> Vector -> Set nesting
         let nodes = read("{:x [1 #{:k}]}", fid()).expect("parse failed");
         assert_eq!(nodes.len(), 1);
-        let NodeKind::Map(pairs) = &nodes[0].kind else { panic!("expected Map") };
+        let NodeKind::Map(pairs) = &nodes[0].kind else {
+            panic!("expected Map")
+        };
         assert_eq!(pairs.len(), 1);
-        let NodeKind::Vector(items) = &pairs[0].1.kind else { panic!("expected Vector") };
+        let NodeKind::Vector(items) = &pairs[0].1.kind else {
+            panic!("expected Vector")
+        };
         assert_eq!(items.len(), 2);
         assert!(matches!(items[1].kind, NodeKind::Set(_)));
     }

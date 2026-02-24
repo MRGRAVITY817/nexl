@@ -28,8 +28,8 @@ pub fn eval_line(src: &str, env: &Rc<Env>) -> Vec<Result<Value, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexl_runtime::Value;
     use crate::stdlib::standard_env;
+    use nexl_runtime::Value;
 
     #[test]
     fn eval_line_single_expression() {

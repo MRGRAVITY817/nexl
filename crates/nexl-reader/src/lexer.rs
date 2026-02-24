@@ -1,5 +1,5 @@
 use nexl_ast::{FileId, FloatSuffix, IntSuffix, Span};
-use nexl_errors::{codes, Diagnostic, ErrorCode, Label, Severity};
+use nexl_errors::{Diagnostic, ErrorCode, Label, Severity, codes};
 
 // ---------------------------------------------------------------------------
 // Token
@@ -51,7 +51,11 @@ pub enum TokenKind {
     ///
     /// `ns` is `Some("http")` for `:http/ok`, `None` otherwise.
     /// `auto_ns` is `true` for the `::name` form (resolves to the current module namespace).
-    Keyword { ns: Option<String>, name: String, auto_ns: bool },
+    Keyword {
+        ns: Option<String>,
+        name: String,
+        auto_ns: bool,
+    },
     /// Symbol (identifier), e.g. `add`, `http-client`, `my-module/my-fn`.
     ///
     /// `ns` is `Some("my-module")` for qualified symbols, `None` otherwise.
@@ -75,7 +79,6 @@ pub enum TokenKind {
     Comment(String),
 
     // --- Structural delimiters (consumed by the reader) ---
-
     /// `(` — opens a list.
     LParen,
     /// `)` — closes a list.
@@ -90,7 +93,6 @@ pub enum TokenKind {
     RBrace,
 
     // --- Operator/separator tokens ---
-
     /// `.` — module path separator in qualified names, e.g. `examples.basics`
     /// (spec §D.3: `qualified-name = symbol , { "." , symbol }`).
     Dot,
@@ -128,7 +130,11 @@ pub struct Lexer<'src> {
 impl<'src> Lexer<'src> {
     /// Create a lexer for `src`, tagging all spans with `file_id`.
     pub fn new(src: &'src str, file_id: FileId) -> Self {
-        Self { src, pos: 0, file_id }
+        Self {
+            src,
+            pos: 0,
+            file_id,
+        }
     }
 
     /// Consume the lexer and produce a token list, or the first error.
@@ -204,12 +210,18 @@ impl<'src> Lexer<'src> {
         if ch == '\'' {
             let start = self.pos;
             self.advance();
-            return Ok(Token { kind: TokenKind::Quote, span: self.span_from(start) });
+            return Ok(Token {
+                kind: TokenKind::Quote,
+                span: self.span_from(start),
+            });
         }
         if ch == '@' {
             let start = self.pos;
             self.advance();
-            return Ok(Token { kind: TokenKind::Deref, span: self.span_from(start) });
+            return Ok(Token {
+                kind: TokenKind::Deref,
+                span: self.span_from(start),
+            });
         }
 
         // Hash-dispatched reader macros: `#_` and `#{`
@@ -219,11 +231,17 @@ impl<'src> Lexer<'src> {
             match self.peek() {
                 Some('_') => {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::Discard, span: self.span_from(start) });
+                    return Ok(Token {
+                        kind: TokenKind::Discard,
+                        span: self.span_from(start),
+                    });
                 }
                 Some('{') => {
                     self.advance();
-                    return Ok(Token { kind: TokenKind::SetOpen, span: self.span_from(start) });
+                    return Ok(Token {
+                        kind: TokenKind::SetOpen,
+                        span: self.span_from(start),
+                    });
                 }
                 other => {
                     let label = other.map_or_else(|| "end of file".into(), |c| format!("`{c}`"));
@@ -240,23 +258,35 @@ impl<'src> Lexer<'src> {
             let start = self.pos;
             self.advance(); // consume ';'
             let text = self.collect_while(|c| c != '\n');
-            return Ok(Token { kind: TokenKind::Comment(text), span: self.span_from(start) });
+            return Ok(Token {
+                kind: TokenKind::Comment(text),
+                span: self.span_from(start),
+            });
         }
 
         // Quasiquote / unquote / unquote-splice (spec §D.2)
         if ch == '`' {
             let start = self.pos;
             self.advance();
-            return Ok(Token { kind: TokenKind::Quasiquote, span: self.span_from(start) });
+            return Ok(Token {
+                kind: TokenKind::Quasiquote,
+                span: self.span_from(start),
+            });
         }
         if ch == '~' {
             let start = self.pos;
             self.advance();
             if self.peek() == Some('@') {
                 self.advance();
-                return Ok(Token { kind: TokenKind::UnquoteSplice, span: self.span_from(start) });
+                return Ok(Token {
+                    kind: TokenKind::UnquoteSplice,
+                    span: self.span_from(start),
+                });
             }
-            return Ok(Token { kind: TokenKind::Unquote, span: self.span_from(start) });
+            return Ok(Token {
+                kind: TokenKind::Unquote,
+                span: self.span_from(start),
+            });
         }
 
         // Single-character operator/separator tokens (spec §D.3, §6.7)
@@ -269,7 +299,10 @@ impl<'src> Lexer<'src> {
         if let Some(kind) = op_kind {
             let start = self.pos;
             self.advance();
-            return Ok(Token { kind, span: self.span_from(start) });
+            return Ok(Token {
+                kind,
+                span: self.span_from(start),
+            });
         }
 
         // Structural delimiters
@@ -285,7 +318,10 @@ impl<'src> Lexer<'src> {
         if let Some(kind) = delim_kind {
             let start = self.pos;
             self.advance();
-            return Ok(Token { kind, span: self.span_from(start) });
+            return Ok(Token {
+                kind,
+                span: self.span_from(start),
+            });
         }
 
         // Standalone `/` is the division operator — a symbol whose name is "/".
@@ -296,7 +332,10 @@ impl<'src> Lexer<'src> {
             let start = self.pos;
             self.advance();
             return Ok(Token {
-                kind: TokenKind::Symbol { ns: None, name: "/".into() },
+                kind: TokenKind::Symbol {
+                    ns: None,
+                    name: "/".into(),
+                },
                 span: self.span_from(start),
             });
         }
@@ -333,14 +372,8 @@ impl<'src> Lexer<'src> {
                         self.collect_while(|c| c.is_ascii_hexdigit() || c == '_'),
                         16,
                     ),
-                    'b' | 'B' => (
-                        self.collect_while(|c| matches!(c, '0' | '1' | '_')),
-                        2,
-                    ),
-                    'o' | 'O' => (
-                        self.collect_while(|c| matches!(c, '0'..='7' | '_')),
-                        8,
-                    ),
+                    'b' | 'B' => (self.collect_while(|c| matches!(c, '0' | '1' | '_')), 2),
+                    'o' | 'O' => (self.collect_while(|c| matches!(c, '0'..='7' | '_')), 8),
                     _ => unreachable!(),
                 }
             };
@@ -351,19 +384,21 @@ impl<'src> Lexer<'src> {
             let value = if negative { -abs_val } else { abs_val };
             let suffix = self.lex_int_suffix()?;
             let span = self.span_from(start);
-            return Ok(Token { kind: TokenKind::Int(value, suffix), span });
+            return Ok(Token {
+                kind: TokenKind::Int(value, suffix),
+                span,
+            });
         }
 
         // Decimal integer part
         let int_raw = self.collect_while(|c| c.is_ascii_digit() || c == '_');
 
         // Decide: ratio, float, or int?
-        let is_ratio = self.peek() == Some('/')
-            && self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit());
-        let is_float_dot = self.peek() == Some('.')
-            && self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit());
-        let is_float_exp =
-            self.peek().is_some_and(|c| c == 'e' || c == 'E');
+        let is_ratio =
+            self.peek() == Some('/') && self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit());
+        let is_float_dot =
+            self.peek() == Some('.') && self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit());
+        let is_float_exp = self.peek().is_some_and(|c| c == 'e' || c == 'E');
 
         if is_ratio {
             self.lex_ratio_from(start, negative, &int_raw)
@@ -377,7 +412,10 @@ impl<'src> Lexer<'src> {
             let value = if negative { -abs_val } else { abs_val };
             let suffix = self.lex_int_suffix()?;
             let span = self.span_from(start);
-            Ok(Token { kind: TokenKind::Int(value, suffix), span })
+            Ok(Token {
+                kind: TokenKind::Int(value, suffix),
+                span,
+            })
         }
     }
 
@@ -417,13 +455,16 @@ impl<'src> Lexer<'src> {
             s.push_str(&exp);
         }
 
-        let value: f64 = s.parse().map_err(|_| {
-            Box::new(self.error_at(start, "float literal out of range", None))
-        })?;
+        let value: f64 = s
+            .parse()
+            .map_err(|_| Box::new(self.error_at(start, "float literal out of range", None)))?;
 
         let suffix = self.lex_float_suffix()?;
         let span = self.span_from(start);
-        Ok(Token { kind: TokenKind::Float(value, suffix), span })
+        Ok(Token {
+            kind: TokenKind::Float(value, suffix),
+            span,
+        })
     }
 
     /// Finish lexing a ratio literal after the numerator integer part has been
@@ -438,22 +479,25 @@ impl<'src> Lexer<'src> {
 
         let denom_raw = self.collect_while(|c| c.is_ascii_digit() || c == '_');
         let denom_clean: String = denom_raw.chars().filter(|&c| c != '_').collect();
-        let denom: i64 = denom_clean.parse().map_err(|_| {
-            Box::new(self.error_at(start, "ratio denominator out of range", None))
-        })?;
+        let denom: i64 = denom_clean
+            .parse()
+            .map_err(|_| Box::new(self.error_at(start, "ratio denominator out of range", None)))?;
 
         if denom == 0 {
             return Err(Box::new(self.ratio_zero_denominator(start)));
         }
 
         let numer_clean: String = numer_raw.chars().filter(|&c| c != '_').collect();
-        let numer_abs: i64 = numer_clean.parse().map_err(|_| {
-            Box::new(self.error_at(start, "ratio numerator out of range", None))
-        })?;
+        let numer_abs: i64 = numer_clean
+            .parse()
+            .map_err(|_| Box::new(self.error_at(start, "ratio numerator out of range", None)))?;
         let numer = if negative { -numer_abs } else { numer_abs };
 
         let span = self.span_from(start);
-        Ok(Token { kind: TokenKind::Ratio(numer, denom), span })
+        Ok(Token {
+            kind: TokenKind::Ratio(numer, denom),
+            span,
+        })
     }
 
     fn lex_float_suffix(&mut self) -> Result<Option<FloatSuffix>, Box<Diagnostic>> {
@@ -465,7 +509,9 @@ impl<'src> Lexer<'src> {
                 "32" => return Ok(Some(FloatSuffix::F32)),
                 "64" => return Ok(Some(FloatSuffix::F64)),
                 _ => {
-                    return Err(Box::new(self.invalid_float_suffix(suffix_start, format!("f{w}"))));
+                    return Err(Box::new(
+                        self.invalid_float_suffix(suffix_start, format!("f{w}")),
+                    ));
                 }
             }
         }
@@ -488,7 +534,9 @@ impl<'src> Lexer<'src> {
                     "16" => Ok(Some(IntSuffix::I16)),
                     "32" => Ok(Some(IntSuffix::I32)),
                     "64" => Ok(Some(IntSuffix::I64)),
-                    _ => Err(Box::new(self.invalid_int_suffix(suffix_start, format!("i{w}")))),
+                    _ => Err(Box::new(
+                        self.invalid_int_suffix(suffix_start, format!("i{w}")),
+                    )),
                 }
             }
             Some('u') => {
@@ -499,7 +547,9 @@ impl<'src> Lexer<'src> {
                     "16" => Ok(Some(IntSuffix::U16)),
                     "32" => Ok(Some(IntSuffix::U32)),
                     "64" => Ok(Some(IntSuffix::U64)),
-                    _ => Err(Box::new(self.invalid_int_suffix(suffix_start, format!("u{w}")))),
+                    _ => Err(Box::new(
+                        self.invalid_int_suffix(suffix_start, format!("u{w}")),
+                    )),
                 }
             }
             // Any other letter/underscore immediately after digits is an unknown suffix
@@ -539,12 +589,30 @@ impl<'src> Lexer<'src> {
                     let bs_pos = self.pos;
                     self.advance(); // consume '\'
                     match self.peek() {
-                        Some('n') => { self.advance(); lit.push('\n'); }
-                        Some('t') => { self.advance(); lit.push('\t'); }
-                        Some('r') => { self.advance(); lit.push('\r'); }
-                        Some('\\') => { self.advance(); lit.push('\\'); }
-                        Some('"') => { self.advance(); lit.push('"'); }
-                        Some('{') => { self.advance(); lit.push('{'); }
+                        Some('n') => {
+                            self.advance();
+                            lit.push('\n');
+                        }
+                        Some('t') => {
+                            self.advance();
+                            lit.push('\t');
+                        }
+                        Some('r') => {
+                            self.advance();
+                            lit.push('\r');
+                        }
+                        Some('\\') => {
+                            self.advance();
+                            lit.push('\\');
+                        }
+                        Some('"') => {
+                            self.advance();
+                            lit.push('"');
+                        }
+                        Some('{') => {
+                            self.advance();
+                            lit.push('{');
+                        }
                         Some(ch) => {
                             let bad_ch = ch;
                             self.advance();
@@ -604,7 +672,10 @@ impl<'src> Lexer<'src> {
 
         flush_lit(&mut lit, &mut parts);
         let span = self.span_from(start);
-        Ok(Token { kind: TokenKind::Str(parts), span })
+        Ok(Token {
+            kind: TokenKind::Str(parts),
+            span,
+        })
     }
 
     // --- keyword lexing ---
@@ -631,13 +702,19 @@ impl<'src> Lexer<'src> {
         // If not, emit a standalone Colon token (used as type-annotation separator,
         // e.g. `[x : Int]` — spec §D.3 param-decl).
         if !self.peek().is_some_and(is_symbol_start) {
-            return Ok(Token { kind: TokenKind::Colon, span: self.span_from(start) });
+            return Ok(Token {
+                kind: TokenKind::Colon,
+                span: self.span_from(start),
+            });
         }
 
         let first_name = self.collect_while(is_symbol_cont);
 
         // Check for namespaced form `:ns/name`
-        let (ns, name) = if !auto_ns && self.peek() == Some('/') && self.peek_ahead(1).is_some_and(is_symbol_start) {
+        let (ns, name) = if !auto_ns
+            && self.peek() == Some('/')
+            && self.peek_ahead(1).is_some_and(is_symbol_start)
+        {
             self.advance(); // consume '/'
             let name = self.collect_while(is_symbol_cont);
             (Some(first_name), name)
@@ -646,7 +723,10 @@ impl<'src> Lexer<'src> {
         };
 
         let span = self.span_from(start);
-        Ok(Token { kind: TokenKind::Keyword { ns, name, auto_ns }, span })
+        Ok(Token {
+            kind: TokenKind::Keyword { ns, name, auto_ns },
+            span,
+        })
     }
 
     // --- symbol lexing ---
@@ -660,24 +740,23 @@ impl<'src> Lexer<'src> {
         let first = self.collect_while(is_symbol_cont);
 
         // Check for qualified form `ns/name`
-        let (ns, name) = if self.peek() == Some('/')
-            && self.peek_ahead(1).is_some_and(is_symbol_start)
-        {
-            self.advance(); // consume '/'
-            let name = self.collect_while(is_symbol_cont);
-            (Some(first), name)
-        } else {
-            (None, first)
-        };
+        let (ns, name) =
+            if self.peek() == Some('/') && self.peek_ahead(1).is_some_and(is_symbol_start) {
+                self.advance(); // consume '/'
+                let name = self.collect_while(is_symbol_cont);
+                (Some(first), name)
+            } else {
+                (None, first)
+            };
 
         let span = self.span_from(start);
 
         // Reserved words: only recognised when unqualified.
         let kind = match (ns.as_deref(), name.as_str()) {
-            (None, "true")  => TokenKind::Bool(true),
+            (None, "true") => TokenKind::Bool(true),
             (None, "false") => TokenKind::Bool(false),
-            (None, "unit")  => TokenKind::Unit,
-            _               => TokenKind::Symbol { ns, name },
+            (None, "unit") => TokenKind::Unit,
+            _ => TokenKind::Symbol { ns, name },
         };
 
         Ok(Token { kind, span })
@@ -711,9 +790,9 @@ impl<'src> Lexer<'src> {
         let word = self.collect_while(|c| !c.is_ascii_whitespace() && !is_structural(c));
 
         let ch = match word.as_str() {
-            "space"   => ' ',
+            "space" => ' ',
             "newline" => '\n',
-            "tab"     => '\t',
+            "tab" => '\t',
             s if s.chars().count() == 1 => s.chars().next().expect("non-empty single char"),
             _ => {
                 return Err(Box::new(self.error_at(
@@ -725,7 +804,10 @@ impl<'src> Lexer<'src> {
         };
 
         let span = self.span_from(start);
-        Ok(Token { kind: TokenKind::Char(ch), span })
+        Ok(Token {
+            kind: TokenKind::Char(ch),
+            span,
+        })
     }
 
     /// Finish lexing a unicode character escape after `\u` has been peeked.
@@ -747,7 +829,9 @@ impl<'src> Lexer<'src> {
                 )));
             }
             match self.peek() {
-                Some('}') => { self.advance(); }
+                Some('}') => {
+                    self.advance();
+                }
                 _ => {
                     return Err(Box::new(self.error_at(
                         start,
@@ -792,7 +876,10 @@ impl<'src> Lexer<'src> {
             ))
         })?;
 
-        Ok(Token { kind: TokenKind::Char(ch), span })
+        Ok(Token {
+            kind: TokenKind::Char(ch),
+            span,
+        })
     }
 
     // --- helpers ---
@@ -848,25 +935,27 @@ impl<'src> Lexer<'src> {
 
     fn invalid_float_suffix(&self, start: usize, suffix: impl Into<String>) -> Diagnostic {
         let suffix = suffix.into();
-        let mut d = Diagnostic::new(
-            Severity::Error,
-            format!("unknown float suffix `{suffix}`"),
-        );
+        let mut d = Diagnostic::new(Severity::Error, format!("unknown float suffix `{suffix}`"));
         d.code = Some(codes::INVALID_NUMERIC_SUFFIX.clone());
-        d.push_label(Label::new(self.span_from(start), "numeric suffix starts here"));
+        d.push_label(Label::new(
+            self.span_from(start),
+            "numeric suffix starts here",
+        ));
         d.set_help("valid float suffixes: f32 or f64; or omit the suffix");
         d
     }
 
     fn invalid_int_suffix(&self, start: usize, suffix: impl Into<String>) -> Diagnostic {
         let suffix = suffix.into();
-        let mut d = Diagnostic::new(
-            Severity::Error,
-            format!("unknown suffix `{suffix}`"),
-        );
+        let mut d = Diagnostic::new(Severity::Error, format!("unknown suffix `{suffix}`"));
         d.code = Some(codes::INVALID_NUMERIC_SUFFIX.clone());
-        d.push_label(Label::new(self.span_from(start), "numeric suffix starts here"));
-        d.set_help("valid integer suffixes: i8, i16, i32, i64, u8, u16, u32, u64; or omit the suffix");
+        d.push_label(Label::new(
+            self.span_from(start),
+            "numeric suffix starts here",
+        ));
+        d.set_help(
+            "valid integer suffixes: i8, i16, i32, i64, u8, u16, u32, u64; or omit the suffix",
+        );
         d
     }
 
@@ -940,7 +1029,12 @@ mod tests {
 
     fn lex_one(src: &str) -> TokenKind {
         let tokens = lex(src).expect("expected Ok");
-        assert_eq!(tokens.len(), 1, "expected exactly one token, got {}", tokens.len());
+        assert_eq!(
+            tokens.len(),
+            1,
+            "expected exactly one token, got {}",
+            tokens.len()
+        );
         tokens.into_iter().next().unwrap().kind
     }
 
@@ -960,14 +1054,20 @@ mod tests {
     #[test]
     fn lex_float_suffix_f32() {
         use nexl_ast::FloatSuffix;
-        assert_eq!(lex_one("1.25f32"), TokenKind::Float(1.25, Some(FloatSuffix::F32)));
+        assert_eq!(
+            lex_one("1.25f32"),
+            TokenKind::Float(1.25, Some(FloatSuffix::F32))
+        );
     }
 
     // --- float test 4 ---
     #[test]
     fn lex_float_suffix_f64() {
         use nexl_ast::FloatSuffix;
-        assert_eq!(lex_one("1.25f64"), TokenKind::Float(1.25, Some(FloatSuffix::F64)));
+        assert_eq!(
+            lex_one("1.25f64"),
+            TokenKind::Float(1.25, Some(FloatSuffix::F64))
+        );
     }
 
     // --- float test 5 ---
@@ -1113,7 +1213,10 @@ mod tests {
 
     #[test]
     fn lex_suffix_u16() {
-        assert_eq!(lex_one("1000u16"), TokenKind::Int(1000, Some(IntSuffix::U16)));
+        assert_eq!(
+            lex_one("1000u16"),
+            TokenKind::Int(1000, Some(IntSuffix::U16))
+        );
     }
 
     #[test]
@@ -1204,8 +1307,12 @@ mod tests {
     }
 
     // Small helpers to reduce boilerplate in string tests.
-    fn lit(s: &str) -> StringPart { StringPart::Lit(s.to_string()) }
-    fn interp(s: &str) -> StringPart { StringPart::Interp(s.to_string()) }
+    fn lit(s: &str) -> StringPart {
+        StringPart::Lit(s.to_string())
+    }
+    fn interp(s: &str) -> StringPart {
+        StringPart::Interp(s.to_string())
+    }
 
     // --- form comment test 4 ---
     #[test]
@@ -1216,7 +1323,13 @@ mod tests {
         assert_eq!(tokens.len(), 3);
         assert_eq!(tokens[0].kind, TokenKind::Discard);
         assert_eq!(tokens[1].kind, TokenKind::Comment(" skip".into()));
-        assert_eq!(tokens[2].kind, TokenKind::Symbol { ns: None, name: "foo".into() });
+        assert_eq!(
+            tokens[2].kind,
+            TokenKind::Symbol {
+                ns: None,
+                name: "foo".into()
+            }
+        );
     }
 
     // --- form comment test 3 ---
@@ -1228,8 +1341,20 @@ mod tests {
         assert_eq!(tokens.len(), 4);
         assert_eq!(tokens[0].kind, TokenKind::Discard);
         assert_eq!(tokens[1].kind, TokenKind::Discard);
-        assert_eq!(tokens[2].kind, TokenKind::Symbol { ns: None, name: "a".into() });
-        assert_eq!(tokens[3].kind, TokenKind::Symbol { ns: None, name: "b".into() });
+        assert_eq!(
+            tokens[2].kind,
+            TokenKind::Symbol {
+                ns: None,
+                name: "a".into()
+            }
+        );
+        assert_eq!(
+            tokens[3].kind,
+            TokenKind::Symbol {
+                ns: None,
+                name: "b".into()
+            }
+        );
     }
 
     // --- form comment test 2 ---
@@ -1249,7 +1374,13 @@ mod tests {
         let tokens = lex("#_ foo").unwrap();
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].kind, TokenKind::Discard);
-        assert_eq!(tokens[1].kind, TokenKind::Symbol { ns: None, name: "foo".into() });
+        assert_eq!(
+            tokens[1].kind,
+            TokenKind::Symbol {
+                ns: None,
+                name: "foo".into()
+            }
+        );
     }
 
     // --- comment test 1 ---
@@ -1391,7 +1522,13 @@ mod tests {
     #[test]
     fn lex_truefoo_is_symbol() {
         // `truefoo` — consumed as one token; no implicit word-boundary break
-        assert_eq!(lex_one("truefoo"), TokenKind::Symbol { ns: None, name: "truefoo".into() });
+        assert_eq!(
+            lex_one("truefoo"),
+            TokenKind::Symbol {
+                ns: None,
+                name: "truefoo".into()
+            }
+        );
     }
 
     // --- bool/unit test 5 ---
@@ -1428,28 +1565,52 @@ mod tests {
     #[test]
     fn lex_symbol_simple() {
         // `add` — plain unqualified symbol (spec §2.7)
-        assert_eq!(lex_one("add"), TokenKind::Symbol { ns: None, name: "add".into() });
+        assert_eq!(
+            lex_one("add"),
+            TokenKind::Symbol {
+                ns: None,
+                name: "add".into()
+            }
+        );
     }
 
     // --- symbol test 2 ---
     #[test]
     fn lex_symbol_with_hyphen() {
         // `http-client` — hyphen in name (spec §2.7 example)
-        assert_eq!(lex_one("http-client"), TokenKind::Symbol { ns: None, name: "http-client".into() });
+        assert_eq!(
+            lex_one("http-client"),
+            TokenKind::Symbol {
+                ns: None,
+                name: "http-client".into()
+            }
+        );
     }
 
     // --- symbol test 3 ---
     #[test]
     fn lex_symbol_with_question_mark() {
         // `valid?` — `?` suffix (spec §2.7 example)
-        assert_eq!(lex_one("valid?"), TokenKind::Symbol { ns: None, name: "valid?".into() });
+        assert_eq!(
+            lex_one("valid?"),
+            TokenKind::Symbol {
+                ns: None,
+                name: "valid?".into()
+            }
+        );
     }
 
     // --- symbol test 4 ---
     #[test]
     fn lex_symbol_with_bang() {
         // `fetch!` — `!` suffix (spec §2.7 example)
-        assert_eq!(lex_one("fetch!"), TokenKind::Symbol { ns: None, name: "fetch!".into() });
+        assert_eq!(
+            lex_one("fetch!"),
+            TokenKind::Symbol {
+                ns: None,
+                name: "fetch!".into()
+            }
+        );
     }
 
     // --- symbol test 5 ---
@@ -1458,7 +1619,10 @@ mod tests {
         // `my-module/my-fn` — qualified symbol (spec §2.7 example)
         assert_eq!(
             lex_one("my-module/my-fn"),
-            TokenKind::Symbol { ns: Some("my-module".into()), name: "my-fn".into() },
+            TokenKind::Symbol {
+                ns: Some("my-module".into()),
+                name: "my-fn".into()
+            },
         );
     }
 
@@ -1466,14 +1630,26 @@ mod tests {
     #[test]
     fn lex_symbol_operator() {
         // `+` — single-char operator is a valid symbol (Appendix D: `+` is symbol-start)
-        assert_eq!(lex_one("+"), TokenKind::Symbol { ns: None, name: "+".into() });
+        assert_eq!(
+            lex_one("+"),
+            TokenKind::Symbol {
+                ns: None,
+                name: "+".into()
+            }
+        );
     }
 
     // --- symbol test 7 ---
     #[test]
     fn lex_symbol_leading_minus_not_number() {
         // `-foo` — leading `-` not followed by a digit is a symbol, not a number
-        assert_eq!(lex_one("-foo"), TokenKind::Symbol { ns: None, name: "-foo".into() });
+        assert_eq!(
+            lex_one("-foo"),
+            TokenKind::Symbol {
+                ns: None,
+                name: "-foo".into()
+            }
+        );
     }
 
     // --- symbol test 8 ---
@@ -1492,7 +1668,13 @@ mod tests {
         // `foo 42` — symbol followed by an integer
         let tokens = lex("foo 42").unwrap();
         assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens[0].kind, TokenKind::Symbol { ns: None, name: "foo".into() });
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::Symbol {
+                ns: None,
+                name: "foo".into()
+            }
+        );
         assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
     }
 
@@ -1514,7 +1696,11 @@ mod tests {
         assert_eq!(tokens.len(), 2);
         assert_eq!(
             tokens[0].kind,
-            TokenKind::Keyword { ns: None, name: "foo".into(), auto_ns: false },
+            TokenKind::Keyword {
+                ns: None,
+                name: "foo".into(),
+                auto_ns: false
+            },
         );
         assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
     }
@@ -1535,7 +1721,11 @@ mod tests {
         // `:http/ok` — namespaced keyword (spec §2.6)
         assert_eq!(
             lex_one(":http/ok"),
-            TokenKind::Keyword { ns: Some("http".into()), name: "ok".into(), auto_ns: false },
+            TokenKind::Keyword {
+                ns: Some("http".into()),
+                name: "ok".into(),
+                auto_ns: false
+            },
         );
     }
 
@@ -1545,7 +1735,11 @@ mod tests {
         // `::local-alias` — auto-namespace form (spec §2.6)
         assert_eq!(
             lex_one("::local-alias"),
-            TokenKind::Keyword { ns: None, name: "local-alias".into(), auto_ns: true },
+            TokenKind::Keyword {
+                ns: None,
+                name: "local-alias".into(),
+                auto_ns: true
+            },
         );
     }
 
@@ -1555,7 +1749,11 @@ mod tests {
         // `:my-key` — hyphen is a valid symbol-start char (Appendix D)
         assert_eq!(
             lex_one(":my-key"),
-            TokenKind::Keyword { ns: None, name: "my-key".into(), auto_ns: false },
+            TokenKind::Keyword {
+                ns: None,
+                name: "my-key".into(),
+                auto_ns: false
+            },
         );
     }
 
@@ -1565,7 +1763,11 @@ mod tests {
         // `:valid?` — `?` is a valid symbol-start char (Appendix D)
         assert_eq!(
             lex_one(":valid?"),
-            TokenKind::Keyword { ns: None, name: "valid?".into(), auto_ns: false },
+            TokenKind::Keyword {
+                ns: None,
+                name: "valid?".into(),
+                auto_ns: false
+            },
         );
     }
 
@@ -1575,7 +1777,11 @@ mod tests {
         // `:status` — plain keyword (spec §2.6)
         assert_eq!(
             lex_one(":status"),
-            TokenKind::Keyword { ns: None, name: "status".into(), auto_ns: false },
+            TokenKind::Keyword {
+                ns: None,
+                name: "status".into(),
+                auto_ns: false
+            },
         );
     }
 
@@ -1748,7 +1954,10 @@ mod tests {
     #[test]
     fn escape_newline() {
         // `"line1\nline2"` — spec §2.4: \n resolves to actual newline character
-        assert_eq!(lex_one("\"line1\\nline2\""), TokenKind::Str(vec![lit("line1\nline2")]));
+        assert_eq!(
+            lex_one("\"line1\\nline2\""),
+            TokenKind::Str(vec![lit("line1\nline2")])
+        );
     }
 
     // --- escape test 2 ---
@@ -1779,10 +1988,7 @@ mod tests {
     #[test]
     fn escape_brace() {
         // `"\{name}"` — \{ is a literal `{`; the span is NOT treated as interpolation
-        assert_eq!(
-            lex_one("\"\\{name}\""),
-            TokenKind::Str(vec![lit("{name}")]),
-        );
+        assert_eq!(lex_one("\"\\{name}\""), TokenKind::Str(vec![lit("{name}")]),);
     }
 
     // --- escape test 7 ---

@@ -2,7 +2,27 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nexl_types::{Scheme, Subst, TypeVar};
+use nexl_types::{Constructor, Scheme, Subst, Type, TypeDef, TypeVar};
+
+/// A record type definition: name, type parameters, and fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordDef {
+    /// Record type name (e.g. `"Point"`).
+    pub name: String,
+    /// Ordered list of universally-quantified type parameters.
+    pub params: Vec<TypeVar>,
+    /// Named fields and their types.
+    pub fields: Vec<(String, Type)>,
+}
+
+/// A constructor definition, paired with its parent type name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CtorDef {
+    /// The parent type name (e.g. `"Option"`).
+    pub type_name: String,
+    /// The constructor itself.
+    pub ctor: Constructor,
+}
 
 /// The typing environment: maps names to polymorphic type schemes.
 ///
@@ -12,12 +32,38 @@ use nexl_types::{Scheme, Subst, TypeVar};
 #[derive(Debug, Clone, Default)]
 pub struct Env {
     bindings: HashMap<String, Scheme>,
+    type_defs: HashMap<String, TypeDef>,
+    record_defs: HashMap<String, RecordDef>,
+    constructors: HashMap<String, CtorDef>,
 }
 
 impl Env {
-    /// An empty environment with no bindings.
+    /// A base environment with built-in ADTs.
     pub fn new() -> Self {
-        Self::default()
+        Self::default().with_builtins()
+    }
+
+    fn with_builtins(self) -> Self {
+        let option_t0 = TypeVar(0);
+        let option = TypeDef {
+            name: "Option".to_string(),
+            params: vec![option_t0],
+            constructors: vec![
+                Constructor::nullary("None"),
+                Constructor::nary("Some", vec![Type::Var(option_t0)]),
+            ],
+        };
+        let result_t0 = TypeVar(0);
+        let result_t1 = TypeVar(1);
+        let result = TypeDef {
+            name: "Result".to_string(),
+            params: vec![result_t0, result_t1],
+            constructors: vec![
+                Constructor::nary("Ok", vec![Type::Var(result_t0)]),
+                Constructor::nary("Err", vec![Type::Var(result_t1)]),
+            ],
+        };
+        self.extend_type_def(option).extend_type_def(result)
     }
 
     /// Return a new environment that extends `self` with `name` bound to
@@ -25,12 +71,113 @@ impl Env {
     pub fn extend(&self, name: impl Into<String>, scheme: Scheme) -> Self {
         let mut bindings = self.bindings.clone();
         bindings.insert(name.into(), scheme);
-        Self { bindings }
+        Self {
+            bindings,
+            type_defs: self.type_defs.clone(),
+            record_defs: self.record_defs.clone(),
+            constructors: self.constructors.clone(),
+        }
     }
 
     /// Look up `name` in the environment.
     pub fn lookup(&self, name: &str) -> Option<&Scheme> {
         self.bindings.get(name)
+    }
+
+    /// Return a new environment with `typedef` added, and its constructors registered.
+    pub fn extend_type_def(&self, typedef: TypeDef) -> Self {
+        let mut bindings = self.bindings.clone();
+        let mut type_defs = self.type_defs.clone();
+        let mut constructors = self.constructors.clone();
+        let type_name = typedef.name.clone();
+        let adt_args: Vec<Type> = typedef.params.iter().map(|tv| Type::Var(*tv)).collect();
+        let mut forall = HashSet::new();
+        for tv in &typedef.params {
+            forall.insert(*tv);
+        }
+        for ctor in &typedef.constructors {
+            constructors.insert(
+                ctor.name.clone(),
+                CtorDef {
+                    type_name: type_name.clone(),
+                    ctor: ctor.clone(),
+                },
+            );
+            let body = if ctor.fields.is_empty() {
+                Type::Adt {
+                    name: type_name.clone(),
+                    args: adt_args.clone(),
+                }
+            } else {
+                Type::Fn {
+                    params: ctor.fields.clone(),
+                    ret: Box::new(Type::Adt {
+                        name: type_name.clone(),
+                        args: adt_args.clone(),
+                    }),
+                }
+            };
+            bindings.insert(
+                ctor.name.clone(),
+                Scheme {
+                    forall: forall.clone(),
+                    body,
+                },
+            );
+        }
+        type_defs.insert(type_name, typedef);
+        Self {
+            bindings,
+            type_defs,
+            record_defs: self.record_defs.clone(),
+            constructors,
+        }
+    }
+
+    /// Return a new environment with `record` added.
+    pub fn extend_record_def(&self, record: RecordDef) -> Self {
+        let mut record_defs = self.record_defs.clone();
+        let mut bindings = self.bindings.clone();
+        let mut forall = HashSet::new();
+        for tv in &record.params {
+            forall.insert(*tv);
+        }
+        let record_ty = Type::Record {
+            name: record.name.clone(),
+            fields: record.fields.clone(),
+        };
+        bindings.insert(
+            record.name.clone(),
+            Scheme {
+                forall,
+                body: Type::Fn {
+                    params: vec![record_ty.clone()],
+                    ret: Box::new(record_ty),
+                },
+            },
+        );
+        record_defs.insert(record.name.clone(), record);
+        Self {
+            bindings,
+            type_defs: self.type_defs.clone(),
+            record_defs,
+            constructors: self.constructors.clone(),
+        }
+    }
+
+    /// Look up a type definition by name.
+    pub fn lookup_type_def(&self, name: &str) -> Option<&TypeDef> {
+        self.type_defs.get(name)
+    }
+
+    /// Look up a record definition by name.
+    pub fn lookup_record_def(&self, name: &str) -> Option<&RecordDef> {
+        self.record_defs.get(name)
+    }
+
+    /// Look up a constructor definition by constructor name.
+    pub fn lookup_ctor(&self, name: &str) -> Option<&CtorDef> {
+        self.constructors.get(name)
     }
 
     /// Collect all type variables that are free in this environment after
@@ -56,9 +203,9 @@ impl Env {
 
 #[cfg(test)]
 mod tests {
-    use nexl_types::{Scheme, Type};
+    use nexl_types::{Constructor, Scheme, Type, TypeDef, TypeVar};
 
-    use super::Env;
+    use super::{Env, RecordDef};
 
     // -- Test 1 --
     #[test]
@@ -81,6 +228,36 @@ mod tests {
             .extend("x", Scheme::mono(Type::Int))
             .extend("x", Scheme::mono(Type::Bool));
         assert_eq!(env.lookup("x").unwrap().body, Type::Bool);
+    }
+
+    // -- Test 4 --
+    #[test]
+    fn env_new_includes_option_and_result() {
+        let env = Env::new();
+        assert!(
+            env.lookup_type_def("Option").is_some(),
+            "Option type should be built-in"
+        );
+        assert!(
+            env.lookup_type_def("Result").is_some(),
+            "Result type should be built-in"
+        );
+        assert!(
+            env.lookup_ctor("None").is_some(),
+            "None ctor should be built-in"
+        );
+        assert!(
+            env.lookup_ctor("Some").is_some(),
+            "Some ctor should be built-in"
+        );
+        assert!(
+            env.lookup_ctor("Ok").is_some(),
+            "Ok ctor should be built-in"
+        );
+        assert!(
+            env.lookup_ctor("Err").is_some(),
+            "Err ctor should be built-in"
+        );
     }
 
     // -- Test 5 --
@@ -125,7 +302,10 @@ mod tests {
             },
         };
         let env = Env::new().extend("id", scheme);
-        assert!(env.free_vars(&Subst::empty()).is_empty(), "quantified var must not be free");
+        assert!(
+            env.free_vars(&Subst::empty()).is_empty(),
+            "quantified var must not be free"
+        );
     }
 
     // -- Test 4 --
@@ -136,5 +316,125 @@ mod tests {
         // base must still have x:Int and no y
         assert_eq!(base.lookup("x").unwrap().body, Type::Int);
         assert!(base.lookup("y").is_none());
+    }
+
+    // -- Test 9 --
+    #[test]
+    fn env_extend_type_def_registers_constructors() {
+        let t0 = TypeVar(0);
+        let td = TypeDef {
+            name: "Option".to_string(),
+            params: vec![t0],
+            constructors: vec![
+                Constructor::nullary("None"),
+                Constructor::nary("Some", vec![Type::Var(t0)]),
+            ],
+        };
+        let env = Env::new().extend_type_def(td.clone());
+        assert_eq!(env.lookup_type_def("Option"), Some(&td));
+        let some = env
+            .lookup_ctor("Some")
+            .expect("Some constructor should be registered");
+        assert_eq!(some.type_name, "Option");
+        assert_eq!(some.ctor, Constructor::nary("Some", vec![Type::Var(t0)]));
+    }
+
+    // -- Test 10 --
+    #[test]
+    fn env_extend_record_def_registers_record() {
+        let rec = RecordDef {
+            name: "Point".to_string(),
+            params: vec![],
+            fields: vec![("x".to_string(), Type::Float)],
+        };
+        let env = Env::new().extend_record_def(rec.clone());
+        assert_eq!(env.lookup_record_def("Point"), Some(&rec));
+    }
+
+    // -- Test 11 --
+    #[test]
+    fn env_extend_type_def_registers_nullary_constructor_scheme() {
+        let t0 = TypeVar(0);
+        let td = TypeDef {
+            name: "Option".to_string(),
+            params: vec![t0],
+            constructors: vec![
+                Constructor::nullary("None"),
+                Constructor::nary("Some", vec![Type::Var(t0)]),
+            ],
+        };
+        let env = Env::new().extend_type_def(td);
+        let scheme = env.lookup("None").expect("None should be bound in env");
+        assert!(
+            scheme.forall.contains(&t0),
+            "None should quantify its type param"
+        );
+        assert_eq!(
+            scheme.body,
+            Type::Adt {
+                name: "Option".to_string(),
+                args: vec![Type::Var(t0)]
+            }
+        );
+    }
+
+    // -- Test 12 --
+    #[test]
+    fn env_extend_type_def_registers_nary_constructor_scheme() {
+        let t0 = TypeVar(0);
+        let td = TypeDef {
+            name: "Option".to_string(),
+            params: vec![t0],
+            constructors: vec![Constructor::nary("Some", vec![Type::Var(t0)])],
+        };
+        let env = Env::new().extend_type_def(td);
+        let scheme = env.lookup("Some").expect("Some should be bound in env");
+        assert!(
+            scheme.forall.contains(&t0),
+            "Some should quantify its type param"
+        );
+        assert_eq!(
+            scheme.body,
+            Type::Fn {
+                params: vec![Type::Var(t0)],
+                ret: Box::new(Type::Adt {
+                    name: "Option".to_string(),
+                    args: vec![Type::Var(t0)],
+                }),
+            }
+        );
+    }
+
+    // -- Test 13 --
+    #[test]
+    fn env_extend_record_def_registers_constructor_scheme() {
+        let rec = RecordDef {
+            name: "Point".to_string(),
+            params: vec![],
+            fields: vec![
+                ("x".to_string(), Type::Float),
+                ("y".to_string(), Type::Float),
+            ],
+        };
+        let env = Env::new().extend_record_def(rec);
+        let scheme = env.lookup("Point").expect("Point should be bound in env");
+        assert!(
+            scheme.forall.is_empty(),
+            "record constructor should be monomorphic here"
+        );
+        let record_ty = Type::Record {
+            name: "Point".to_string(),
+            fields: vec![
+                ("x".to_string(), Type::Float),
+                ("y".to_string(), Type::Float),
+            ],
+        };
+        assert_eq!(
+            scheme.body,
+            Type::Fn {
+                params: vec![record_ty.clone()],
+                ret: Box::new(record_ty),
+            }
+        );
     }
 }

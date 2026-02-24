@@ -53,10 +53,7 @@ pub enum Atom {
     /// Exact rational number literal, e.g. `3/4`.
     ///
     /// Auto-simplified by the reader: `6/4` → `Ratio { numer: 3, denom: 2 }`.
-    Ratio {
-        numer: i64,
-        denom: i64,
-    },
+    Ratio { numer: i64, denom: i64 },
 
     /// Boolean literal: `true` or `false`.
     Bool(bool),
@@ -195,38 +192,77 @@ mod tests {
 
     #[test]
     fn atom_int_unsuffixed() {
-        let a = Atom::Int { value: 42, suffix: None };
-        assert_eq!(a, Atom::Int { value: 42, suffix: None });
+        let a = Atom::Int {
+            value: 42,
+            suffix: None,
+        };
+        assert_eq!(
+            a,
+            Atom::Int {
+                value: 42,
+                suffix: None
+            }
+        );
     }
 
     #[test]
     fn atom_int_with_suffix() {
-        let a = Atom::Int { value: 255, suffix: Some(IntSuffix::U8) };
+        let a = Atom::Int {
+            value: 255,
+            suffix: Some(IntSuffix::U8),
+        };
         match a {
-            Atom::Int { value, suffix: Some(IntSuffix::U8) } => assert_eq!(value, 255),
+            Atom::Int {
+                value,
+                suffix: Some(IntSuffix::U8),
+            } => assert_eq!(value, 255),
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
     fn atom_int_negative_fits_i128() {
-        let a = Atom::Int { value: i64::MIN as i128, suffix: None };
-        assert_eq!(a, Atom::Int { value: -9223372036854775808, suffix: None });
+        let a = Atom::Int {
+            value: i64::MIN as i128,
+            suffix: None,
+        };
+        assert_eq!(
+            a,
+            Atom::Int {
+                value: -9223372036854775808,
+                suffix: None
+            }
+        );
     }
 
     #[test]
     fn atom_float_unsuffixed() {
-        let a = Atom::Float { value: 2.5, suffix: None };
+        let a = Atom::Float {
+            value: 2.5,
+            suffix: None,
+        };
         match a {
-            Atom::Float { value, suffix: None } => assert!((value - 2.5).abs() < 1e-10),
+            Atom::Float {
+                value,
+                suffix: None,
+            } => assert!((value - 2.5).abs() < 1e-10),
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
     fn atom_float_f32_suffix() {
-        let a = Atom::Float { value: 2.5, suffix: Some(FloatSuffix::F32) };
-        assert_eq!(a, Atom::Float { value: 2.5, suffix: Some(FloatSuffix::F32) });
+        let a = Atom::Float {
+            value: 2.5,
+            suffix: Some(FloatSuffix::F32),
+        };
+        assert_eq!(
+            a,
+            Atom::Float {
+                value: 2.5,
+                suffix: Some(FloatSuffix::F32)
+            }
+        );
     }
 
     #[test]
@@ -261,7 +297,10 @@ mod tests {
 
     #[test]
     fn atom_keyword_bare() {
-        let a = Atom::Keyword { ns: None, name: "status".to_string() };
+        let a = Atom::Keyword {
+            ns: None,
+            name: "status".to_string(),
+        };
         match &a {
             Atom::Keyword { ns: None, name } => assert_eq!(name, "status"),
             _ => panic!("wrong variant"),
@@ -270,7 +309,10 @@ mod tests {
 
     #[test]
     fn atom_keyword_namespaced() {
-        let a = Atom::Keyword { ns: Some("http".to_string()), name: "ok".to_string() };
+        let a = Atom::Keyword {
+            ns: Some("http".to_string()),
+            name: "ok".to_string(),
+        };
         match &a {
             Atom::Keyword { ns: Some(ns), name } => {
                 assert_eq!(ns, "http");
@@ -282,7 +324,10 @@ mod tests {
 
     #[test]
     fn atom_symbol_bare() {
-        let a = Atom::Symbol { ns: None, name: "add".to_string() };
+        let a = Atom::Symbol {
+            ns: None,
+            name: "add".to_string(),
+        };
         match &a {
             Atom::Symbol { ns: None, name } => assert_eq!(name, "add"),
             _ => panic!("wrong variant"),
@@ -291,7 +336,10 @@ mod tests {
 
     #[test]
     fn atom_symbol_qualified() {
-        let a = Atom::Symbol { ns: Some("math".to_string()), name: "sqrt".to_string() };
+        let a = Atom::Symbol {
+            ns: Some("math".to_string()),
+            name: "sqrt".to_string(),
+        };
         match &a {
             Atom::Symbol { ns: Some(ns), name } => {
                 assert_eq!(ns, "math");
@@ -334,7 +382,13 @@ mod tests {
 
     #[test]
     fn node_kind_list() {
-        let inner = Node::atom(Atom::Int { value: 1, suffix: None }, dummy_span());
+        let inner = Node::atom(
+            Atom::Int {
+                value: 1,
+                suffix: None,
+            },
+            dummy_span(),
+        );
         let list = NodeKind::List(vec![inner]);
         match list {
             NodeKind::List(items) => assert_eq!(items.len(), 1),
@@ -350,8 +404,20 @@ mod tests {
 
     #[test]
     fn node_kind_map_stores_pairs() {
-        let key = Node::atom(Atom::Keyword { ns: None, name: "a".into() }, dummy_span());
-        let val = Node::atom(Atom::Int { value: 1, suffix: None }, dummy_span());
+        let key = Node::atom(
+            Atom::Keyword {
+                ns: None,
+                name: "a".into(),
+            },
+            dummy_span(),
+        );
+        let val = Node::atom(
+            Atom::Int {
+                value: 1,
+                suffix: None,
+            },
+            dummy_span(),
+        );
         let map = NodeKind::Map(vec![(key, val)]);
         match map {
             NodeKind::Map(pairs) => assert_eq!(pairs.len(), 1),
@@ -367,17 +433,35 @@ mod tests {
 
     #[test]
     fn node_kind_quote() {
-        let inner = Node::atom(Atom::Symbol { ns: None, name: "x".into() }, dummy_span());
+        let inner = Node::atom(
+            Atom::Symbol {
+                ns: None,
+                name: "x".into(),
+            },
+            dummy_span(),
+        );
         let q = NodeKind::Quote(Box::new(inner));
         match q {
-            NodeKind::Quote(n) => assert_eq!(n.kind, NodeKind::Atom(Atom::Symbol { ns: None, name: "x".into() })),
+            NodeKind::Quote(n) => assert_eq!(
+                n.kind,
+                NodeKind::Atom(Atom::Symbol {
+                    ns: None,
+                    name: "x".into()
+                })
+            ),
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
     fn node_kind_deref() {
-        let inner = Node::atom(Atom::Symbol { ns: None, name: "counter".into() }, dummy_span());
+        let inner = Node::atom(
+            Atom::Symbol {
+                ns: None,
+                name: "counter".into(),
+            },
+            dummy_span(),
+        );
         let d = NodeKind::Deref(Box::new(inner));
         match d {
             NodeKind::Deref(_) => {}
@@ -400,14 +484,21 @@ mod tests {
     #[test]
     fn node_leading_comments() {
         let mut n = Node::new(NodeKind::Atom(Atom::Unit), dummy_span());
-        n.leading_comments.push(Comment("top-level function".to_string()));
+        n.leading_comments
+            .push(Comment("top-level function".to_string()));
         assert_eq!(n.leading_comments.len(), 1);
         assert_eq!(n.leading_comments[0].0, "top-level function");
     }
 
     #[test]
     fn node_trailing_comment() {
-        let mut n = Node::atom(Atom::Int { value: 42, suffix: None }, dummy_span());
+        let mut n = Node::atom(
+            Atom::Int {
+                value: 42,
+                suffix: None,
+            },
+            dummy_span(),
+        );
         n.trailing_comment = Some(Comment("the answer".to_string()));
         assert_eq!(n.trailing_comment.as_ref().unwrap().0, "the answer");
     }

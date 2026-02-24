@@ -48,7 +48,10 @@ fn native(name: &'static str, f: fn(&[Value]) -> Result<Value, String>) -> Value
 fn two_args<'a>(op: &str, args: &'a [Value]) -> Result<(&'a Value, &'a Value), String> {
     match args {
         [a, b] => Ok((a, b)),
-        _ => Err(format!("`{op}` requires exactly 2 arguments, got {}", args.len())),
+        _ => Err(format!(
+            "`{op}` requires exactly 2 arguments, got {}",
+            args.len()
+        )),
     }
 }
 
@@ -56,7 +59,10 @@ fn two_args<'a>(op: &str, args: &'a [Value]) -> Result<(&'a Value, &'a Value), S
 fn one_arg<'a>(op: &str, args: &'a [Value]) -> Result<&'a Value, String> {
     match args {
         [a] => Ok(a),
-        _ => Err(format!("`{op}` requires exactly 1 argument, got {}", args.len())),
+        _ => Err(format!(
+            "`{op}` requires exactly 1 argument, got {}",
+            args.len()
+        )),
     }
 }
 

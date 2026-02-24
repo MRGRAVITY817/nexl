@@ -5,7 +5,9 @@ use nexl_reader::Lexer;
 #[test]
 fn unclosed_string_literal_gives_helpful_message() {
     let src = "\"hello";
-    let err = Lexer::new(src, FileId(0)).tokenize().expect_err("should error");
+    let err = Lexer::new(src, FileId(0))
+        .tokenize()
+        .expect_err("should error");
 
     assert_eq!(err.code, Some(codes::UNCLOSED_STRING));
     assert_eq!(err.message, "unterminated string literal");
@@ -21,7 +23,9 @@ fn unclosed_string_literal_gives_helpful_message() {
 #[test]
 fn invalid_escape_sequence_gives_actionable_help() {
     let src = "\"\\q\"";
-    let err = Lexer::new(src, FileId(0)).tokenize().expect_err("should error");
+    let err = Lexer::new(src, FileId(0))
+        .tokenize()
+        .expect_err("should error");
 
     assert_eq!(err.code, Some(codes::INVALID_ESCAPE));
     assert_eq!(err.message, "unknown escape sequence `\\q`");
@@ -37,7 +41,9 @@ fn invalid_escape_sequence_gives_actionable_help() {
 #[test]
 fn unknown_numeric_suffix_points_at_suffix() {
     let src = "42x";
-    let err = Lexer::new(src, FileId(0)).tokenize().expect_err("should error");
+    let err = Lexer::new(src, FileId(0))
+        .tokenize()
+        .expect_err("should error");
 
     assert_eq!(err.code, Some(codes::INVALID_NUMERIC_SUFFIX));
     assert_eq!(err.message, "unknown suffix `x`");
@@ -53,7 +59,9 @@ fn unknown_numeric_suffix_points_at_suffix() {
 #[test]
 fn empty_character_literal_is_diagnostic() {
     let src = "\\";
-    let err = Lexer::new(src, FileId(0)).tokenize().expect_err("should error");
+    let err = Lexer::new(src, FileId(0))
+        .tokenize()
+        .expect_err("should error");
 
     assert_eq!(err.code, Some(codes::INVALID_CHAR_LITERAL));
     assert_eq!(err.message, "character literal is empty");
@@ -69,7 +77,9 @@ fn empty_character_literal_is_diagnostic() {
 #[test]
 fn ratio_zero_denominator_is_rejected() {
     let src = "1/0";
-    let err = Lexer::new(src, FileId(0)).tokenize().expect_err("should error");
+    let err = Lexer::new(src, FileId(0))
+        .tokenize()
+        .expect_err("should error");
 
     assert_eq!(err.code, None);
     assert_eq!(err.message, "ratio literal with zero denominator");
@@ -85,7 +95,9 @@ fn ratio_zero_denominator_is_rejected() {
 #[test]
 fn unexpected_character_reports_offending_byte() {
     let src = "%";
-    let err = Lexer::new(src, FileId(0)).tokenize().expect_err("should error");
+    let err = Lexer::new(src, FileId(0))
+        .tokenize()
+        .expect_err("should error");
 
     assert_eq!(err.code, None);
     assert_eq!(err.message, "unexpected character `%`");
@@ -120,7 +132,10 @@ fn unclosed_list_points_back_to_opener() {
     let err = nexl_reader::read(src, FileId(0)).expect_err("should error");
 
     assert_eq!(err.code, Some(codes::UNCLOSED_DELIMITER));
-    assert_eq!(err.message, "unclosed `(` — expected matching closer before end of file");
+    assert_eq!(
+        err.message,
+        "unclosed `(` — expected matching closer before end of file"
+    );
     assert_eq!(err.labels.len(), 1);
     assert_eq!(err.labels[0].span.start, 0);
     assert_eq!(err.labels[0].message, "list opened here");
@@ -136,7 +151,10 @@ fn unclosed_set_reports_opening_location() {
     let err = nexl_reader::read(src, FileId(0)).expect_err("should error");
 
     assert_eq!(err.code, Some(codes::UNCLOSED_DELIMITER));
-    assert_eq!(err.message, "unclosed `#{` — expected matching closer before end of file");
+    assert_eq!(
+        err.message,
+        "unclosed `#{` — expected matching closer before end of file"
+    );
     assert_eq!(err.labels.len(), 1);
     assert_eq!(err.labels[0].span.start, 0);
     assert_eq!(err.labels[0].message, "set opened here");
@@ -152,7 +170,10 @@ fn unclosed_map_reports_opening_location() {
     let err = nexl_reader::read(src, FileId(0)).expect_err("should error");
 
     assert_eq!(err.code, Some(codes::UNCLOSED_DELIMITER));
-    assert_eq!(err.message, "unclosed `{` — expected matching closer before end of file");
+    assert_eq!(
+        err.message,
+        "unclosed `{` — expected matching closer before end of file"
+    );
     assert_eq!(err.labels.len(), 1);
     assert_eq!(err.labels[0].span.start, 0);
     assert_eq!(err.labels[0].message, "map opened here");

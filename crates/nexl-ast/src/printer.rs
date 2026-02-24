@@ -220,7 +220,11 @@ fn format_float(v: f64) -> String {
         return "NaN".to_string();
     }
     if v.is_infinite() {
-        return if v > 0.0 { "Inf".to_string() } else { "-Inf".to_string() };
+        return if v > 0.0 {
+            "Inf".to_string()
+        } else {
+            "-Inf".to_string()
+        };
     }
     let s = format!("{v}");
     // Ensure there is a decimal point so the output is recognised as a float.
@@ -287,42 +291,60 @@ mod tests {
     // ── 1. print_int_unsuffixed ───────────────────────────────────────────
     #[test]
     fn print_int_unsuffixed() {
-        let node = atom_node(Atom::Int { value: 42, suffix: None });
+        let node = atom_node(Atom::Int {
+            value: 42,
+            suffix: None,
+        });
         assert_eq!(pp().print(&node), "42");
     }
 
     // ── 2. print_int_i32_suffix ───────────────────────────────────────────
     #[test]
     fn print_int_i32_suffix() {
-        let node = atom_node(Atom::Int { value: 42, suffix: Some(IntSuffix::I32) });
+        let node = atom_node(Atom::Int {
+            value: 42,
+            suffix: Some(IntSuffix::I32),
+        });
         assert_eq!(pp().print(&node), "42i32");
     }
 
     // ── 3. print_int_u8_suffix ────────────────────────────────────────────
     #[test]
     fn print_int_u8_suffix() {
-        let node = atom_node(Atom::Int { value: 255, suffix: Some(IntSuffix::U8) });
+        let node = atom_node(Atom::Int {
+            value: 255,
+            suffix: Some(IntSuffix::U8),
+        });
         assert_eq!(pp().print(&node), "255u8");
     }
 
     // ── 4. print_int_negative ─────────────────────────────────────────────
     #[test]
     fn print_int_negative() {
-        let node = atom_node(Atom::Int { value: -7, suffix: None });
+        let node = atom_node(Atom::Int {
+            value: -7,
+            suffix: None,
+        });
         assert_eq!(pp().print(&node), "-7");
     }
 
     // ── 5. print_float_unsuffixed ─────────────────────────────────────────
     #[test]
     fn print_float_unsuffixed() {
-        let node = atom_node(Atom::Float { value: 2.5, suffix: None });
+        let node = atom_node(Atom::Float {
+            value: 2.5,
+            suffix: None,
+        });
         assert_eq!(pp().print(&node), "2.5");
     }
 
     // ── 6. print_float_f32_suffix ─────────────────────────────────────────
     #[test]
     fn print_float_f32_suffix() {
-        let node = atom_node(Atom::Float { value: 2.5, suffix: Some(FloatSuffix::F32) });
+        let node = atom_node(Atom::Float {
+            value: 2.5,
+            suffix: Some(FloatSuffix::F32),
+        });
         assert_eq!(pp().print(&node), "2.5f32");
     }
 
@@ -420,7 +442,10 @@ mod tests {
     // ── 20. print_keyword_bare ────────────────────────────────────────────
     #[test]
     fn print_keyword_bare() {
-        let node = atom_node(Atom::Keyword { ns: None, name: "status".to_string() });
+        let node = atom_node(Atom::Keyword {
+            ns: None,
+            name: "status".to_string(),
+        });
         assert_eq!(pp().print(&node), ":status");
     }
 
@@ -437,7 +462,10 @@ mod tests {
     // ── 22. print_symbol_bare ─────────────────────────────────────────────
     #[test]
     fn print_symbol_bare() {
-        let node = atom_node(Atom::Symbol { ns: None, name: "add".to_string() });
+        let node = atom_node(Atom::Symbol {
+            ns: None,
+            name: "add".to_string(),
+        });
         assert_eq!(pp().print(&node), "add");
     }
 
@@ -461,9 +489,18 @@ mod tests {
     // ── 25. print_list_atoms ──────────────────────────────────────────────
     #[test]
     fn print_list_atoms() {
-        let plus = atom_node(Atom::Symbol { ns: None, name: "+".to_string() });
-        let one = atom_node(Atom::Int { value: 1, suffix: None });
-        let two = atom_node(Atom::Int { value: 2, suffix: None });
+        let plus = atom_node(Atom::Symbol {
+            ns: None,
+            name: "+".to_string(),
+        });
+        let one = atom_node(Atom::Int {
+            value: 1,
+            suffix: None,
+        });
+        let two = atom_node(Atom::Int {
+            value: 2,
+            suffix: None,
+        });
         let node = Node::new(NodeKind::List(vec![plus, one, two]), sp());
         assert_eq!(pp().print(&node), "(+ 1 2)");
     }
@@ -479,7 +516,12 @@ mod tests {
     #[test]
     fn print_vector_atoms() {
         let items: Vec<Node> = (1i128..=3)
-            .map(|v| atom_node(Atom::Int { value: v, suffix: None }))
+            .map(|v| {
+                atom_node(Atom::Int {
+                    value: v,
+                    suffix: None,
+                })
+            })
             .collect();
         let node = Node::new(NodeKind::Vector(items), sp());
         assert_eq!(pp().print(&node), "[1 2 3]");
@@ -495,8 +537,14 @@ mod tests {
     // ── 29. print_map_one_pair ────────────────────────────────────────────
     #[test]
     fn print_map_one_pair() {
-        let k = atom_node(Atom::Keyword { ns: None, name: "a".to_string() });
-        let v = atom_node(Atom::Int { value: 1, suffix: None });
+        let k = atom_node(Atom::Keyword {
+            ns: None,
+            name: "a".to_string(),
+        });
+        let v = atom_node(Atom::Int {
+            value: 1,
+            suffix: None,
+        });
         let node = Node::new(NodeKind::Map(vec![(k, v)]), sp());
         assert_eq!(pp().print(&node), "{:a 1}");
     }
@@ -511,8 +559,14 @@ mod tests {
     // ── 31. print_set_atoms ───────────────────────────────────────────────
     #[test]
     fn print_set_atoms() {
-        let one = atom_node(Atom::Int { value: 1, suffix: None });
-        let two = atom_node(Atom::Int { value: 2, suffix: None });
+        let one = atom_node(Atom::Int {
+            value: 1,
+            suffix: None,
+        });
+        let two = atom_node(Atom::Int {
+            value: 2,
+            suffix: None,
+        });
         let node = Node::new(NodeKind::Set(vec![one, two]), sp());
         assert_eq!(pp().print(&node), "#{1 2}");
     }
@@ -520,11 +574,23 @@ mod tests {
     // ── 32. print_nested_list ─────────────────────────────────────────────
     #[test]
     fn print_nested_list() {
-        let plus = atom_node(Atom::Symbol { ns: None, name: "+".to_string() });
-        let one = atom_node(Atom::Int { value: 1, suffix: None });
-        let two = atom_node(Atom::Int { value: 2, suffix: None });
+        let plus = atom_node(Atom::Symbol {
+            ns: None,
+            name: "+".to_string(),
+        });
+        let one = atom_node(Atom::Int {
+            value: 1,
+            suffix: None,
+        });
+        let two = atom_node(Atom::Int {
+            value: 2,
+            suffix: None,
+        });
         let inner = Node::new(NodeKind::List(vec![plus, one, two]), sp());
-        let three = atom_node(Atom::Int { value: 3, suffix: None });
+        let three = atom_node(Atom::Int {
+            value: 3,
+            suffix: None,
+        });
         let outer = Node::new(NodeKind::List(vec![inner, three]), sp());
         assert_eq!(pp().print(&outer), "((+ 1 2) 3)");
     }
@@ -532,7 +598,10 @@ mod tests {
     // ── 33. print_quote ───────────────────────────────────────────────────
     #[test]
     fn print_quote() {
-        let x = atom_node(Atom::Symbol { ns: None, name: "x".to_string() });
+        let x = atom_node(Atom::Symbol {
+            ns: None,
+            name: "x".to_string(),
+        });
         let node = Node::new(NodeKind::Quote(Box::new(x)), sp());
         assert_eq!(pp().print(&node), "'x");
     }
@@ -540,7 +609,10 @@ mod tests {
     // ── 34. print_deref ───────────────────────────────────────────────────
     #[test]
     fn print_deref() {
-        let counter = atom_node(Atom::Symbol { ns: None, name: "counter".to_string() });
+        let counter = atom_node(Atom::Symbol {
+            ns: None,
+            name: "counter".to_string(),
+        });
         let node = Node::new(NodeKind::Deref(Box::new(counter)), sp());
         assert_eq!(pp().print(&node), "@counter");
     }
@@ -548,7 +620,10 @@ mod tests {
     // ── 35. print_discard ─────────────────────────────────────────────────
     #[test]
     fn print_discard() {
-        let x = atom_node(Atom::Symbol { ns: None, name: "x".to_string() });
+        let x = atom_node(Atom::Symbol {
+            ns: None,
+            name: "x".to_string(),
+        });
         let node = Node::new(NodeKind::Discard(Box::new(x)), sp());
         assert_eq!(pp().print(&node), "#_ x");
     }
@@ -557,8 +632,12 @@ mod tests {
     #[test]
     fn print_leading_comment() {
         use crate::node::Comment;
-        let mut node = atom_node(Atom::Int { value: 1, suffix: None });
-        node.leading_comments.push(Comment(" a comment".to_string()));
+        let mut node = atom_node(Atom::Int {
+            value: 1,
+            suffix: None,
+        });
+        node.leading_comments
+            .push(Comment(" a comment".to_string()));
         assert_eq!(pp().print(&node), "; a comment\n1");
     }
 
@@ -566,7 +645,10 @@ mod tests {
     #[test]
     fn print_trailing_comment() {
         use crate::node::Comment;
-        let mut node = atom_node(Atom::Int { value: 42, suffix: None });
+        let mut node = atom_node(Atom::Int {
+            value: 42,
+            suffix: None,
+        });
         node.trailing_comment = Some(Comment(" the answer".to_string()));
         assert_eq!(pp().print(&node), "42 ; the answer");
     }

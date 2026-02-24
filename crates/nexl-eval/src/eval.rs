@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use meta::{Atom, Node, NodeKind};
-use nexl_runtime::{value::Function, Value};
+use nexl_runtime::{Value, value::Function};
 
 use crate::{Env, EvalError};
 
@@ -23,7 +23,11 @@ pub fn eval(node: &Node, env: &Rc<Env>) -> Result<Value, EvalError> {
     }
 }
 
-fn eval_with_loop<'a>(node: &Node, env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
+fn eval_with_loop<'a>(
+    node: &Node,
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
     match &node.kind {
         NodeKind::Atom(atom) => eval_atom(atom, env),
         NodeKind::List(items) => eval_list(items, env, loop_state),
@@ -47,12 +51,18 @@ fn eval_atom(atom: &Atom, env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         Atom::Symbol { ns: None, name } => env
             .get(name)
             .ok_or_else(|| EvalError::UnboundSymbol(name.clone()))?,
-        Atom::Symbol { ns: Some(_), name } => return Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
+        Atom::Symbol { ns: Some(_), name } => {
+            return Err(EvalError::UnsupportedQualifiedSymbol(name.clone()));
+        }
     };
     Ok(EvalReturn::Value(v))
 }
 
-fn eval_list<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
+fn eval_list<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
     if items.is_empty() {
         return Err(EvalError::Arity);
     }
@@ -60,14 +70,24 @@ fn eval_list<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame
     match &head.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "def" => eval_def(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => eval_let(items, env),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => eval_do(items, env, loop_state),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "if" => eval_if(items, env, loop_state),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => {
+            eval_do(items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "if" => {
+            eval_if(items, env, loop_state)
+        }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "fn" => eval_fn(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "defn" => eval_defn(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "loop" => eval_loop(items, env),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "recur" => eval_recur(items, env, loop_state),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "set!" => eval_set_bang(items, env),
-        NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => Err(EvalError::UnsupportedQualifiedSymbol(name.clone())),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "recur" => {
+            eval_recur(items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "set!" => {
+            eval_set_bang(items, env)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => {
+            Err(EvalError::UnsupportedQualifiedSymbol(name.clone()))
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -140,7 +160,11 @@ fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     Ok(EvalReturn::Value(last))
 }
 
-fn eval_do<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
+fn eval_do<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
     if items.len() < 2 {
         return Err(EvalError::Arity);
     }
@@ -155,7 +179,11 @@ fn eval_do<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'
     Ok(EvalReturn::Value(last))
 }
 
-fn eval_if<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
+fn eval_if<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
     if items.len() != 4 {
         return Err(EvalError::Arity);
     }
@@ -254,7 +282,10 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     // Build an equivalent (fn [params] body...) form
     let mut fn_items = Vec::new();
     fn_items.push(Node {
-        kind: NodeKind::Atom(Atom::Symbol { ns: None, name: "fn".into() }),
+        kind: NodeKind::Atom(Atom::Symbol {
+            ns: None,
+            name: "fn".into(),
+        }),
         span: items[0].span,
         leading_comments: vec![],
         trailing_comment: None,
@@ -336,7 +367,11 @@ fn eval_loop(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     }
 }
 
-fn eval_recur<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
+fn eval_recur<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
     let frame = match loop_state {
         Some(f) => f,
         None => return Err(EvalError::InvalidRecur),
@@ -358,7 +393,11 @@ fn eval_recur<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFram
     Ok(EvalReturn::Recur(values))
 }
 
-fn eval_apply<'a>(items: &[Node], env: &Rc<Env>, loop_state: Option<&'a LoopFrame<'a>>) -> Result<EvalReturn, EvalError> {
+fn eval_apply<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
     let head = &items[0];
     let callee = match eval_with_loop(head, env, loop_state)? {
         EvalReturn::Value(v) => v,

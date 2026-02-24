@@ -26,7 +26,10 @@ pub struct Label {
 impl Label {
     /// Create a label pointing at `span` with the given message.
     pub fn new(span: Span, message: impl Into<String>) -> Self {
-        Self { span, message: message.into() }
+        Self {
+            span,
+            message: message.into(),
+        }
     }
 }
 
@@ -120,7 +123,9 @@ impl std::error::Error for Diagnostic {}
 
 impl miette::Diagnostic for Diagnostic {
     fn code<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
-        self.code.as_ref().map(|c| Box::new(c) as Box<dyn fmt::Display>)
+        self.code
+            .as_ref()
+            .map(|c| Box::new(c) as Box<dyn fmt::Display>)
     }
 
     fn severity(&self) -> Option<miette::Severity> {
@@ -132,7 +137,9 @@ impl miette::Diagnostic for Diagnostic {
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn fmt::Display + 'a>> {
-        self.help.as_ref().map(|h| Box::new(h) as Box<dyn fmt::Display>)
+        self.help
+            .as_ref()
+            .map(|h| Box::new(h) as Box<dyn fmt::Display>)
     }
 
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
@@ -160,7 +167,12 @@ mod tests {
 
     #[test]
     fn severity_variants_exist() {
-        let _variants = [Severity::Error, Severity::Warning, Severity::Note, Severity::Help];
+        let _variants = [
+            Severity::Error,
+            Severity::Warning,
+            Severity::Note,
+            Severity::Help,
+        ];
         match Severity::Error {
             Severity::Error | Severity::Warning | Severity::Note | Severity::Help => {}
         }
@@ -190,7 +202,10 @@ mod tests {
     fn diagnostic_with_help_text() {
         let mut d = Diagnostic::new(Severity::Warning, "unused variable");
         d.set_help("prefix the name with `_` to suppress this warning");
-        assert_eq!(d.help.as_deref(), Some("prefix the name with `_` to suppress this warning"));
+        assert_eq!(
+            d.help.as_deref(),
+            Some("prefix the name with `_` to suppress this warning")
+        );
     }
 
     #[test]
@@ -205,10 +220,16 @@ mod tests {
 
     #[test]
     fn error_code_display() {
-        let lexer_code = ErrorCode { phase: ErrorPhase::Lexer, number: 1 };
+        let lexer_code = ErrorCode {
+            phase: ErrorPhase::Lexer,
+            number: 1,
+        };
         assert_eq!(lexer_code.to_string(), "NXL-L0001");
 
-        let reader_code = ErrorCode { phase: ErrorPhase::Reader, number: 42 };
+        let reader_code = ErrorCode {
+            phase: ErrorPhase::Reader,
+            number: 42,
+        };
         assert_eq!(reader_code.to_string(), "NXL-R0042");
     }
 
@@ -220,7 +241,10 @@ mod tests {
         assert_eq!(codes::INVALID_CHAR_LITERAL.phase, ErrorPhase::Lexer);
         // They are distinct from each other
         assert_ne!(codes::UNCLOSED_STRING.number, codes::INVALID_ESCAPE.number);
-        assert_ne!(codes::INVALID_ESCAPE.number, codes::INVALID_CHAR_LITERAL.number);
+        assert_ne!(
+            codes::INVALID_ESCAPE.number,
+            codes::INVALID_CHAR_LITERAL.number
+        );
     }
 
     #[test]
