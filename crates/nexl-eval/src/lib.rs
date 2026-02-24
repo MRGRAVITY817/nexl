@@ -826,6 +826,59 @@ mod tests {
     }
 
     #[test]
+    fn eval_vector_literal_ints() {
+        let env = Rc::new(Env::new());
+        let expr = vector(vec![
+            lit(Atom::Int {
+                value: 1,
+                suffix: None,
+            }),
+            lit(Atom::Int {
+                value: 2,
+                suffix: None,
+            }),
+            lit(Atom::Int {
+                value: 3,
+                suffix: None,
+            }),
+        ]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn eval_vector_literal_evaluates_elements() {
+        let env = Rc::new(Env::new());
+        env.define("x", Value::Int(10));
+        let expr = vector(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "x".into(),
+            }),
+            lit(Atom::Int {
+                value: 2,
+                suffix: None,
+            }),
+        ]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![Value::Int(10), Value::Int(2)]))
+        );
+    }
+
+    #[test]
+    fn eval_vector_literal_empty() {
+        let env = Rc::new(Env::new());
+        let expr = vector(vec![]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Vec(Rc::new(vec![])));
+    }
+
+    #[test]
     fn def_binds_in_current_env() {
         let env = Rc::new(Env::new());
         let expr = list(vec![

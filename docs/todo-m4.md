@@ -9,7 +9,7 @@
 - [x] Implement Display, PartialEq, type_name for collection values
 
 ## Evaluation (`nexl-eval`)
-- [ ] Evaluate vector literals `[1 2 3]` → `Value::Vec`
+- [x] Evaluate vector literals `[1 2 3]` → `Value::Vec`
 - [ ] Evaluate map literals `{:a 1 :b 2}` → `Value::Map`
 - [ ] Evaluate set literals `#{1 2 3}` → `Value::Set`
 
