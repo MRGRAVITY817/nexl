@@ -55,6 +55,7 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
     match head_sym(items) {
         Some("let") => synth_let(items, env, state),
         Some("do") => synth_do(items, env, state),
+        Some("if") => synth_if(items, env, state),
         _ => unimplemented!("synth_list: {:?}", items.first().map(|n| &n.kind)),
     }
 }
@@ -86,6 +87,35 @@ fn head_sym(items: &[Node]) -> Option<&str> {
         Some(Node { kind: NodeKind::Atom(Atom::Symbol { ns: None, name }), .. }) => Some(name),
         _ => None,
     }
+}
+
+/// Synthesize the type of an `(if cond then else)` form.
+///
+/// The condition must be `Bool` (ADR-004 — no truthiness).
+/// Both branches must unify to a common type (spec §4.5).
+fn synth_if(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // Structure: (if <cond> <then> <else>) — exactly 4 elements.
+    if items.len() != 4 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "if expects (if cond then else), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let cond_node = &items[1];
+    let then_node = &items[2];
+    let else_node = &items[3];
+
+    // Condition must be Bool (ADR-004).
+    check(cond_node, &Type::Bool, env, state)?;
+
+    // Synthesize then-branch; use it as the expected type for else.
+    let then_ty = synth(then_node, env, state)?;
+    nexl_types::unify(&then_ty, &synth(else_node, env, state)?, &mut state.subst)?;
+
+    Ok(state.subst.apply(&then_ty))
 }
 
 /// Synthesize the type of a `(let [x e1 y e2 ...] body)` form.
@@ -215,7 +245,8 @@ pub fn check(
     state: &mut InferState,
 ) -> Result<(), TypeError> {
     let actual = synth(node, env, state)?;
-    nexl_types::unify(&actual, expected, &mut state.subst)
+    // Put `expected` first so Mismatch errors read "expected X, found Y".
+    nexl_types::unify(expected, &actual, &mut state.subst)
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +321,11 @@ mod tests {
     use nexl_ast::NodeKind;
     use super::{InferState, check, infer_def, synth};
     use crate::Env;
+
+    /// Build `(if cond then else)` as a List node.
+    fn if_node(cond: Node, then: Node, else_: Node) -> Node {
+        Node::new(NodeKind::List(vec![sym_node("if"), cond, then, else_]), syn_span())
+    }
 
     /// Build `(do e1 e2 ...)` as a List node.
     fn do_node(exprs: Vec<Node>) -> Node {
@@ -636,6 +672,143 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
             "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // if form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (if) --
+    #[test]
+    fn infer_if_both_branches_int() {
+        // (if true 1 2) → Int
+        let (env, mut state) = empty();
+        let node = if_node(atom_node(Atom::Bool(true)), int_node(1), int_node(2));
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 2 (if) --
+    #[test]
+    fn infer_if_returns_bool_branch_type() {
+        // (if false true false) → Bool
+        let (env, mut state) = empty();
+        let node = if_node(
+            atom_node(Atom::Bool(false)),
+            atom_node(Atom::Bool(true)),
+            atom_node(Atom::Bool(false)),
+        );
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Bool);
+    }
+
+    // -- Test 3 (if) --
+    #[test]
+    fn infer_if_non_bool_condition_error() {
+        // (if 42 1 2) → Mismatch {expected: Bool, found: Int}  (ADR-004)
+        let (env, mut state) = empty();
+        let node = if_node(int_node(42), int_node(1), int_node(2));
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::Mismatch { ref expected, ref found }
+                if *expected == Type::Bool && *found == Type::Int
+            ),
+            "expected Mismatch(Bool, Int), got {err:?}"
+        );
+    }
+
+    // -- Test 4 (if) --
+    #[test]
+    fn infer_if_branch_type_mismatch() {
+        // (if true 42 "hello") → Mismatch {expected: Int, found: Str}
+        let (env, mut state) = empty();
+        let node = if_node(
+            atom_node(Atom::Bool(true)),
+            int_node(42),
+            atom_node(Atom::Str("hello".into())),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
+    }
+
+    // -- Test 5 (if) --
+    #[test]
+    fn infer_if_condition_error() {
+        // (if unknown 1 2) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = if_node(sym_node("unknown"), int_node(1), int_node(2));
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 6 (if) --
+    #[test]
+    fn infer_if_error_in_then() {
+        // (if true unknown 2) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = if_node(atom_node(Atom::Bool(true)), sym_node("unknown"), int_node(2));
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 7 (if) --
+    #[test]
+    fn infer_if_error_in_else() {
+        // (if true 1 unknown) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = if_node(atom_node(Atom::Bool(true)), int_node(1), sym_node("unknown"));
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 8 (if) --
+    #[test]
+    fn infer_if_malformed_missing_else() {
+        // (if true 1) — no else branch → MalformedForm
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("if"), atom_node(Atom::Bool(true)), int_node(1)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 9 (if) --
+    #[test]
+    fn infer_if_malformed_too_many_args() {
+        // (if true 1 2 3) — extra element → MalformedForm
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("if"),
+                atom_node(Atom::Bool(true)),
+                int_node(1),
+                int_node(2),
+                int_node(3),
+            ]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
         );
     }
 
