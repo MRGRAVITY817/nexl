@@ -4,4 +4,4 @@ mod env;
 mod infer;
 
 pub use env::Env;
-pub use infer::{InferState, check, infer_def, synth};
+pub use infer::{InferState, check, infer_def, infer_defn, synth};

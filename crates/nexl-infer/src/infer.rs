@@ -286,6 +286,62 @@ fn synth_var(name: &str, env: &Env, state: &mut InferState) -> Result<Type, Type
 }
 
 // ---------------------------------------------------------------------------
+// defn form
+// ---------------------------------------------------------------------------
+
+/// Infer the type of a `(defn name [params...] body)` form.
+///
+/// Sugar for `(def name (fn [params...] body))`.  Returns the bound name,
+/// the synthesized function type, and a new environment that extends `env`
+/// with `name → Scheme::mono(fn-type)`.
+pub fn infer_defn(
+    node: &Node,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<(String, Type, Env), TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defn must be a list".to_string(),
+            }));
+        }
+    };
+
+    // Structure: (defn <name> <params-vec> <body>) — exactly 4 elements.
+    if items.len() != 4 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "defn expects (defn name [params...] body), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    // items[1] must be an unqualified symbol (the function name).
+    let name = match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defn function name must be an unqualified symbol".to_string(),
+            }));
+        }
+    };
+
+    // Desugar: build a synthetic `fn` items slice and reuse synth_fn.
+    // items[2] = params vector, items[3] = body.
+    let fn_head = Node::new(
+        NodeKind::Atom(Atom::Symbol { ns: None, name: "fn".to_string() }),
+        node.span,
+    );
+    let fn_items = [fn_head, items[2].clone(), items[3].clone()];
+    let fn_ty = synth_fn(&fn_items, env, state)?;
+
+    let new_env = env.extend(name.clone(), Scheme::mono(fn_ty.clone()));
+    Ok((name, fn_ty, new_env))
+}
+
+// ---------------------------------------------------------------------------
 // Check mode
 // ---------------------------------------------------------------------------
 
@@ -374,8 +430,15 @@ mod tests {
     use nexl_types::{Scheme, Type, TypeErrorKind};
 
     use nexl_ast::NodeKind;
-    use super::{InferState, check, infer_def, synth};
+    use super::{InferState, check, infer_def, infer_defn, synth};
     use crate::Env;
+
+    /// Build `(defn name [param...] body)` as a List node.
+    fn defn_node(name: &str, params: Vec<&str>, body: Node) -> Node {
+        let head = sym_node("defn");
+        let pvec = Node::new(NodeKind::Vector(params.iter().map(|p| sym_node(p)).collect()), syn_span());
+        Node::new(NodeKind::List(vec![head, sym_node(name), pvec, body]), syn_span())
+    }
 
     /// Build `(fn [param...] body)` as a List node.
     fn fn_node(params: Vec<&str>, body: Node) -> Node {
@@ -734,6 +797,121 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
             "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // defn form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (defn) --
+    #[test]
+    fn infer_defn_name_returned() {
+        // (defn f [] 42) → name is "f"
+        let (env, mut state) = empty();
+        let node = defn_node("f", vec![], int_node(42));
+        let (name, _ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(name, "f");
+    }
+
+    // -- Test 2 (defn) --
+    #[test]
+    fn infer_defn_zero_params_type() {
+        // (defn f [] 42) → type is (Fn [] -> Int)
+        let (env, mut state) = empty();
+        let node = defn_node("f", vec![], int_node(42));
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Fn { params: vec![], ret: Box::new(Type::Int) });
+    }
+
+    // -- Test 3 (defn) --
+    #[test]
+    fn infer_defn_one_param_identity_type() {
+        // (defn f [x] x) → (Fn [t?] -> t?) where param == ret var
+        let (env, mut state) = empty();
+        let node = defn_node("f", vec!["x"], sym_node("x"));
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Fn { params, ret } => {
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0], *ret, "param and return type must be the same var");
+            }
+            other => panic!("expected Fn type, got {other:?}"),
+        }
+    }
+
+    // -- Test 4 (defn) --
+    #[test]
+    fn infer_defn_extends_env() {
+        // returned env has f → (Fn [] -> Int); original env unchanged
+        let (env, mut state) = empty();
+        let node = defn_node("f", vec![], int_node(42));
+        let (_name, _ty, new_env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert!(env.lookup("f").is_none(), "original env must not have f");
+        let scheme = new_env.lookup("f").expect("new env must have f");
+        assert_eq!(scheme.body, Type::Fn { params: vec![], ret: Box::new(Type::Int) });
+    }
+
+    // -- Test 5 (defn) --
+    #[test]
+    fn infer_defn_body_error() {
+        // (defn f [x] unknown) → UnboundVariable("unknown")
+        let (env, mut state) = empty();
+        let node = defn_node("f", vec!["x"], sym_node("unknown"));
+        let err = infer_defn(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {err:?}"
+        );
+    }
+
+    // -- Test 6 (defn) --
+    #[test]
+    fn infer_defn_malformed_wrong_arity() {
+        // (defn f [x]) — missing body → MalformedForm
+        let (env, mut state) = empty();
+        let pvec = Node::new(NodeKind::Vector(vec![sym_node("x")]), syn_span());
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("defn"), sym_node("f"), pvec]),
+            syn_span(),
+        );
+        let err = infer_defn(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 7 (defn) --
+    #[test]
+    fn infer_defn_malformed_name_not_symbol() {
+        // (defn 42 [x] body) → MalformedForm
+        let (env, mut state) = empty();
+        let pvec = Node::new(NodeKind::Vector(vec![sym_node("x")]), syn_span());
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("defn"), int_node(42), pvec, int_node(99)]),
+            syn_span(),
+        );
+        let err = infer_defn(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 8 (defn) --
+    #[test]
+    fn infer_defn_malformed_params_not_vector() {
+        // (defn f 42 body) → MalformedForm (params must be a vector)
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("defn"), sym_node("f"), int_node(42), int_node(99)]),
+            syn_span(),
+        );
+        let err = infer_defn(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
         );
     }
 

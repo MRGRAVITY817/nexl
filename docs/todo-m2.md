@@ -34,7 +34,7 @@
 - [x] Infer `do` form — check each expr, return type of last
 - [x] Infer `if` form — condition must be Bool, branches must unify
 - [x] Infer `fn` form — fresh type vars for params, infer body
-- [ ] Infer `defn` form — sugar for def + fn, same as fn
+- [x] Infer `defn` form — sugar for def + fn, same as fn
 - [ ] Infer function application — callee must be Fn, unify arg types
 - [ ] Infer `loop`/`recur` — loop vars typed from init, recur must match
 - [ ] Polymorphic let-generalization (generalize unbound type vars)
