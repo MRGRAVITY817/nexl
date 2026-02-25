@@ -28,10 +28,23 @@ impl Subst {
     /// Apply this substitution to a type, recursively replacing variables.
     pub fn apply(&self, ty: &Type) -> Type {
         match ty {
-            Type::Var(tv) => match self.map.get(tv) {
-                Some(replacement) => self.apply(replacement),
-                None => ty.clone(),
-            },
+            Type::Var(tv) => {
+                let mut current = *tv;
+                let mut seen = Vec::new();
+                loop {
+                    if seen.contains(&current) {
+                        return Type::Var(*tv);
+                    }
+                    seen.push(current);
+                    let Some(replacement) = self.map.get(&current) else {
+                        return Type::Var(current);
+                    };
+                    match replacement {
+                        Type::Var(next) => current = *next,
+                        _ => return self.apply(replacement),
+                    }
+                }
+            }
             Type::Fn { params, ret } => Type::Fn {
                 params: params.iter().map(|p| self.apply(p)).collect(),
                 ret: Box::new(self.apply(ret)),
