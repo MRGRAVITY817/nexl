@@ -1,3 +1,4 @@
+pub mod assert;
 pub mod effect;
 pub mod handle;
 pub mod module;
@@ -6,6 +7,7 @@ pub mod pattern;
 pub mod printer;
 pub mod span;
 
+pub use assert::{AssertForm, AssertParseError, parse_assert_form};
 pub use effect::{EffectDecl, EffectOpDecl, EffectParseError, parse_effect_decl};
 pub use handle::{HandleDecl, HandledEffect, HandledOp, HandleParseError, parse_handle_form};
 pub use module::{ImportDecl, ImportKind, ModuleDecl, ModuleParseError, parse_import_decl, parse_module_decl};
