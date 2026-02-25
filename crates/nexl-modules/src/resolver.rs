@@ -20,6 +20,25 @@ pub struct ResolvedName {
     pub name: String,
 }
 
+/// Exported name sets for a module, split by visibility.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleExports {
+    /// Publicly exported names (`:exports`).
+    pub public: Vec<String>,
+    /// Package-private names (`^:package`).
+    pub package: Vec<String>,
+}
+
+impl ModuleExports {
+    /// Convenience: build exports with only public names.
+    pub fn public(names: Vec<String>) -> Self {
+        Self {
+            public: names,
+            package: Vec::new(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -34,6 +53,10 @@ pub enum ResolveError {
     /// A name is not in the module's exported set.
     #[error("`{name}` is not exported by module `{module}`")]
     NameNotExported { module: String, name: String },
+
+    /// A package-private name is accessed from outside its package.
+    #[error("package-private name `{name}` from module `{module}` is not visible outside its package")]
+    PackagePrivateNotVisible { module: String, name: String },
 
     /// A bare name matches exports from more than one imported module.
     #[error("`{name}` is ambiguous: found in modules {modules:?}")]
@@ -64,8 +87,12 @@ enum UnqualifiedEntry {
 pub struct NameResolver {
     /// alias → module_path, for qualified resolution.
     alias_to_module: HashMap<String, String>,
-    /// alias → exported name list, for qualified validation.
-    alias_exports: HashMap<String, Vec<String>>,
+    /// alias → public exports, for qualified validation.
+    alias_public_exports: HashMap<String, Vec<String>>,
+    /// alias → package-private exports, for visibility errors.
+    alias_package_exports: HashMap<String, Vec<String>>,
+    /// alias → whether the import is from the same package.
+    alias_same_package: HashMap<String, bool>,
     /// bare name → unique origin or ambiguity info.
     unqualified: HashMap<String, UnqualifiedEntry>,
 }
@@ -80,17 +107,40 @@ impl NameResolver {
                 alias: alias.to_string(),
             })?;
 
-        let exports = self.alias_exports.get(alias).expect("alias_exports in sync");
-        if !exports.contains(&name.to_string()) {
-            return Err(ResolveError::NameNotExported {
+        let public_exports = self
+            .alias_public_exports
+            .get(alias)
+            .expect("alias_public_exports in sync");
+        let package_exports = self
+            .alias_package_exports
+            .get(alias)
+            .expect("alias_package_exports in sync");
+        let same_package = *self
+            .alias_same_package
+            .get(alias)
+            .expect("alias_same_package in sync");
+
+        let name_string = name.to_string();
+        let is_public = public_exports.contains(&name_string);
+        let is_package = package_exports.contains(&name_string);
+
+        if is_public || (same_package && is_package) {
+            return Ok(ResolvedName {
                 module: module.clone(),
-                name: name.to_string(),
+                name: name_string,
             });
         }
 
-        Ok(ResolvedName {
+        if is_package && !same_package {
+            return Err(ResolveError::PackagePrivateNotVisible {
+                module: module.clone(),
+                name: name_string,
+            });
+        }
+
+        Err(ResolveError::NameNotExported {
             module: module.clone(),
-            name: name.to_string(),
+            name: name_string,
         })
     }
 
@@ -114,38 +164,38 @@ impl NameResolver {
 // ---------------------------------------------------------------------------
 
 /// Build a [`NameResolver`] from a module's imports and each imported module's
-/// exported name list.
+/// exported name lists.
 ///
-/// `imports` is a slice of `(ImportDecl, exports)` where `exports` is the list
-/// of names the imported module makes public.  If a module's `ModuleDecl` has
-/// `exports: None` (everything exported), the caller should pass the full set
-/// of top-level definition names.
+/// `imports` is a slice of `(ImportDecl, ModuleExports)`. The resolver enforces
+/// package-private visibility by comparing each import's module path to the
+/// caller's `importer_package_prefix`.
 ///
 /// Returns an error if any import references a name that the target module
 /// does not export.
 pub fn build_name_resolver(
-    imports: &[(ImportDecl, Vec<String>)],
+    importer_package_prefix: &str,
+    imports: &[(ImportDecl, ModuleExports)],
 ) -> Result<NameResolver, ResolveError> {
     let mut alias_to_module: HashMap<String, String> = HashMap::new();
-    let mut alias_exports: HashMap<String, Vec<String>> = HashMap::new();
+    let mut alias_public_exports: HashMap<String, Vec<String>> = HashMap::new();
+    let mut alias_package_exports: HashMap<String, Vec<String>> = HashMap::new();
+    let mut alias_same_package: HashMap<String, bool> = HashMap::new();
     // name → all (module, original_name) pairs that bring it into unqualified scope
     let mut candidates: HashMap<String, Vec<ResolvedName>> = HashMap::new();
 
     for (import, exports) in imports {
+        let same_package = crate::has_prefix(&import.module_path, importer_package_prefix);
         match &import.kind {
             ImportKind::Alias(alias) => {
                 alias_to_module.insert(alias.clone(), import.module_path.clone());
-                alias_exports.insert(alias.clone(), exports.clone());
+                alias_public_exports.insert(alias.clone(), exports.public.clone());
+                alias_package_exports.insert(alias.clone(), exports.package.clone());
+                alias_same_package.insert(alias.clone(), same_package);
             }
 
             ImportKind::Refer(names) => {
                 for name in names {
-                    if !exports.contains(name) {
-                        return Err(ResolveError::NameNotExported {
-                            module: import.module_path.clone(),
-                            name: name.clone(),
-                        });
-                    }
+                    validate_visibility(&import.module_path, name, exports, same_package)?;
                     candidates.entry(name.clone()).or_default().push(ResolvedName {
                         module: import.module_path.clone(),
                         name: name.clone(),
@@ -154,28 +204,23 @@ pub fn build_name_resolver(
             }
 
             ImportKind::All => {
-                for name in exports {
+                for name in visible_exports(exports, same_package) {
                     candidates.entry(name.clone()).or_default().push(ResolvedName {
                         module: import.module_path.clone(),
-                        name: name.clone(),
+                        name,
                     });
                 }
             }
 
             ImportKind::Exclude(excluded) => {
                 for excl in excluded {
-                    if !exports.contains(excl) {
-                        return Err(ResolveError::NameNotExported {
-                            module: import.module_path.clone(),
-                            name: excl.clone(),
-                        });
-                    }
+                    validate_visibility(&import.module_path, excl, exports, same_package)?;
                 }
-                for name in exports {
-                    if !excluded.contains(name) {
+                for name in visible_exports(exports, same_package) {
+                    if !excluded.contains(&name) {
                         candidates.entry(name.clone()).or_default().push(ResolvedName {
                             module: import.module_path.clone(),
-                            name: name.clone(),
+                            name,
                         });
                     }
                 }
@@ -183,12 +228,7 @@ pub fn build_name_resolver(
 
             ImportKind::Rename(renames) => {
                 for (old, new) in renames {
-                    if !exports.contains(old) {
-                        return Err(ResolveError::NameNotExported {
-                            module: import.module_path.clone(),
-                            name: old.clone(),
-                        });
-                    }
+                    validate_visibility(&import.module_path, old, exports, same_package)?;
                     candidates.entry(new.clone()).or_default().push(ResolvedName {
                         module: import.module_path.clone(),
                         name: old.clone(),
@@ -214,8 +254,44 @@ pub fn build_name_resolver(
 
     Ok(NameResolver {
         alias_to_module,
-        alias_exports,
+        alias_public_exports,
+        alias_package_exports,
+        alias_same_package,
         unqualified,
+    })
+}
+
+fn visible_exports(exports: &ModuleExports, same_package: bool) -> Vec<String> {
+    let mut names = exports.public.clone();
+    if same_package {
+        names.extend(exports.package.iter().cloned());
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn validate_visibility(
+    module: &str,
+    name: &str,
+    exports: &ModuleExports,
+    same_package: bool,
+) -> Result<(), ResolveError> {
+    if exports.public.contains(&name.to_string()) {
+        return Ok(());
+    }
+    if exports.package.contains(&name.to_string()) {
+        if same_package {
+            return Ok(());
+        }
+        return Err(ResolveError::PackagePrivateNotVisible {
+            module: module.to_string(),
+            name: name.to_string(),
+        });
+    }
+    Err(ResolveError::NameNotExported {
+        module: module.to_string(),
+        name: name.to_string(),
     })
 }
 
@@ -235,6 +311,17 @@ mod tests {
         }
     }
 
+    fn exports(public: &[&str]) -> ModuleExports {
+        ModuleExports::public(public.iter().map(|name| (*name).to_string()).collect())
+    }
+
+    fn exports_with_package(public: &[&str], package: &[&str]) -> ModuleExports {
+        ModuleExports {
+            public: public.iter().map(|name| (*name).to_string()).collect(),
+            package: package.iter().map(|name| (*name).to_string()).collect(),
+        }
+    }
+
     // ── Test 1 ──────────────────────────────────────────────────────────────
 
     #[test]
@@ -243,9 +330,9 @@ mod tests {
         // http/get → { module: "lib.http", name: "get" }
         let imports = vec![(
             mk_import("lib.http", ImportKind::Alias("http".to_string())),
-            vec!["get".to_string(), "post".to_string()],
+            exports(&["get", "post"]),
         )];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         let resolved = resolver
             .resolve_qualified("http", "get")
             .expect("resolve failed");
@@ -258,8 +345,8 @@ mod tests {
     #[test]
     fn resolve_qualified_unknown_alias() {
         // No alias `foo` imported — foo/bar should give UnknownAlias.
-        let imports: Vec<(ImportDecl, Vec<String>)> = vec![];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let imports: Vec<(ImportDecl, ModuleExports)> = vec![];
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_qualified("foo", "bar").unwrap_err();
         assert_eq!(err, ResolveError::UnknownAlias { alias: "foo".to_string() });
     }
@@ -272,9 +359,9 @@ mod tests {
         // http/post → NameNotExported
         let imports = vec![(
             mk_import("lib.http", ImportKind::Alias("http".to_string())),
-            vec!["get".to_string()],
+            exports(&["get"]),
         )];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_qualified("http", "post").unwrap_err();
         assert_eq!(
             err,
@@ -295,9 +382,9 @@ mod tests {
                 "lib.coll",
                 ImportKind::Refer(vec!["map".to_string(), "filter".to_string()]),
             ),
-            vec!["map".to_string(), "filter".to_string(), "reduce".to_string()],
+            exports(&["map", "filter", "reduce"]),
         )];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         let resolved = resolver.resolve_unqualified("map").expect("resolve failed");
         assert_eq!(resolved.module, "lib.coll");
         assert_eq!(resolved.name, "map");
@@ -310,9 +397,9 @@ mod tests {
         // (import lib.coll :refer [map]) — resolve `filter` → UnknownName
         let imports = vec![(
             mk_import("lib.coll", ImportKind::Refer(vec!["map".to_string()])),
-            vec!["map".to_string(), "filter".to_string()],
+            exports(&["map", "filter"]),
         )];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_unqualified("filter").unwrap_err();
         assert_eq!(err, ResolveError::UnknownName { name: "filter".to_string() });
     }
@@ -324,9 +411,9 @@ mod tests {
         // (import lib.math) — bare import, exports [add sub mul]
         let imports = vec![(
             mk_import("lib.math", ImportKind::All),
-            vec!["add".to_string(), "sub".to_string(), "mul".to_string()],
+            exports(&["add", "sub", "mul"]),
         )];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         let resolved = resolver.resolve_unqualified("add").expect("resolve failed");
         assert_eq!(resolved.module, "lib.math");
         assert_eq!(resolved.name, "add");
@@ -339,9 +426,9 @@ mod tests {
         // (import lib.math :exclude [div]), exports [add sub div]
         let imports = vec![(
             mk_import("lib.math", ImportKind::Exclude(vec!["div".to_string()])),
-            vec!["add".to_string(), "sub".to_string(), "div".to_string()],
+            exports(&["add", "sub", "div"]),
         )];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         // add is in scope
         let resolved = resolver.resolve_unqualified("add").expect("resolve failed");
         assert_eq!(resolved.module, "lib.math");
@@ -361,9 +448,9 @@ mod tests {
                 "lib.str",
                 ImportKind::Rename(vec![("split".to_string(), "split-str".to_string())]),
             ),
-            vec!["split".to_string(), "join".to_string()],
+            exports(&["split", "join"]),
         )];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         // New name resolves to original
         let resolved = resolver
             .resolve_unqualified("split-str")
@@ -384,14 +471,14 @@ mod tests {
         let imports = vec![
             (
                 mk_import("mod-a", ImportKind::All),
-                vec!["foo".to_string()],
+                exports(&["foo"]),
             ),
             (
                 mk_import("mod-b", ImportKind::All),
-                vec!["foo".to_string()],
+                exports(&["foo"]),
             ),
         ];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_unqualified("foo").unwrap_err();
         match err {
             ResolveError::AmbiguousName { name, mut modules } => {
@@ -408,8 +495,8 @@ mod tests {
     #[test]
     fn resolve_unqualified_unknown() {
         // `baz` is never brought into scope
-        let imports: Vec<(ImportDecl, Vec<String>)> = vec![];
-        let resolver = build_name_resolver(&imports).expect("build failed");
+        let imports: Vec<(ImportDecl, ModuleExports)> = vec![];
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_unqualified("baz").unwrap_err();
         assert_eq!(err, ResolveError::UnknownName { name: "baz".to_string() });
     }
@@ -425,9 +512,9 @@ mod tests {
                 "lib.coll",
                 ImportKind::Refer(vec!["nonexistent".to_string()]),
             ),
-            vec!["map".to_string(), "filter".to_string()],
+            exports(&["map", "filter"]),
         )];
-        let err = build_name_resolver(&imports).unwrap_err();
+        let err = build_name_resolver("app", &imports).unwrap_err();
         assert_eq!(
             err,
             ResolveError::NameNotExported {
@@ -448,9 +535,9 @@ mod tests {
                 "lib.coll",
                 ImportKind::Exclude(vec!["nonexistent".to_string()]),
             ),
-            vec!["map".to_string(), "filter".to_string()],
+            exports(&["map", "filter"]),
         )];
-        let err = build_name_resolver(&imports).unwrap_err();
+        let err = build_name_resolver("app", &imports).unwrap_err();
         assert_eq!(
             err,
             ResolveError::NameNotExported {
@@ -459,4 +546,64 @@ mod tests {
             }
         );
     }
+
+    // ── Test 13 ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_refer_package_private_external() {
+        // (import lib.util :refer [internal]), exports [pub] + ^:package [internal]
+        let imports = vec![(
+            mk_import("lib.util", ImportKind::Refer(vec!["internal".to_string()])),
+            exports_with_package(&["pub"], &["internal"]),
+        )];
+        let err = build_name_resolver("my-app", &imports).unwrap_err();
+        assert_eq!(
+            err,
+            ResolveError::PackagePrivateNotVisible {
+                module: "lib.util".to_string(),
+                name: "internal".to_string(),
+            }
+        );
+    }
+
+    // ── Test 14 ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_refer_package_private_same_package() {
+        // (import my-app.util :refer [internal]), exports [pub] + ^:package [internal]
+        let imports = vec![(
+            mk_import(
+                "my-app.util",
+                ImportKind::Refer(vec!["internal".to_string()]),
+            ),
+            exports_with_package(&["pub"], &["internal"]),
+        )];
+        let resolver = build_name_resolver("my-app", &imports).expect("build failed");
+        let resolved = resolver
+            .resolve_unqualified("internal")
+            .expect("resolve failed");
+        assert_eq!(resolved.module, "my-app.util");
+        assert_eq!(resolved.name, "internal");
+    }
+
+    // ── Test 15 ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_qualified_package_private_external() {
+        // (import lib.util :as util), exports [pub] + ^:package [internal]
+        let imports = vec![(
+            mk_import("lib.util", ImportKind::Alias("util".to_string())),
+            exports_with_package(&["pub"], &["internal"]),
+        )];
+        let resolver = build_name_resolver("my-app", &imports).expect("build failed");
+        let err = resolver.resolve_qualified("util", "internal").unwrap_err();
+        assert_eq!(
+            err,
+            ResolveError::PackagePrivateNotVisible {
+                module: "lib.util".to_string(),
+                name: "internal".to_string(),
+            }
+        );
+    }
+
 }

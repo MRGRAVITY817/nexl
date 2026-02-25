@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use nexl_ast::ImportDecl;
 
 pub mod resolver;
-pub use resolver::{build_name_resolver, NameResolver, ResolvedName, ResolveError};
+pub use resolver::{build_name_resolver, ModuleExports, NameResolver, ResolvedName, ResolveError};
 
 /// Errors produced while mapping module names to file paths.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -213,7 +213,7 @@ fn split_module_name(module: &str) -> Result<Vec<&str>, ModulePathError> {
     Ok(parts)
 }
 
-fn has_prefix(module: &str, prefix: &str) -> bool {
+pub(crate) fn has_prefix(module: &str, prefix: &str) -> bool {
     if module == prefix {
         return true;
     }
