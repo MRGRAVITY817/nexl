@@ -1,8 +1,8 @@
 //! Type substitution: mapping type variables to concrete types.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::types::{Type, TypeVar};
+use crate::types::{EffectRow, Type, TypeVar};
 
 /// A substitution maps type variables to types.
 ///
@@ -12,6 +12,8 @@ use crate::types::{Type, TypeVar};
 #[derive(Debug, Clone, Default)]
 pub struct Subst {
     map: HashMap<TypeVar, Type>,
+    effect_rows: HashMap<String, EffectRow>,
+    next_effect_var: u32,
 }
 
 impl Subst {
@@ -23,6 +25,38 @@ impl Subst {
     /// Bind `tv` to `ty` in this substitution.
     pub fn insert(&mut self, tv: TypeVar, ty: Type) {
         self.map.insert(tv, ty);
+    }
+
+    /// Bind `row_var` to an effect row in this substitution.
+    pub fn insert_effect_row(&mut self, row_var: String, row: EffectRow) {
+        self.effect_rows.insert(row_var, row);
+    }
+
+    /// Allocate a fresh effect row variable name.
+    pub fn fresh_effect_var(&mut self) -> String {
+        let name = format!("_e{}", self.next_effect_var);
+        self.next_effect_var += 1;
+        name
+    }
+
+    /// Apply this substitution to an effect row, recursively replacing tail vars.
+    pub fn apply_effect_row(&self, row: &EffectRow) -> EffectRow {
+        let mut effects = row.effects.clone();
+        let mut tail = row.tail.clone();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        while let Some(var) = tail.clone() {
+            if !seen.insert(var.clone()) {
+                break;
+            }
+            let Some(bound) = self.effect_rows.get(&var) else {
+                break;
+            };
+            effects.extend(bound.effects.iter().cloned());
+            tail = bound.tail.clone();
+        }
+
+        EffectRow::new(effects, tail)
     }
 
     /// Apply this substitution to a type, recursively replacing variables.
@@ -52,7 +86,7 @@ impl Subst {
             } => Type::Fn {
                 params: params.iter().map(|p| self.apply(p)).collect(),
                 ret: Box::new(self.apply(ret)),
-                effects: effects.clone(),
+                effects: self.apply_effect_row(effects),
             },
             Type::Adt { name, args } => Type::Adt {
                 name: name.clone(),
@@ -84,9 +118,17 @@ impl Subst {
         for ty in self.map.values_mut() {
             *ty = other.apply(ty);
         }
+        for row in self.effect_rows.values_mut() {
+            *row = other.apply_effect_row(row);
+        }
         // Add any bindings from `other` that aren't already in `self`.
         for (&tv, ty) in &other.map {
             self.map.entry(tv).or_insert_with(|| ty.clone());
+        }
+        for (row_var, row) in &other.effect_rows {
+            self.effect_rows
+                .entry(row_var.clone())
+                .or_insert_with(|| row.clone());
         }
     }
 }

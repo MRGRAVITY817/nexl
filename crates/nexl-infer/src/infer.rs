@@ -2057,10 +2057,7 @@ fn parse_effect_row(node: &Node) -> Result<EffectRow, TypeError> {
         idx += 1;
     }
 
-    Ok(EffectRow {
-        effects,
-        tail: row_var,
-    })
+    Ok(EffectRow::new(effects, row_var))
 }
 
 // ---------------------------------------------------------------------------

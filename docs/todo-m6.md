@@ -7,7 +7,7 @@
 
 ## Types / Inference
 - [x] Extend type representation with effect rows
-- [ ] Row unification and polymorphism (`! [E | r]`)
+- [x] Row unification and polymorphism (`! [E | r]`)
 - [ ] Effect inference for function bodies
 - [ ] `handle` removes handled effects from rows
 - [ ] Module `:performs` effect checking

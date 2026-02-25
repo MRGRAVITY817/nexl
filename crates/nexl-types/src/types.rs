@@ -89,12 +89,16 @@ pub struct EffectRow {
 }
 
 impl EffectRow {
+    /// Construct an effect row, sorting and deduplicating effects.
+    pub fn new(mut effects: Vec<String>, tail: Option<String>) -> Self {
+        effects.sort();
+        effects.dedup();
+        Self { effects, tail }
+    }
+
     /// An empty effect row: `! []`.
     pub fn empty() -> Self {
-        Self {
-            effects: Vec::new(),
-            tail: None,
-        }
+        Self::new(Vec::new(), None)
     }
 
     /// Returns `true` when this row has no effects and no tail variable.

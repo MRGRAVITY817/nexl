@@ -1,10 +1,11 @@
 //! Robinson unification for Nexl types.
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use nexl_ast::Span;
 
-use crate::{Subst, Type, TypeVar};
+use crate::{EffectRow, Subst, Type, TypeVar};
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -236,7 +237,7 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
                 effects: eb,
             },
         ) => {
-            if ea != eb {
+            if !unify_effect_rows(ea, eb, subst) {
                 return Err(TypeError::new(TypeErrorKind::Mismatch {
                     expected: a.clone(),
                     found: b.clone(),
@@ -330,6 +331,66 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
             expected: a.clone(),
             found: b.clone(),
         })),
+    }
+}
+
+fn unify_effect_rows(a: &EffectRow, b: &EffectRow, subst: &mut Subst) -> bool {
+    let a = subst.apply_effect_row(a);
+    let b = subst.apply_effect_row(b);
+
+    let a_set: BTreeSet<String> = a.effects.into_iter().collect();
+    let b_set: BTreeSet<String> = b.effects.into_iter().collect();
+    let a_tail = a.tail;
+    let b_tail = b.tail;
+
+    if a_tail == b_tail {
+        return a_set == b_set;
+    }
+
+    let only_in_a: Vec<String> = a_set.difference(&b_set).cloned().collect();
+    let only_in_b: Vec<String> = b_set.difference(&a_set).cloned().collect();
+
+    match (a_tail, b_tail) {
+        (Some(a_var), None) => {
+            if !only_in_a.is_empty() {
+                return false;
+            }
+            subst.insert_effect_row(a_var, EffectRow::new(only_in_b, None));
+            true
+        }
+        (None, Some(b_var)) => {
+            if !only_in_b.is_empty() {
+                return false;
+            }
+            subst.insert_effect_row(b_var, EffectRow::new(only_in_a, None));
+            true
+        }
+        (Some(a_var), Some(b_var)) => {
+            if a_var == b_var {
+                return only_in_a.is_empty() && only_in_b.is_empty();
+            }
+
+            if only_in_a.is_empty() && only_in_b.is_empty() {
+                subst.insert_effect_row(a_var, EffectRow::new(Vec::new(), Some(b_var)));
+                return true;
+            }
+
+            if only_in_a.is_empty() {
+                subst.insert_effect_row(a_var, EffectRow::new(only_in_b, Some(b_var)));
+                return true;
+            }
+
+            if only_in_b.is_empty() {
+                subst.insert_effect_row(b_var, EffectRow::new(only_in_a, Some(a_var)));
+                return true;
+            }
+
+            let fresh = subst.fresh_effect_var();
+            subst.insert_effect_row(a_var, EffectRow::new(only_in_b, Some(fresh.clone())));
+            subst.insert_effect_row(b_var, EffectRow::new(only_in_a, Some(fresh)));
+            true
+        }
+        (None, None) => false,
     }
 }
 
@@ -1102,5 +1163,116 @@ mod tests {
             !msg.contains(", found"),
             "old 'found' phrasing still present in '{msg}'"
         );
+    }
+
+    // -- Effect Row Unify 1 --
+    #[test]
+    fn unify_fn_effect_rows_unordered() {
+        let mut s = Subst::empty();
+        let a = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow {
+                effects: vec!["Net".to_string(), "Console".to_string()],
+                tail: None,
+            },
+        };
+        let b = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow {
+                effects: vec!["Console".to_string(), "Net".to_string()],
+                tail: None,
+            },
+        };
+
+        assert!(unify(&a, &b, &mut s).is_ok());
+    }
+
+    // -- Effect Row Unify 2 --
+    #[test]
+    fn unify_fn_effect_row_var_binds_missing_effects() {
+        let mut s = Subst::empty();
+        let a = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow {
+                effects: vec!["Console".to_string()],
+                tail: Some("e".to_string()),
+            },
+        };
+        let b = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow {
+                effects: vec!["Console".to_string(), "Net".to_string()],
+                tail: None,
+            },
+        };
+
+        unify(&a, &b, &mut s).unwrap();
+        let resolved = s.apply(&a);
+        match resolved {
+            Type::Fn { effects, .. } => {
+                assert_eq!(
+                    effects,
+                    EffectRow {
+                        effects: vec!["Console".to_string(), "Net".to_string()],
+                        tail: None,
+                    }
+                );
+            }
+            other => panic!("expected Fn type, got {other:?}"),
+        }
+    }
+
+    // -- Effect Row Unify 3 --
+    #[test]
+    fn unify_fn_effect_row_var_binds_empty_row() {
+        let mut s = Subst::empty();
+        let a = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow {
+                effects: Vec::new(),
+                tail: Some("e".to_string()),
+            },
+        };
+        let b = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
+        };
+
+        unify(&a, &b, &mut s).unwrap();
+        let resolved = s.apply(&a);
+        match resolved {
+            Type::Fn { effects, .. } => {
+                assert_eq!(effects, EffectRow::empty());
+            }
+            other => panic!("expected Fn type, got {other:?}"),
+        }
+    }
+
+    // -- Effect Row Unify 4 --
+    #[test]
+    fn unify_fn_effect_row_closed_mismatch_is_error() {
+        let mut s = Subst::empty();
+        let a = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow {
+                effects: vec!["Console".to_string()],
+                tail: None,
+            },
+        };
+        let b = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
+        };
+
+        let err = unify(&a, &b, &mut s).unwrap_err();
+        assert!(matches!(err.kind, TypeErrorKind::Mismatch { .. }));
     }
 }
