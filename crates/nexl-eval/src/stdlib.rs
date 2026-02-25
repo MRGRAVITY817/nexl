@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use nexl_runtime::{NativeFn, Value};
 
-use crate::Env;
+use crate::{Env, eval::apply_value};
 
 /// Create a root [`Env`] pre-populated with all standard built-in functions.
 pub fn standard_env() -> Rc<Env> {
@@ -52,6 +52,9 @@ pub fn standard_env() -> Rc<Env> {
     env.define("union", native("union", union));
     env.define("intersection", native("intersection", intersection));
     env.define("difference", native("difference", difference));
+    env.define("map", native("map", map_fn));
+    env.define("filter", native("filter", filter_fn));
+    env.define("reduce", native("reduce", reduce_fn));
 
     env
 }
@@ -118,6 +121,23 @@ fn three_args<'a>(
             "`{op}` requires exactly 3 arguments, got {}",
             args.len()
         )),
+    }
+}
+
+fn call1(func: &Value, arg: Value) -> Result<Value, String> {
+    let args = [arg];
+    apply_value(func, &args).map_err(|err| err.to_string())
+}
+
+fn call2(func: &Value, arg0: Value, arg1: Value) -> Result<Value, String> {
+    let args = [arg0, arg1];
+    apply_value(func, &args).map_err(|err| err.to_string())
+}
+
+fn expect_bool(op: &str, value: Value) -> Result<bool, String> {
+    match value {
+        Value::Bool(b) => Ok(b),
+        other => Err(type_mismatch(op, "Bool", &other)),
     }
 }
 
@@ -664,6 +684,156 @@ fn difference(args: &[Value]) -> Result<Value, String> {
         }
         (Value::Set(_), other) => Err(type_mismatch("difference", "Set", other)),
         (other, _) => Err(type_mismatch("difference", "Set", other)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sequence operations
+// ---------------------------------------------------------------------------
+
+fn map_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, coll) = two_args("map", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                let mapped = call1(func, item.clone())?;
+                out.push(mapped);
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        Value::Set(items) => {
+            let mut out: Vec<Value> = Vec::new();
+            for item in items.iter() {
+                let mapped = call1(func, item.clone())?;
+                if !out.iter().any(|existing| existing == &mapped) {
+                    out.push(mapped);
+                }
+            }
+            Ok(Value::Set(Rc::new(out)))
+        }
+        Value::Map(entries) => {
+            let mut out = Vec::with_capacity(entries.len());
+            for (key, value) in entries.iter() {
+                let mapped = call1(func, value.clone())?;
+                out.push((key.clone(), mapped));
+            }
+            Ok(Value::Map(Rc::new(out)))
+        }
+        Value::Adt {
+            type_name,
+            ctor,
+            fields,
+        } if type_name.as_ref() == "Option" => match ctor.as_ref() {
+            "None" => Ok(option_none()),
+            "Some" => {
+                let value = fields.first().ok_or_else(|| {
+                    "`map` expected Option.Some with 1 field, got 0".to_string()
+                })?;
+                let mapped = call1(func, value.clone())?;
+                Ok(option_some(mapped))
+            }
+            other => Err(format!("`map` expected Option constructor, got {other}")),
+        },
+        other => Err(type_mismatch("map", "Vec, Map, Set, or Option", other)),
+    }
+}
+
+fn filter_fn(args: &[Value]) -> Result<Value, String> {
+    let (pred, coll) = two_args("filter", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut out = Vec::new();
+            for item in items.iter() {
+                let keep = expect_bool("filter", call1(pred, item.clone())?)?;
+                if keep {
+                    out.push(item.clone());
+                }
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        Value::Set(items) => {
+            let mut out = Vec::new();
+            for item in items.iter() {
+                let keep = expect_bool("filter", call1(pred, item.clone())?)?;
+                if keep && !out.iter().any(|existing| existing == item) {
+                    out.push(item.clone());
+                }
+            }
+            Ok(Value::Set(Rc::new(out)))
+        }
+        Value::Map(entries) => {
+            let mut out = Vec::new();
+            for (key, value) in entries.iter() {
+                let keep = expect_bool("filter", call1(pred, value.clone())?)?;
+                if keep {
+                    out.push((key.clone(), value.clone()));
+                }
+            }
+            Ok(Value::Map(Rc::new(out)))
+        }
+        Value::Adt {
+            type_name,
+            ctor,
+            fields,
+        } if type_name.as_ref() == "Option" => match ctor.as_ref() {
+            "None" => Ok(option_none()),
+            "Some" => {
+                let value = fields.first().ok_or_else(|| {
+                    "`filter` expected Option.Some with 1 field, got 0".to_string()
+                })?;
+                let keep = expect_bool("filter", call1(pred, value.clone())?)?;
+                if keep {
+                    Ok(option_some(value.clone()))
+                } else {
+                    Ok(option_none())
+                }
+            }
+            other => Err(format!("`filter` expected Option constructor, got {other}")),
+        },
+        other => Err(type_mismatch("filter", "Vec, Map, Set, or Option", other)),
+    }
+}
+
+fn reduce_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, init, coll) = three_args("reduce", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut acc = init.clone();
+            for item in items.iter() {
+                acc = call2(func, acc, item.clone())?;
+            }
+            Ok(acc)
+        }
+        Value::Set(items) => {
+            let mut acc = init.clone();
+            for item in items.iter() {
+                acc = call2(func, acc, item.clone())?;
+            }
+            Ok(acc)
+        }
+        Value::Map(entries) => {
+            let mut acc = init.clone();
+            for (_key, value) in entries.iter() {
+                acc = call2(func, acc, value.clone())?;
+            }
+            Ok(acc)
+        }
+        Value::Adt {
+            type_name,
+            ctor,
+            fields,
+        } if type_name.as_ref() == "Option" => match ctor.as_ref() {
+            "None" => Ok(init.clone()),
+            "Some" => {
+                let value = fields.first().ok_or_else(|| {
+                    "`reduce` expected Option.Some with 1 field, got 0".to_string()
+                })?;
+                call2(func, init.clone(), value.clone())
+            }
+            other => Err(format!("`reduce` expected Option constructor, got {other}")),
+        },
+        other => Err(type_mismatch("reduce", "Vec, Map, Set, or Option", other)),
     }
 }
 

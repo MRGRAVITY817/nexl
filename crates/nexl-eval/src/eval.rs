@@ -519,6 +519,52 @@ fn eval_apply<'a>(
     Ok(EvalReturn::Value(last))
 }
 
+pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalError> {
+    if let Value::NativeFunction(native) = callee {
+        return (native.f)(args).map_err(EvalError::NativeError);
+    }
+
+    let Value::Function(func) = callee else {
+        return Err(EvalError::InvalidCallable);
+    };
+
+    let required = func.arity as usize;
+    let provided = args.len();
+
+    if (!func.variadic && provided != required) || (func.variadic && provided < required) {
+        return Err(EvalError::Arity);
+    }
+
+    let call_env = Rc::new(Env::new());
+
+    for (name, value) in &func.captures {
+        call_env.define(name.clone(), value.clone());
+    }
+
+    for (idx, param) in func.params.iter().enumerate() {
+        let arg_val = args
+            .get(idx)
+            .ok_or(EvalError::Arity)?
+            .clone();
+        call_env.define(param.clone(), arg_val);
+    }
+
+    if func.variadic
+        && let Some(rest_name) = &func.rest
+    {
+        call_env.define(rest_name.clone(), Value::Unit);
+    }
+
+    let mut last = Value::Unit;
+    for expr in &func.body {
+        match eval_with_loop(expr, &call_env, None)? {
+            EvalReturn::Value(v) => last = v,
+            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        }
+    }
+    Ok(last)
+}
+
 fn eval_set_bang(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     if items.len() != 3 {
         return Err(EvalError::Arity);

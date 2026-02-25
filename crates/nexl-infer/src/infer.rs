@@ -545,6 +545,38 @@ fn synth_collection_op(
             nexl_types::unify(&set_ty, &arg_types[1], &mut state.subst)?;
             Some(Type::Set(Box::new(state.subst.apply(&elem_var))))
         }
+        "map" => {
+            if arg_types.len() != 2 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: arg_types.len(),
+                }));
+            }
+            Some(infer_map_op(&arg_types[0], &arg_types[1], state)?)
+        }
+        "filter" => {
+            if arg_types.len() != 2 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: arg_types.len(),
+                }));
+            }
+            Some(infer_filter_op(&arg_types[0], &arg_types[1], state)?)
+        }
+        "reduce" => {
+            if arg_types.len() != 3 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 3,
+                    found: arg_types.len(),
+                }));
+            }
+            Some(infer_reduce_op(
+                &arg_types[0],
+                &arg_types[1],
+                &arg_types[2],
+                state,
+            )?)
+        }
         _ => None,
     };
     Ok(ty)
@@ -652,6 +684,123 @@ fn infer_put(
                 key: Box::new(state.subst.apply(&key_var)),
                 val: Box::new(state.subst.apply(&val_var)),
             })
+        }
+        other => Err(TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Vec(Box::new(state.fresh_var())),
+            found: other,
+        })),
+    }
+}
+
+fn infer_map_op(fn_ty: &Type, coll_ty: &Type, state: &mut InferState) -> Result<Type, TypeError> {
+    let elem_var = state.fresh_var();
+    let out_var = state.fresh_var();
+    let expected_fn = Type::Fn {
+        params: vec![elem_var.clone()],
+        ret: Box::new(out_var.clone()),
+    };
+    nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
+
+    let resolved = state.subst.apply(coll_ty);
+    match resolved {
+        Type::Vec(elem) => {
+            nexl_types::unify(&elem, &elem_var, &mut state.subst)?;
+            Ok(Type::Vec(Box::new(state.subst.apply(&out_var))))
+        }
+        Type::Set(elem) => {
+            nexl_types::unify(&elem, &elem_var, &mut state.subst)?;
+            Ok(Type::Set(Box::new(state.subst.apply(&out_var))))
+        }
+        Type::Map { key, val } => {
+            nexl_types::unify(&val, &elem_var, &mut state.subst)?;
+            Ok(Type::Map {
+                key: Box::new(state.subst.apply(&key)),
+                val: Box::new(state.subst.apply(&out_var)),
+            })
+        }
+        Type::Adt { name, args } if name == "Option" && args.len() == 1 => {
+            nexl_types::unify(&args[0], &elem_var, &mut state.subst)?;
+            Ok(option_type(state.subst.apply(&out_var)))
+        }
+        other => Err(TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Vec(Box::new(state.fresh_var())),
+            found: other,
+        })),
+    }
+}
+
+fn infer_filter_op(
+    fn_ty: &Type,
+    coll_ty: &Type,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    let elem_var = state.fresh_var();
+    let expected_fn = Type::Fn {
+        params: vec![elem_var.clone()],
+        ret: Box::new(Type::Bool),
+    };
+    nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
+
+    let resolved = state.subst.apply(coll_ty);
+    match resolved {
+        Type::Vec(elem) => {
+            nexl_types::unify(&elem, &elem_var, &mut state.subst)?;
+            Ok(Type::Vec(Box::new(state.subst.apply(&elem))))
+        }
+        Type::Set(elem) => {
+            nexl_types::unify(&elem, &elem_var, &mut state.subst)?;
+            Ok(Type::Set(Box::new(state.subst.apply(&elem))))
+        }
+        Type::Map { key, val } => {
+            nexl_types::unify(&val, &elem_var, &mut state.subst)?;
+            Ok(Type::Map {
+                key: Box::new(state.subst.apply(&key)),
+                val: Box::new(state.subst.apply(&val)),
+            })
+        }
+        Type::Adt { name, args } if name == "Option" && args.len() == 1 => {
+            nexl_types::unify(&args[0], &elem_var, &mut state.subst)?;
+            Ok(option_type(state.subst.apply(&elem_var)))
+        }
+        other => Err(TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Vec(Box::new(state.fresh_var())),
+            found: other,
+        })),
+    }
+}
+
+fn infer_reduce_op(
+    fn_ty: &Type,
+    init_ty: &Type,
+    coll_ty: &Type,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    let acc_var = state.fresh_var();
+    let elem_var = state.fresh_var();
+    let expected_fn = Type::Fn {
+        params: vec![acc_var.clone(), elem_var.clone()],
+        ret: Box::new(acc_var.clone()),
+    };
+    nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
+    nexl_types::unify(init_ty, &acc_var, &mut state.subst)?;
+
+    let resolved = state.subst.apply(coll_ty);
+    match resolved {
+        Type::Vec(elem) => {
+            nexl_types::unify(&elem, &elem_var, &mut state.subst)?;
+            Ok(state.subst.apply(&acc_var))
+        }
+        Type::Set(elem) => {
+            nexl_types::unify(&elem, &elem_var, &mut state.subst)?;
+            Ok(state.subst.apply(&acc_var))
+        }
+        Type::Map { val, .. } => {
+            nexl_types::unify(&val, &elem_var, &mut state.subst)?;
+            Ok(state.subst.apply(&acc_var))
+        }
+        Type::Adt { name, args } if name == "Option" && args.len() == 1 => {
+            nexl_types::unify(&args[0], &elem_var, &mut state.subst)?;
+            Ok(state.subst.apply(&acc_var))
         }
         other => Err(TypeError::new(TypeErrorKind::Mismatch {
             expected: Type::Vec(Box::new(state.fresh_var())),
@@ -2931,6 +3080,88 @@ mod tests {
             synth(&contains_node, &env, &mut state).unwrap(),
             Type::Bool
         );
+    }
+
+    #[test]
+    fn infer_map_filter_reduce_vec_types() {
+        let (env, mut state) = empty();
+        let map_node = parse_one("(map (fn [x] x) [1 2])");
+        assert_eq!(
+            synth(&map_node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Int))
+        );
+
+        let filter_node = parse_one("(filter (fn [x] true) [1 2])");
+        assert_eq!(
+            synth(&filter_node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Int))
+        );
+
+        let reduce_node = parse_one("(reduce (fn [acc x] acc) 0 [1 2])");
+        assert_eq!(synth(&reduce_node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    #[test]
+    fn infer_map_filter_reduce_map_types() {
+        let (env, mut state) = empty();
+        let map_node = parse_one(r#"(map (fn [x] x) {:a 1})"#);
+        assert_eq!(
+            synth(&map_node, &env, &mut state).unwrap(),
+            Type::Map {
+                key: Box::new(Type::Keyword),
+                val: Box::new(Type::Int),
+            }
+        );
+
+        let filter_node = parse_one(r#"(filter (fn [x] true) {:a 1})"#);
+        assert_eq!(
+            synth(&filter_node, &env, &mut state).unwrap(),
+            Type::Map {
+                key: Box::new(Type::Keyword),
+                val: Box::new(Type::Int),
+            }
+        );
+
+        let reduce_node = parse_one(r#"(reduce (fn [acc x] acc) 0 {:a 1})"#);
+        assert_eq!(synth(&reduce_node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    #[test]
+    fn infer_map_filter_reduce_set_types() {
+        let (env, mut state) = empty();
+        let map_node = parse_one(r#"(map (fn [x] x) #{1 2})"#);
+        assert_eq!(
+            synth(&map_node, &env, &mut state).unwrap(),
+            Type::Set(Box::new(Type::Int))
+        );
+
+        let filter_node = parse_one(r#"(filter (fn [x] true) #{1 2})"#);
+        assert_eq!(
+            synth(&filter_node, &env, &mut state).unwrap(),
+            Type::Set(Box::new(Type::Int))
+        );
+
+        let reduce_node = parse_one(r#"(reduce (fn [acc x] acc) 0 #{1 2})"#);
+        assert_eq!(synth(&reduce_node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    #[test]
+    fn infer_map_filter_reduce_option_types() {
+        let (env, mut state) = empty();
+        let map_node = parse_one("(map (fn [x] x) (Some 1))");
+        assert_eq!(
+            synth(&map_node, &env, &mut state).unwrap(),
+            option_ty(Type::Int)
+        );
+
+        let filter_node = parse_one("(filter (fn [x] true) (Some 1))");
+        assert_eq!(
+            synth(&filter_node, &env, &mut state).unwrap(),
+            option_ty(Type::Int)
+        );
+
+        let reduce_node = parse_one("(reduce (fn [acc x] acc) 0 (Some 1))");
+        assert_eq!(synth(&reduce_node, &env, &mut state).unwrap(), Type::Int);
     }
 
     // -- Test 13 --

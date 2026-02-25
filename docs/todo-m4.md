@@ -26,7 +26,7 @@
 - [x] Type inference for collection operations
 
 ## Sequence Operations (stretch — may defer to later)
-- [ ] `map`, `filter`, `reduce` (compiler-dispatched)
+- [x] `map`, `filter`, `reduce` (compiler-dispatched)
 - [ ] `each`, `times` forms
 - [ ] `for` / `for!` comprehensions
 

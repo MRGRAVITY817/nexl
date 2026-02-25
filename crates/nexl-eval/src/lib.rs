@@ -2876,6 +2876,87 @@ mod tests {
         );
     }
 
+    // --- sequence operation tests ---
+
+    #[test]
+    fn seq_map_filter_reduce_vec() {
+        assert_eq!(
+            eval_str("(map (fn [x] (+ x 1)) [1 2 3])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(3), Value::Int(4)]))
+        );
+        assert_eq!(
+            eval_str("(filter (fn [x] (> x 1)) [1 2 3])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(3)]))
+        );
+        assert_eq!(
+            eval_str("(reduce (fn [acc x] (+ acc x)) 0 [1 2 3])").unwrap(),
+            Value::Int(6)
+        );
+    }
+
+    #[test]
+    fn seq_map_filter_reduce_map() {
+        assert_eq!(
+            eval_str(r#"(map (fn [x] (+ x 1)) {:a 1 :b 2})"#).unwrap(),
+            Value::Map(Rc::new(vec![
+                (kw("a"), Value::Int(2)),
+                (kw("b"), Value::Int(3)),
+            ]))
+        );
+        assert_eq!(
+            eval_str(r#"(filter (fn [x] (> x 1)) {:a 1 :b 2})"#).unwrap(),
+            Value::Map(Rc::new(vec![(kw("b"), Value::Int(2))]))
+        );
+        assert_eq!(
+            eval_str(r#"(reduce (fn [acc x] (+ acc x)) 0 {:a 1 :b 2})"#).unwrap(),
+            Value::Int(3)
+        );
+    }
+
+    #[test]
+    fn seq_map_filter_reduce_set() {
+        assert_eq!(
+            eval_str(r#"(map (fn [x] 1) #{1 2 3})"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(1)]))
+        );
+        assert_eq!(
+            eval_str(r#"(filter (fn [x] (> x 1)) #{1 2 3})"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(2), Value::Int(3)]))
+        );
+        assert_eq!(
+            eval_str(r#"(reduce (fn [acc x] (+ acc x)) 0 #{1 2 3})"#).unwrap(),
+            Value::Int(6)
+        );
+    }
+
+    #[test]
+    fn seq_map_filter_reduce_option() {
+        assert_eq!(
+            eval_str("(map (fn [x] (+ x 1)) (Some 1))").unwrap(),
+            option_some(Value::Int(2))
+        );
+        assert_eq!(
+            eval_str("(map (fn [x] (+ x 1)) None)").unwrap(),
+            option_none()
+        );
+        assert_eq!(
+            eval_str("(filter (fn [x] (> x 1)) (Some 2))").unwrap(),
+            option_some(Value::Int(2))
+        );
+        assert_eq!(
+            eval_str("(filter (fn [x] (> x 1)) (Some 1))").unwrap(),
+            option_none()
+        );
+        assert_eq!(
+            eval_str("(reduce (fn [acc x] (+ acc x)) 0 (Some 3))").unwrap(),
+            Value::Int(3)
+        );
+        assert_eq!(
+            eval_str("(reduce (fn [acc x] (+ acc x)) 0 None)").unwrap(),
+            Value::Int(0)
+        );
+    }
+
     // --- integration test ---
 
     #[test]
