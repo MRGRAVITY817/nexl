@@ -1,31 +1,27 @@
-# Current Milestone: M5 — Module System
+# Current Milestone: M6 — Algebraic Effect System
 
-**Goal:** Multi-file compilation with imports, exports, visibility, and qualified access.
+**Goal:** `defeffect`, `handle`, effect row inference, and evidence-passing compilation.
 
-**Crates:** `nexl-ast`, `nexl-reader`, `nexl-modules` (new), `nexl-infer`, `nexl-eval`
+**Crates:** `nexl-ast`, `nexl-reader`, `nexl-types`, `nexl-infer`, `nexl-effects` (new), `nexl-runtime`
 
 **Spec sections to reference:**
-- §8 Module System (lines 2447–2686) — module declarations, imports, visibility, init order
-- §8.1 Module Declaration (lines 2449–2474)
-- §8.2 Importing Modules (lines 2476–2504)
-- §8.3 Namespace (lines 2506–2517) — qualified access
-- §8.6 Circular Dependencies (line 2562)
-- §8.8 Visibility (lines 2598–2622) — public, package-private, module-private
-- §8.9 Module Initialization Order (lines 2624–2632)
-- §8.11 Package ↔ Module Relationship (lines 2667–2684)
+- §6 Effects (lines 1520–1800)
+- §6.3 Effect operations vs module-qualified calls (lines 1605–1630)
+- §6.4 `handle` (lines 1632–1715)
+- §6.5 Continuation handlers (lines 1717–1763)
 
-**Key ADRs:** none yet (consult `decisions/` as they appear)
+**Key ADRs:**
+- ADR-003: One-shot continuations
 
 **Acceptance criteria:**
-- `(module ...)` and `(import ...)` forms parse to AST nodes
-- Qualified symbols (`alias/name`) are distinct from bare symbols
-- Module dependency graph with topological sort and cycle detection
-- Visibility enforcement (public, package-private, module-private)
-- Cross-module type checking at import boundaries
-- Multi-file evaluation with correct initialization order
+- `defeffect` declarations are parsed and registered
+- Effect rows tracked in function types (`! [E1 E2 | r]`)
+- `handle` type-checks and removes handled effects from rows
+- Evidence passing in lowered representation
+- Built-in effects (`Console`, `FileSystem`, `Time`, `Random`) wired in runtime
 - `cargo test` passes across all crates
 
-**When done:** Update this file to point to M6.
+**When done:** Update this file to point to M7.
 
-See `docs/todo-m5.md` for the task checklist.
+See `docs/todo-m6.md` for the task checklist.
 See `milestones.md` for the full plan.
