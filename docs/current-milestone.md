@@ -1,27 +1,28 @@
-# Current Milestone: M6 — Algebraic Effect System
+# Current Milestone: M7 — Error Handling
 
-**Goal:** `defeffect`, `handle`, effect row inference, and evidence-passing compilation.
+**Goal:** `Result`/`Option` ergonomics, `?` operator, `panic`, `assert!`, contracts.
 
-**Crates:** `nexl-ast`, `nexl-reader`, `nexl-types`, `nexl-infer`, `nexl-effects` (new), `nexl-runtime`
+**Crates:** `nexl-ast`, `nexl-reader`, `nexl-types`, `nexl-infer`, `nexl-eval`, `nexl-runtime`
 
 **Spec sections to reference:**
-- §6 Effects (lines 1520–1800)
-- §6.3 Effect operations vs module-qualified calls (lines 1605–1630)
-- §6.4 `handle` (lines 1632–1715)
-- §6.5 Continuation handlers (lines 1717–1763)
+- §9 Error Handling (lines 2688–2802)
+- §9.3 The `?` Operator (lines 2714–2760)
+- §9.4 `panic` (lines 2762–2776)
+- §4.2.1 Function Contracts (lines 403–479)
 
 **Key ADRs:**
-- ADR-003: One-shot continuations
+- (none specific to M7)
 
 **Acceptance criteria:**
-- `defeffect` declarations are parsed and registered
-- Effect rows tracked in function types (`! [E1 E2 | r]`)
-- `handle` type-checks and removes handled effects from rows
-- Evidence passing in lowered representation
-- Built-in effects (`Console`, `FileSystem`, `Time`, `Random`) wired in runtime
+- `panic` terminates with message and source location
+- `assert!` checks condition, panics on false
+- `assert-unreachable!` typed as `Never`, always panics
+- `?` operator propagates `Err` from `Result`, unwraps `Ok`
+- Contract clauses (`:requires`, `:ensures`, `:examples`) parsed and enforced in dev mode
+- `try`/`catch` compiles to `match` on `Result`
 - `cargo test` passes across all crates
 
-**When done:** Update this file to point to M7.
+**When done:** Update this file to point to M8.
 
-See `docs/todo-m6.md` for the task checklist.
+See `docs/todo-m7.md` for the task checklist.
 See `milestones.md` for the full plan.

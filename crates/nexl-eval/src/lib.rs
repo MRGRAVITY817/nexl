@@ -184,6 +184,9 @@ pub enum EvalError {
     /// A native built-in function signalled a runtime error.
     #[error("runtime error: {0}")]
     NativeError(String),
+    /// Explicit `(panic "message")` — unrecoverable termination (spec §9.4).
+    #[error("panic: {0}")]
+    Panic(String),
 }
 
 #[cfg(test)]
@@ -3561,5 +3564,144 @@ mod tests {
         ]);
         let result = eval(&expr, &env).unwrap();
         assert_eq!(result, Value::Int(0));
+    }
+
+    // --- panic tests ---
+
+    #[test]
+    fn test_panic_with_string_message() {
+        // (panic "oops") should terminate with EvalError::Panic containing "oops"
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "panic".into(),
+            }),
+            lit(Atom::Str("oops".into())),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Err(EvalError::Panic("oops".into())));
+    }
+
+    #[test]
+    fn test_panic_produces_eval_error() {
+        // (panic "broken") returns EvalError::Panic, NOT NativeError
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "panic".into(),
+            }),
+            lit(Atom::Str("broken".into())),
+        ]);
+        let result = eval(&expr, &env);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EvalError::Panic(msg) => assert_eq!(msg, "broken"),
+            other => panic!("expected EvalError::Panic, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_panic_in_branch() {
+        // (if false (panic "unreachable") 42) should NOT panic
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "if".into(),
+            }),
+            lit(Atom::Bool(false)),
+            list(vec![
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "panic".into(),
+                }),
+                lit(Atom::Str("unreachable".into())),
+            ]),
+            lit(Atom::Int {
+                value: 42,
+                suffix: None,
+            }),
+        ]);
+        let result = eval(&expr, &env).unwrap();
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_panic_message_contains_source_info() {
+        // (panic "bad state") error message includes "bad state"
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "panic".into(),
+            }),
+            lit(Atom::Str("bad state".into())),
+        ]);
+        let result = eval(&expr, &env);
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bad state"),
+            "error message should contain the panic text, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_panic_halts_do_block() {
+        // (do 1 (panic "stop") 3) — never reaches 3, returns Panic error
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "do".into(),
+            }),
+            lit(Atom::Int {
+                value: 1,
+                suffix: None,
+            }),
+            list(vec![
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "panic".into(),
+                }),
+                lit(Atom::Str("stop".into())),
+            ]),
+            lit(Atom::Int {
+                value: 3,
+                suffix: None,
+            }),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Err(EvalError::Panic("stop".into())));
+    }
+
+    #[test]
+    fn test_panic_no_args_is_arity_error() {
+        // (panic) with no message is an arity error
+        let env = Rc::new(Env::new());
+        let expr = list(vec![lit(Atom::Symbol {
+            ns: None,
+            name: "panic".into(),
+        })]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Err(EvalError::Arity));
+    }
+
+    #[test]
+    fn test_panic_too_many_args_is_arity_error() {
+        // (panic "a" "b") is an arity error
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "panic".into(),
+            }),
+            lit(Atom::Str("a".into())),
+            lit(Atom::Str("b".into())),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Err(EvalError::Arity));
     }
 }

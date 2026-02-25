@@ -102,6 +102,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "set!" => {
             eval_set_bang(items, env)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "panic" => {
+            eval_panic(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -883,4 +886,24 @@ fn eval_set_bang(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError>
     env.set(&name, value)
         .map_err(|crate::EnvError::Unbound(n)| EvalError::UnboundSymbol(n))?;
     Ok(EvalReturn::Value(Value::Unit))
+}
+
+/// Evaluate `(panic "message")` — terminates with `EvalError::Panic`.
+fn eval_panic<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() != 2 {
+        return Err(EvalError::Arity);
+    }
+    let msg_val = match eval_with_loop(&items[1], env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+    };
+    let msg = match msg_val {
+        Value::Str(s) => s.to_string(),
+        other => other.type_name().to_string(),
+    };
+    Err(EvalError::Panic(msg))
 }
