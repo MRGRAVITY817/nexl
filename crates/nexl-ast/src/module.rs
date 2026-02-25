@@ -41,6 +41,10 @@ pub enum ImportKind {
     Alias(String),
     /// `(import mod :refer [a b c])` — selective unqualified import.
     Refer(Vec<String>),
+    /// `(import mod :exclude [a b c])` — import all but these names.
+    Exclude(Vec<String>),
+    /// `(import mod :rename {old new})` — rename imported symbols.
+    Rename(Vec<(String, String)>),
     /// `(import mod)` — import all exports unqualified.
     All,
 }
@@ -175,6 +179,26 @@ pub fn parse_import_decl(items: &[Node]) -> Result<ImportDecl, ModuleParseError>
                 kind: ImportKind::Refer(names),
             })
         }
+        NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) if kw == "exclude" => {
+            if items.len() < 4 {
+                return Err(ModuleParseError::new(":exclude requires a vector of names"));
+            }
+            let names = extract_symbol_vec(&items[3])?;
+            Ok(ImportDecl {
+                module_path,
+                kind: ImportKind::Exclude(names),
+            })
+        }
+        NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) if kw == "rename" => {
+            if items.len() < 4 {
+                return Err(ModuleParseError::new(":rename requires a map of names"));
+            }
+            let renames = extract_symbol_map(&items[3])?;
+            Ok(ImportDecl {
+                module_path,
+                kind: ImportKind::Rename(renames),
+            })
+        }
         _ => Err(ModuleParseError::new(format!(
             "unexpected import option: {:?}",
             items[2].kind
@@ -219,6 +243,22 @@ fn extract_symbol_vec(node: &Node) -> Result<Vec<String>, ModuleParseError> {
             Ok(names)
         }
         _ => Err(ModuleParseError::new("expected a vector [...]")),
+    }
+}
+
+/// Extract a map of plain symbol renames from a `{...}` node.
+fn extract_symbol_map(node: &Node) -> Result<Vec<(String, String)>, ModuleParseError> {
+    match &node.kind {
+        NodeKind::Map(pairs) => {
+            let mut renames = Vec::with_capacity(pairs.len());
+            for (key, val) in pairs {
+                let from = extract_plain_symbol(key)?;
+                let to = extract_plain_symbol(val)?;
+                renames.push((from, to));
+            }
+            Ok(renames)
+        }
+        _ => Err(ModuleParseError::new("expected a map {...}")),
     }
 }
 

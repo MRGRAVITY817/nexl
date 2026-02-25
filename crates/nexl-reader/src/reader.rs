@@ -2,10 +2,13 @@ use nexl_ast::{
     Atom,
     Comment,
     FileId,
+    ImportDecl,
+    ImportKind,
     ModuleDecl,
     Node,
     NodeKind,
     Span,
+    parse_import_decl,
     parse_module_decl,
 };
 use nexl_errors::{Diagnostic, Label, Severity, codes};
@@ -80,6 +83,72 @@ fn expected_module_decl(span: Span, label: &str) -> Box<Diagnostic> {
     let mut d = Diagnostic::new(Severity::Error, "expected a module declaration at top of file");
     d.push_label(Label::new(span, label));
     d.set_help("add a `(module <name> ...)` form as the first form in the file");
+    Box::new(d)
+}
+
+/// Parse a single `(import ...)` form in `src` into an [`ImportDecl`].
+pub fn read_import_decl(src: &str, file_id: FileId) -> Result<ImportDecl, Box<Diagnostic>> {
+    let nodes = read(src, file_id)?;
+    let first = nodes.first().ok_or_else(|| {
+        let mut d = Diagnostic::new(Severity::Error, "expected an import declaration");
+        d.push_label(Label::new(
+            Span::point(file_id, 0),
+            "import form expected here",
+        ));
+        d.set_help("add an `(import <module> :as <alias>)` form");
+        Box::new(d)
+    })?;
+
+    let NodeKind::List(items) = &first.kind else {
+        return Err(expected_import_decl(first.span, "first form is not an `import` declaration"));
+    };
+
+    let head = items
+        .first()
+        .ok_or_else(|| expected_import_decl(first.span, "import form expected here"))?;
+    match &head.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "import" => {}
+        _ => {
+            return Err(expected_import_decl(
+                head.span,
+                "first form is not an `import` declaration",
+            ));
+        }
+    }
+
+    let decl = match parse_import_decl(items) {
+        Ok(decl) => decl,
+        Err(err) => {
+            let mut d = Diagnostic::new(Severity::Error, err.description);
+            d.push_label(Label::new(first.span, "invalid import declaration"));
+            d.set_help("check the import declaration syntax, e.g. `(import my-lib.http :as http)`");
+            return Err(Box::new(d));
+        }
+    };
+
+    match decl.kind {
+        ImportKind::Alias(_)
+        | ImportKind::Refer(_)
+        | ImportKind::Exclude(_)
+        | ImportKind::Rename(_) => Ok(decl),
+        _ => {
+            let mut d = Diagnostic::new(
+                Severity::Error,
+                "only :as, :refer, :exclude, or :rename imports are supported",
+            );
+            d.push_label(Label::new(first.span, "unsupported import option"));
+            d.set_help(
+                "use `(import <module> :as <alias>)`, `(import <module> :refer [...])`, `(import <module> :exclude [...])`, or `(import <module> :rename {...})`",
+            );
+            Err(Box::new(d))
+        }
+    }
+}
+
+fn expected_import_decl(span: Span, label: &str) -> Box<Diagnostic> {
+    let mut d = Diagnostic::new(Severity::Error, "expected an import declaration");
+    d.push_label(Label::new(span, label));
+    d.set_help("add an `(import <module> :as <alias>)` form");
     Box::new(d)
 }
 
@@ -596,7 +665,7 @@ fn reassemble_str(parts: &[StringPart]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexl_ast::{Atom, FileId, IntSuffix, NodeKind};
+    use nexl_ast::{Atom, FileId, ImportKind, IntSuffix, NodeKind};
 
     fn fid() -> FileId {
         FileId(0)
@@ -1275,6 +1344,57 @@ mod tests {
         assert_eq!(
             decl.exports,
             Some(vec!["start!".to_string(), "stop!".to_string()])
+        );
+    }
+
+    // ── 18. import_decl_alias ───────────────────────────────────────────────
+    #[test]
+    fn import_decl_alias() {
+        let decl = read_import_decl("(import my-lib.http :as http)", fid())
+            .expect("parse failed");
+        assert_eq!(decl.module_path, "my-lib.http");
+        assert_eq!(decl.kind, ImportKind::Alias("http".to_string()));
+    }
+
+    // ── 19. import_decl_refer ───────────────────────────────────────────────
+    #[test]
+    fn import_decl_refer() {
+        let decl = read_import_decl("(import my-lib.coll :refer [map filter])", fid())
+            .expect("parse failed");
+        assert_eq!(decl.module_path, "my-lib.coll");
+        assert_eq!(
+            decl.kind,
+            ImportKind::Refer(vec!["map".to_string(), "filter".to_string()])
+        );
+    }
+
+    // ── 20. import_decl_exclude ─────────────────────────────────────────────
+    #[test]
+    fn import_decl_exclude() {
+        let decl = read_import_decl("(import my-lib.coll :exclude [map filter])", fid())
+            .expect("parse failed");
+        assert_eq!(decl.module_path, "my-lib.coll");
+        assert_eq!(
+            decl.kind,
+            ImportKind::Exclude(vec!["map".to_string(), "filter".to_string()])
+        );
+    }
+
+    // ── 21. import_decl_rename ──────────────────────────────────────────────
+    #[test]
+    fn import_decl_rename() {
+        let decl = read_import_decl(
+            "(import my-lib.coll :rename {map map2 filter filter2})",
+            fid(),
+        )
+        .expect("parse failed");
+        assert_eq!(decl.module_path, "my-lib.coll");
+        assert_eq!(
+            decl.kind,
+            ImportKind::Rename(vec![
+                ("map".to_string(), "map2".to_string()),
+                ("filter".to_string(), "filter2".to_string()),
+            ])
         );
     }
 

@@ -6,7 +6,7 @@
 
 ## Reader (`nexl-reader`)
 - [x] Parse `(module name :exports [...] :performs [...])` form
-- [ ] Parse `(import mod :as alias)`, `:refer`, `:exclude`, `:rename` variants
+- [x] Parse `(import mod :as alias)`, `:refer`, `:exclude`, `:rename` variants
 - [ ] Parse qualified symbols `foo/bar` as distinct from bare symbols
 
 ## Module Resolution (`nexl-modules` — new crate)
