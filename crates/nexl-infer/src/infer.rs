@@ -41,6 +41,12 @@ pub struct InferState {
     pub warnings: Vec<TypeError>,
     /// Stack of effect rows for nested function bodies.
     pub effect_stack: Vec<EffectRow>,
+    /// Stack of enclosing function return types, for `?` operator checking.
+    ///
+    /// Pushed when entering a function body (`fn` or `defn`); popped on exit.
+    /// The `?` operator peeks at the top to determine whether to propagate
+    /// `Err` (for `Result`) or `None` (for `Option`).
+    pub return_type_stack: Vec<Type>,
 }
 
 impl InferState {
@@ -53,6 +59,7 @@ impl InferState {
             errors: Vec::new(),
             warnings: Vec::new(),
             effect_stack: Vec::new(),
+            return_type_stack: Vec::new(),
         }
     }
 
@@ -175,6 +182,7 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("panic") => synth_panic(items, env, state),
         Some("assert!") => synth_assert(items, env, state),
         Some("assert-unreachable!") => synth_assert_unreachable(items, env, state),
+        Some("?") => synth_question(items, env, state),
         _ => synth_application(items, env, state),
     }
 }
@@ -1462,9 +1470,14 @@ fn synth_fn(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, T
     }
 
     // Infer the body type in the extended environment.
+    // Push a fresh return-type variable so that any `?` in the body can read it.
+    let ret_placeholder = state.fresh_var();
+    state.return_type_stack.push(ret_placeholder);
     state.push_effect_scope();
-    let ret_ty = synth(&items[2], &body_env, state)?;
+    let ret_ty = synth(&items[2], &body_env, state);
     let body_effects = state.pop_effect_scope();
+    state.return_type_stack.pop();
+    let ret_ty = ret_ty?;
 
     // Apply the accumulated substitution so any param vars that were unified
     // during body inference are resolved in the returned type.
@@ -1559,6 +1572,82 @@ fn synth_assert_unreachable(
         let _ = synth(msg, env, state)?;
     }
     Ok(Type::Never)
+}
+
+/// Synthesize the type of a `(? expr)` form — the `?` early-propagation operator.
+///
+/// The operator inspects the enclosing function's declared return type (tracked via
+/// [`InferState::return_type_stack`]) and selects the appropriate propagation mode:
+///
+/// - Return type `(Result a e)`: `expr` must have type `(Result x e')`; unifies `e'` with `e`;
+///   the `?` expression produces `x`.  On `Err`, the function early-exits with that `Err`.
+/// - Return type `(Option a)`:   `expr` must have type `(Option x)`; the `?` expression
+///   produces `x`.  On `None`, the function early-exits with `None`.
+///
+/// Using `?` outside a function, or mixing `Result?` and `Option?`, is a type error.
+/// (spec §9.3)
+fn synth_question(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    if items.len() != 2 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "? expects (? expr), got {} element(s)",
+                items.len()
+            ),
+        }));
+    }
+
+    let ret_ty = state
+        .return_type_stack
+        .last()
+        .cloned()
+        .ok_or_else(|| {
+            TypeError::new(TypeErrorKind::MalformedForm {
+                description: "? operator used outside of a function body".to_string(),
+            })
+        })?;
+    let ret_ty = state.subst.apply(&ret_ty);
+
+    let expr_ty = synth(&items[1], env, state)?;
+
+    match &ret_ty {
+        Type::Adt { name, args } if name == "Result" && args.len() == 2 => {
+            let err_ty = args[1].clone();
+            let ok_var = state.fresh_var();
+            let err_var = state.fresh_var();
+            let expected = Type::Adt {
+                name: "Result".to_string(),
+                args: vec![ok_var.clone(), err_var.clone()],
+            };
+            nexl_types::unify(&expr_ty, &expected, &mut state.subst).map_err(|e| {
+                e.with_help(format!(
+                    "? applied here requires a (Result ...) value, but got {}",
+                    expr_ty
+                ))
+            })?;
+            nexl_types::unify(&err_var, &err_ty, &mut state.subst)?;
+            Ok(state.subst.apply(&ok_var))
+        }
+        Type::Adt { name, args } if name == "Option" && args.len() == 1 => {
+            let inner_var = state.fresh_var();
+            let expected = Type::Adt {
+                name: "Option".to_string(),
+                args: vec![inner_var.clone()],
+            };
+            nexl_types::unify(&expr_ty, &expected, &mut state.subst).map_err(|e| {
+                e.with_help(format!(
+                    "? applied here requires an (Option ...) value, but got {}",
+                    expr_ty
+                ))
+            })?;
+            Ok(state.subst.apply(&inner_var))
+        }
+        other => Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "? can only be used in functions returning (Result ...) or (Option ...), \
+                 but the enclosing function returns {other}"
+            ),
+        })),
+    }
 }
 
 /// Synthesize the type of a `(let [x e1 y e2 ...] body)` form.
@@ -2078,9 +2167,17 @@ pub fn infer_defn(
     }
 
     // Infer the body in the extended environment.
+    // Push the declared return type (or a fresh var) so that `?` in the body
+    // can determine which wrapper type to propagate.
+    let ret_push = ret_annotation
+        .clone()
+        .unwrap_or_else(|| state.fresh_var());
+    state.return_type_stack.push(ret_push);
     state.push_effect_scope();
-    let body_ty = synth(body_node, &body_env, state)?;
+    let body_ty = synth(body_node, &body_env, state);
     let body_effects = state.pop_effect_scope();
+    state.return_type_stack.pop();
+    let body_ty = body_ty?;
 
     // If a return annotation was provided, unify it with the body type.
     if let Some(ann_ret) = ret_annotation {
@@ -2110,14 +2207,59 @@ pub fn infer_defn(
 /// - Primitive type names: `Int`, `Float`, `Bool`, … (spec §5.2)
 /// - Fixed-width numeric types: `Int8`, `Int32`, `U64`, `F32`, …
 /// - Function types: `(Fn [param-types...] -> ret-type)` (spec §5.3)
+/// - ADT types: `(Option a)`, `(Result a e)` (spec §5.7 / §9.2)
 pub fn parse_type_expr(node: &Node) -> Result<Type, TypeError> {
     match &node.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) => parse_type_name(name, node),
-        NodeKind::List(items) => parse_fn_type(items, node),
+        NodeKind::List(items) => {
+            let head_name = match items.first().map(|n| &n.kind) {
+                Some(NodeKind::Atom(Atom::Symbol { ns: None, name })) => name.as_str(),
+                _ => {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: format!("expected a type expression, got {:?}", node.kind),
+                    }));
+                }
+            };
+            match head_name {
+                "Fn" => parse_fn_type(items, node),
+                "Option" => parse_adt_type("Option", 1, items, node),
+                "Result" => parse_adt_type("Result", 2, items, node),
+                _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!("unknown type constructor `{head_name}`"),
+                })
+                .with_span(node.span)),
+            }
+        }
         _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
             description: format!("expected a type expression, got {:?}", node.kind),
         })),
     }
+}
+
+/// Parse `(Name T1 T2 …)` into `Type::Adt { name, args }` with the expected arity.
+fn parse_adt_type(
+    name: &str,
+    arity: usize,
+    items: &[Node],
+    node: &Node,
+) -> Result<Type, TypeError> {
+    if items.len() != arity + 1 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "{name} type expects {arity} type argument(s), got {}",
+                items.len().saturating_sub(1)
+            ),
+        })
+        .with_span(node.span));
+    }
+    let args: Vec<Type> = items[1..]
+        .iter()
+        .map(parse_type_expr)
+        .collect::<Result<_, _>>()?;
+    Ok(Type::Adt {
+        name: name.to_string(),
+        args,
+    })
 }
 
 /// Parse a bare type name symbol (e.g. `Int`, `Bool`, `Fn`).
@@ -3382,7 +3524,7 @@ mod tests {
 
     use super::{
         DeftypeDecl, InferState, check, check_module_performs, infer_def, infer_defn, parse_match,
-        register_deftype, synth, validate_module_performs,
+        parse_type_expr, register_deftype, synth, validate_module_performs,
     };
     use crate::Env;
     use nexl_ast::NodeKind;
@@ -5993,8 +6135,6 @@ mod tests {
     // Type annotation tests
     // -----------------------------------------------------------------------
 
-    use super::parse_type_expr;
-
     fn type_sym(name: &str) -> Node {
         sym_node(name)
     }
@@ -7433,6 +7573,183 @@ mod tests {
         assert!(
             state.errors.is_empty(),
             "resume must be bound; no errors expected"
+        );
+    }
+
+    // ── ? operator type checking tests ──────────────────────────────────────
+
+    // -- Test 1 (parse_type_expr: Option) --
+    #[test]
+    fn parse_type_option() {
+        // parse_type_expr on "(Option Int)" → Adt { "Option", [Int] }  (spec §5.7 / §9.2)
+        let node = parse_one("(Option Int)");
+        let ty = parse_type_expr(&node).unwrap();
+        assert_eq!(ty, option_ty(Type::Int));
+    }
+
+    // -- Test 3 (? unwraps Ok from Result) --
+    #[test]
+    fn question_unwraps_ok_from_result() {
+        // (defn f [x : (Result Int Str)] -> (Result Int Str)  (let [n (id x)?] x))
+        // (id x)? should produce Int; body x : (Result Int Str) matches annotation.
+        // The ? postfix applies to list expressions, not bare symbols.  (spec §9.3)
+        let result_int_str = Type::Adt {
+            name: "Result".to_string(),
+            args: vec![Type::Int, Type::Str],
+        };
+        let id_ty = Type::Fn {
+            params: vec![result_int_str.clone()],
+            ret: Box::new(result_int_str.clone()),
+            effects: EffectRow::empty(),
+        };
+        let env = Env::new().extend("id", Scheme::mono(id_ty));
+        let mut state = InferState::new();
+        let node = parse_one(
+            "(defn f [x : (Result Int Str)] -> (Result Int Str) (let [n (id x)?] x))",
+        );
+        let (_name, ty, _) = infer_defn(&node, &env, &mut state).unwrap();
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![result_int_str.clone()],
+                ret: Box::new(result_int_str),
+                effects: EffectRow::empty(),
+            }
+        );
+    }
+
+    // -- Test 8 (? on Option in Result context is an error — mixing) --
+    #[test]
+    fn question_option_in_result_context_is_error() {
+        // In a (Result Int Str) context, applying ? to an (Option Int) → type error.
+        // Spec: mixing Result? and Option? is a compile error.
+        let get_option_ty = Type::Fn {
+            params: vec![],
+            ret: Box::new(option_ty(Type::Int)),
+            effects: EffectRow::empty(),
+        };
+        let env = Env::new().extend("get-option", Scheme::mono(get_option_ty));
+        let mut state = InferState::new();
+        let node = parse_one(
+            "(defn f [] -> (Result Int Str) (let [n (get-option)?] 0))",
+        );
+        let result = infer_defn(&node, &env, &mut state);
+        assert!(
+            result.is_err() || !state.errors.is_empty(),
+            "expected a type error when ? applied to Option in Result context"
+        );
+    }
+
+    // -- Test 7 (? on Result in Option context is an error — mixing) --
+    #[test]
+    fn question_result_in_option_context_is_error() {
+        // In an (Option Int) context, applying ? to a (Result Int Str) → type error.
+        // Spec: mixing Result? and Option? is a compile error.
+        let result_int_str = Type::Adt {
+            name: "Result".to_string(),
+            args: vec![Type::Int, Type::Str],
+        };
+        let get_result_ty = Type::Fn {
+            params: vec![],
+            ret: Box::new(result_int_str),
+            effects: EffectRow::empty(),
+        };
+        let env = Env::new().extend("get-result", Scheme::mono(get_result_ty));
+        let mut state = InferState::new();
+        let node = parse_one(
+            "(defn f [] -> (Option Int) (let [n (get-result)?] 0))",
+        );
+        let result = infer_defn(&node, &env, &mut state);
+        assert!(
+            result.is_err() || !state.errors.is_empty(),
+            "expected a type error when ? applied to Result in Option context"
+        );
+    }
+
+    // -- Test 6 (? on non-Result/Option type is an error) --
+    #[test]
+    fn question_on_non_wrapper_type_is_error() {
+        // In an (Option Int) context, applying ? to an Int value → type error
+        let int_fn_ty = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
+        };
+        let env = Env::new().extend("get-int", Scheme::mono(int_fn_ty));
+        let mut state = InferState::new();
+        let node = parse_one(
+            "(defn f [x : (Option Int)] -> (Option Int) (let [n (get-int 1)?] x))",
+        );
+        let result = infer_defn(&node, &env, &mut state);
+        assert!(
+            result.is_err() || !state.errors.is_empty(),
+            "expected a type error when ? applied to Int in Option context"
+        );
+    }
+
+    // -- Test 5 (? outside function is an error) --
+    #[test]
+    fn question_outside_function_is_error() {
+        // (? expr) at top level, no enclosing function → MalformedForm
+        let (env, mut state) = empty();
+        let node = parse_one("((fn [x] x) 42)?");  // postfix ? on a list expression
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {:?}",
+            err.kind
+        );
+    }
+
+    // -- Test 4 (? unwraps Some from Option) --
+    #[test]
+    fn question_unwraps_some_from_option() {
+        // (defn f [x : (Option Int)] -> (Option Int)  (let [n (id x)?] x))
+        // (id x)? should produce Int; body x : (Option Int) matches annotation. (spec §9.3)
+        let option_int = option_ty(Type::Int);
+        let id_ty = Type::Fn {
+            params: vec![option_int.clone()],
+            ret: Box::new(option_int.clone()),
+            effects: EffectRow::empty(),
+        };
+        let env = Env::new().extend("id", Scheme::mono(id_ty));
+        let mut state = InferState::new();
+        let node = parse_one(
+            "(defn f [x : (Option Int)] -> (Option Int) (let [n (id x)?] x))",
+        );
+        let (_name, ty, _) = infer_defn(&node, &env, &mut state).unwrap();
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![option_int.clone()],
+                ret: Box::new(option_int),
+                effects: EffectRow::empty(),
+            }
+        );
+    }
+
+    // -- Test 2 (parse_type_expr: Result) --
+    #[test]
+    fn parse_type_result() {
+        // parse_type_expr on "(Result Int Str)" → Adt { "Result", [Int, Str] }  (spec §9.2)
+        let node = parse_one("(Result Int Str)");
+        let ty = parse_type_expr(&node).unwrap();
+        assert_eq!(
+            ty,
+            Type::Adt {
+                name: "Result".to_string(),
+                args: vec![Type::Int, Type::Str],
+            }
         );
     }
 }

@@ -9,7 +9,7 @@
 
 ## Types / Inference
 - [x] `panic` typed as `Never`; `assert!` typed as `Unit`; `assert-unreachable!` typed as `Never`
-- [ ] `?` operator type checking (unwrap `Ok`/early-return `Err` for `Result`; unwrap `Some`/early-return `None` for `Option`; mixing the two in the same function is a compile error)
+- [x] `?` operator type checking (unwrap `Ok`/early-return `Err` for `Result`; unwrap `Some`/early-return `None` for `Option`; mixing the two in the same function is a compile error)
 - [ ] Contract clause type checking (`:requires`/`:ensures` must be Bool expressions)
 
 ## Eval / Runtime
