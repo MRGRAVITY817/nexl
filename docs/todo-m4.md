@@ -21,7 +21,7 @@
 
 ## Collection Operations — Built-in Functions
 - [x] Vec: `get`, `put`, `append`, `count`, `first`, `rest`, `last`, `slice`
-- [ ] Map: `get`, `put`, `remove`, `keys`, `vals`, `entries`, `contains?`, `count`
+- [x] Map: `get`, `put`, `remove`, `keys`, `vals`, `entries`, `contains?`, `count`
 - [ ] Set: `add`, `remove`, `contains?`, `count`, `union`, `intersection`, `difference`
 - [ ] Type inference for collection operations
 

@@ -2462,6 +2462,13 @@ mod tests {
         }
     }
 
+    fn kw(name: &str) -> Value {
+        Value::Keyword {
+            ns: None,
+            name: Rc::from(name),
+        }
+    }
+
     // --- arithmetic builtin tests ---
 
     #[test]
@@ -2732,6 +2739,89 @@ mod tests {
         assert_eq!(
             eval_str("(slice [1 2 3 4] 1 3)").unwrap(),
             Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(3)]))
+        );
+    }
+
+    // --- collection builtin tests (Map) ---
+
+    #[test]
+    fn map_get_present_and_missing() {
+        assert_eq!(
+            eval_str(r#"(get {:a 1 :b 2} :a)"#).unwrap(),
+            option_some(Value::Int(1))
+        );
+        assert_eq!(
+            eval_str(r#"(get {:a 1 :b 2} :c)"#).unwrap(),
+            option_none()
+        );
+    }
+
+    #[test]
+    fn map_put_updates_and_appends() {
+        assert_eq!(
+            eval_str(r#"(put {:a 1 :b 2} :a 9)"#).unwrap(),
+            Value::Map(Rc::new(vec![
+                (kw("a"), Value::Int(9)),
+                (kw("b"), Value::Int(2)),
+            ]))
+        );
+        assert_eq!(
+            eval_str(r#"(put {:a 1 :b 2} :c 3)"#).unwrap(),
+            Value::Map(Rc::new(vec![
+                (kw("a"), Value::Int(1)),
+                (kw("b"), Value::Int(2)),
+                (kw("c"), Value::Int(3)),
+            ]))
+        );
+    }
+
+    #[test]
+    fn map_remove_existing_and_missing() {
+        assert_eq!(
+            eval_str(r#"(remove {:a 1 :b 2} :a)"#).unwrap(),
+            Value::Map(Rc::new(vec![(kw("b"), Value::Int(2))]))
+        );
+        assert_eq!(
+            eval_str(r#"(remove {:a 1 :b 2} :c)"#).unwrap(),
+            Value::Map(Rc::new(vec![
+                (kw("a"), Value::Int(1)),
+                (kw("b"), Value::Int(2)),
+            ]))
+        );
+    }
+
+    #[test]
+    fn map_keys_vals_entries() {
+        assert_eq!(
+            eval_str(r#"(keys {:a 1 :b 2})"#).unwrap(),
+            Value::Vec(Rc::new(vec![kw("a"), kw("b")]))
+        );
+        assert_eq!(
+            eval_str(r#"(vals {:a 1 :b 2})"#).unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        );
+        assert_eq!(
+            eval_str(r#"(entries {:a 1 :b 2})"#).unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Vec(Rc::new(vec![kw("a"), Value::Int(1)])),
+                Value::Vec(Rc::new(vec![kw("b"), Value::Int(2)])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn map_contains_and_count() {
+        assert_eq!(
+            eval_str(r#"(contains? {:a 1 :b 2} :a)"#).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str(r#"(contains? {:a 1 :b 2} :c)"#).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(
+            eval_str(r#"(count {:a 1 :b 2})"#).unwrap(),
+            Value::Int(2)
         );
     }
 

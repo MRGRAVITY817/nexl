@@ -43,6 +43,11 @@ pub fn standard_env() -> Rc<Env> {
     env.define("rest", native("rest", rest));
     env.define("last", native("last", last));
     env.define("slice", native("slice", slice));
+    env.define("remove", native("remove", remove));
+    env.define("keys", native("keys", keys));
+    env.define("vals", native("vals", vals));
+    env.define("entries", native("entries", entries));
+    env.define("contains?", native("contains?", contains));
 
     env
 }
@@ -356,7 +361,8 @@ fn count(args: &[Value]) -> Result<Value, String> {
     match v {
         Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
         Value::Vec(items) => Ok(Value::Int(items.len() as i64)),
-        other => Err(type_mismatch("count", "Str or Vec", other)),
+        Value::Map(entries) => Ok(Value::Int(entries.len() as i64)),
+        other => Err(type_mismatch("count", "Str, Vec, or Map", other)),
     }
 }
 
@@ -367,43 +373,70 @@ fn count(args: &[Value]) -> Result<Value, String> {
 /// `(get v i)` — return (Some value) if index is in bounds, else None.
 fn get(args: &[Value]) -> Result<Value, String> {
     let (coll, idx) = two_args("get", args)?;
-    match (coll, idx) {
-        (Value::Vec(items), Value::Int(i)) => {
-            if *i < 0 {
-                return Ok(option_none());
+    match coll {
+        Value::Vec(items) => match idx {
+            Value::Int(i) => {
+                if *i < 0 {
+                    return Ok(option_none());
+                }
+                let idx = *i as usize;
+                match items.get(idx) {
+                    Some(value) => Ok(option_some(value.clone())),
+                    None => Ok(option_none()),
+                }
             }
-            let idx = *i as usize;
-            match items.get(idx) {
-                Some(value) => Ok(option_some(value.clone())),
-                None => Ok(option_none()),
+            other => Err(type_mismatch("get", "Int", other)),
+        },
+        Value::Map(entries) => {
+            for (key, value) in entries.iter() {
+                if key == idx {
+                    return Ok(option_some(value.clone()));
+                }
             }
+            Ok(option_none())
         }
-        (Value::Vec(_), other) => Err(type_mismatch("get", "Int", other)),
-        (other, _) => Err(type_mismatch("get", "Vec", other)),
+        other => Err(type_mismatch("get", "Vec or Map", other)),
     }
 }
 
 /// `(put v i x)` — update the value at index `i`.
 fn put(args: &[Value]) -> Result<Value, String> {
     let (coll, idx, value) = three_args("put", args)?;
-    match (coll, idx) {
-        (Value::Vec(items), Value::Int(i)) => {
-            if *i < 0 {
-                return Err(format!("`put` index out of bounds: {i}"));
+    match coll {
+        Value::Vec(items) => match idx {
+            Value::Int(i) => {
+                if *i < 0 {
+                    return Err(format!("`put` index out of bounds: {i}"));
+                }
+                let idx = *i as usize;
+                if idx >= items.len() {
+                    return Err(format!(
+                        "`put` index out of bounds: {i} for Vec of length {}",
+                        items.len()
+                    ));
+                }
+                let mut next = items.as_ref().clone();
+                next[idx] = value.clone();
+                Ok(Value::Vec(Rc::new(next)))
             }
-            let idx = *i as usize;
-            if idx >= items.len() {
-                return Err(format!(
-                    "`put` index out of bounds: {i} for Vec of length {}",
-                    items.len()
-                ));
+            other => Err(type_mismatch("put", "Int", other)),
+        },
+        Value::Map(entries) => {
+            let mut next = entries.as_ref().clone();
+            let mut updated = false;
+            for (key, val) in next.iter_mut() {
+                if key == idx {
+                    *val = value.clone();
+                    updated = true;
+                    break;
+                }
             }
-            let mut next = items.as_ref().clone();
-            next[idx] = value.clone();
-            Ok(Value::Vec(Rc::new(next)))
+            if !updated {
+                next.push((idx.clone(), value.clone()));
+            }
+            Ok(Value::Map(Rc::new(next)))
         }
-        (Value::Vec(_), other) => Err(type_mismatch("put", "Int", other)),
-        (other, _) => Err(type_mismatch("put", "Vec", other)),
+        other => Err(type_mismatch("put", "Vec or Map", other)),
     }
 }
 
@@ -480,6 +513,67 @@ fn slice(args: &[Value]) -> Result<Value, String> {
         }
         (Value::Vec(_), other, _) => Err(type_mismatch("slice", "Int", other)),
         (other, _, _) => Err(type_mismatch("slice", "Vec", other)),
+    }
+}
+
+/// `(remove m k)` — remove key from map if present.
+fn remove(args: &[Value]) -> Result<Value, String> {
+    let (coll, key) = two_args("remove", args)?;
+    match coll {
+        Value::Map(entries) => {
+            let next: Vec<(Value, Value)> = entries
+                .iter()
+                .filter(|(entry_key, _)| entry_key != key)
+                .cloned()
+                .collect();
+            Ok(Value::Map(Rc::new(next)))
+        }
+        other => Err(type_mismatch("remove", "Map", other)),
+    }
+}
+
+/// `(keys m)` — return map keys in insertion order.
+fn keys(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("keys", args)?;
+    match coll {
+        Value::Map(entries) => Ok(Value::Vec(Rc::new(
+            entries.iter().map(|(key, _)| key.clone()).collect(),
+        ))),
+        other => Err(type_mismatch("keys", "Map", other)),
+    }
+}
+
+/// `(vals m)` — return map values in insertion order.
+fn vals(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("vals", args)?;
+    match coll {
+        Value::Map(entries) => Ok(Value::Vec(Rc::new(
+            entries.iter().map(|(_, value)| value.clone()).collect(),
+        ))),
+        other => Err(type_mismatch("vals", "Map", other)),
+    }
+}
+
+/// `(entries m)` — return map entries as a Vec of 2-tuples.
+fn entries(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("entries", args)?;
+    match coll {
+        Value::Map(items) => Ok(Value::Vec(Rc::new(
+            items
+                .iter()
+                .map(|(key, value)| Value::Vec(Rc::new(vec![key.clone(), value.clone()])))
+                .collect(),
+        ))),
+        other => Err(type_mismatch("entries", "Map", other)),
+    }
+}
+
+/// `(contains? m k)` — check for key membership in a map.
+fn contains(args: &[Value]) -> Result<Value, String> {
+    let (coll, key) = two_args("contains?", args)?;
+    match coll {
+        Value::Map(entries) => Ok(Value::Bool(entries.iter().any(|(entry_key, _)| entry_key == key))),
+        other => Err(type_mismatch("contains?", "Map", other)),
     }
 }
 
