@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use nexl_ast::ImportDecl;
 
+pub mod resolver;
+pub use resolver::{build_name_resolver, NameResolver, ResolvedName, ResolveError};
+
 /// Errors produced while mapping module names to file paths.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ModulePathError {

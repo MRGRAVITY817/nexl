@@ -16,7 +16,7 @@
 - [x] Circular dependency detection (§8.6)
 
 ## Name Resolution
-- [ ] Resolve qualified references (`alias/name`) to module exports
+- [x] Resolve qualified references (`alias/name`) to module exports
 - [ ] Visibility enforcement: public, package-private, module-private (§8.8)
 - [ ] Export validation: unexported names not importable
 
