@@ -36,6 +36,7 @@ pub struct Env {
     record_defs: HashMap<String, RecordDef>,
     constructors: HashMap<String, CtorDef>,
     module_bindings: HashMap<String, HashMap<String, Scheme>>,
+    defined_names: HashSet<String>,
 }
 
 impl Env {
@@ -64,20 +65,57 @@ impl Env {
                 Constructor::nary("Err", vec![Type::Var(result_t1)]),
             ],
         };
-        self.extend_type_def(option).extend_type_def(result)
+        self.extend_type_def(option)
+            .extend_type_def(result)
+            .with_builtin_effects()
+    }
+
+    fn with_builtin_effects(self) -> Self {
+        self.extend_effect_ops("Console", console_effect_ops())
+            .extend_effect_ops("FileSystem", filesystem_effect_ops())
+            .extend_effect_ops("Time", time_effect_ops())
+            .extend_effect_ops("Random", random_effect_ops())
+    }
+
+    fn extend_effect_ops(mut self, effect: &str, ops: Vec<(&'static str, Type)>) -> Self {
+        let mut exports = HashMap::new();
+        for (name, ty) in ops {
+            let scheme = Scheme::mono(ty);
+            self = self.extend_builtin(name, scheme.clone());
+            exports.insert(name.to_string(), scheme);
+        }
+        self.extend_module(effect, exports)
     }
 
     /// Return a new environment that extends `self` with `name` bound to
     /// `scheme`.  Any previous binding of `name` is shadowed.
     pub fn extend(&self, name: impl Into<String>, scheme: Scheme) -> Self {
+        let name = name.into();
         let mut bindings = self.bindings.clone();
-        bindings.insert(name.into(), scheme);
+        bindings.insert(name.clone(), scheme);
+        let mut defined_names = self.defined_names.clone();
+        defined_names.insert(name);
         Self {
             bindings,
             type_defs: self.type_defs.clone(),
             record_defs: self.record_defs.clone(),
             constructors: self.constructors.clone(),
             module_bindings: self.module_bindings.clone(),
+            defined_names,
+        }
+    }
+
+    fn extend_builtin(&self, name: impl Into<String>, scheme: Scheme) -> Self {
+        let name = name.into();
+        let mut bindings = self.bindings.clone();
+        bindings.insert(name, scheme);
+        Self {
+            bindings,
+            type_defs: self.type_defs.clone(),
+            record_defs: self.record_defs.clone(),
+            constructors: self.constructors.clone(),
+            module_bindings: self.module_bindings.clone(),
+            defined_names: self.defined_names.clone(),
         }
     }
 
@@ -100,6 +138,7 @@ impl Env {
             record_defs: self.record_defs.clone(),
             constructors: self.constructors.clone(),
             module_bindings,
+            defined_names: self.defined_names.clone(),
         }
     }
 
@@ -115,6 +154,7 @@ impl Env {
         let mut bindings = self.bindings.clone();
         let mut type_defs = self.type_defs.clone();
         let mut constructors = self.constructors.clone();
+        let mut defined_names = self.defined_names.clone();
         let type_name = typedef.name.clone();
         let adt_args: Vec<Type> = typedef.params.iter().map(|tv| Type::Var(*tv)).collect();
         let mut forall = HashSet::new();
@@ -151,6 +191,7 @@ impl Env {
                     body,
                 },
             );
+            defined_names.insert(ctor.name.clone());
         }
         type_defs.insert(type_name, typedef);
         Self {
@@ -159,6 +200,7 @@ impl Env {
             record_defs: self.record_defs.clone(),
             constructors,
             module_bindings: self.module_bindings.clone(),
+            defined_names,
         }
     }
 
@@ -166,6 +208,7 @@ impl Env {
     pub fn extend_record_def(&self, record: RecordDef) -> Self {
         let mut record_defs = self.record_defs.clone();
         let mut bindings = self.bindings.clone();
+        let mut defined_names = self.defined_names.clone();
         let mut forall = HashSet::new();
         for tv in &record.params {
             forall.insert(*tv);
@@ -185,6 +228,7 @@ impl Env {
                 },
             },
         );
+        defined_names.insert(record.name.clone());
         record_defs.insert(record.name.clone(), record);
         Self {
             bindings,
@@ -192,6 +236,7 @@ impl Env {
             record_defs,
             constructors: self.constructors.clone(),
             module_bindings: self.module_bindings.clone(),
+            defined_names,
         }
     }
 
@@ -212,7 +257,7 @@ impl Env {
 
     /// Return all binding names defined in this environment.
     pub fn all_binding_names(&self) -> Vec<String> {
-        self.bindings.keys().cloned().collect()
+        self.defined_names.iter().cloned().collect()
     }
 
     /// Collect all type variables that are free in this environment after
@@ -246,11 +291,123 @@ impl Env {
     }
 }
 
+fn effect_fn(params: Vec<Type>, ret: Type, effect: &str) -> Type {
+    Type::Fn {
+        params,
+        ret: Box::new(ret),
+        effects: EffectRow::new(vec![effect.to_string()], None),
+    }
+}
+
+fn adt0(name: &str) -> Type {
+    Type::Adt {
+        name: name.to_string(),
+        args: vec![],
+    }
+}
+
+fn console_effect_ops() -> Vec<(&'static str, Type)> {
+    vec![
+        ("print", effect_fn(vec![Type::Str], Type::Unit, "Console")),
+        ("println", effect_fn(vec![Type::Str], Type::Unit, "Console")),
+        ("eprintln", effect_fn(vec![Type::Str], Type::Unit, "Console")),
+        ("read-line", effect_fn(vec![], Type::Str, "Console")),
+    ]
+}
+
+fn filesystem_effect_ops() -> Vec<(&'static str, Type)> {
+    let bytes = adt0("Bytes");
+    let file_info = adt0("FileInfo");
+    vec![
+        ("read-file", effect_fn(vec![Type::Str], bytes.clone(), "FileSystem")),
+        (
+            "write-file",
+            effect_fn(vec![Type::Str, bytes.clone()], Type::Unit, "FileSystem"),
+        ),
+        (
+            "append-file",
+            effect_fn(vec![Type::Str, bytes.clone()], Type::Unit, "FileSystem"),
+        ),
+        (
+            "delete-file",
+            effect_fn(vec![Type::Str], Type::Unit, "FileSystem"),
+        ),
+        (
+            "list-dir",
+            effect_fn(
+                vec![Type::Str],
+                Type::Vec(Box::new(Type::Str)),
+                "FileSystem",
+            ),
+        ),
+        (
+            "make-dir",
+            effect_fn(vec![Type::Str], Type::Unit, "FileSystem"),
+        ),
+        (
+            "stat",
+            effect_fn(vec![Type::Str], file_info.clone(), "FileSystem"),
+        ),
+    ]
+}
+
+fn time_effect_ops() -> Vec<(&'static str, Type)> {
+    vec![
+        ("now", effect_fn(vec![], Type::Int, "Time")),
+        ("sleep", effect_fn(vec![Type::Int], Type::Unit, "Time")),
+    ]
+}
+
+fn random_effect_ops() -> Vec<(&'static str, Type)> {
+    let bytes = adt0("Bytes");
+    vec![
+        ("random-int", effect_fn(vec![], Type::Int, "Random")),
+        (
+            "random-int-range",
+            effect_fn(vec![Type::Int, Type::Int], Type::Int, "Random"),
+        ),
+        ("random-float", effect_fn(vec![], Type::Float, "Random")),
+        ("random-bytes", effect_fn(vec![Type::Int], bytes.clone(), "Random")),
+        ("random-u8", effect_fn(vec![], Type::U8, "Random")),
+        ("random-f32", effect_fn(vec![], Type::F32, "Random")),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use nexl_types::{Constructor, EffectRow, Scheme, Type, TypeDef, TypeVar};
 
     use super::{Env, RecordDef};
+
+    fn effect_fn(params: Vec<Type>, ret: Type, effect: &str) -> Type {
+        Type::Fn {
+            params,
+            ret: Box::new(ret),
+            effects: EffectRow::new(vec![effect.to_string()], None),
+        }
+    }
+
+    fn adt0(name: &str) -> Type {
+        Type::Adt {
+            name: name.to_string(),
+            args: vec![],
+        }
+    }
+
+    fn assert_effect_op(env: &Env, effect: &str, name: &str, expected: Type) {
+        let unqualified = env
+            .lookup(name)
+            .unwrap_or_else(|| panic!("missing builtin `{name}`"))
+            .body
+            .clone();
+        assert_eq!(unqualified, expected, "unqualified `{name}` mismatch");
+        let qualified = env
+            .lookup_qualified(effect, name)
+            .unwrap_or_else(|| panic!("missing builtin `{effect}/{name}`"))
+            .body
+            .clone();
+        assert_eq!(qualified, expected, "qualified `{effect}/{name}` mismatch");
+    }
 
     // -- Test 1 --
     #[test]
@@ -484,5 +641,93 @@ mod tests {
                 effects: EffectRow::empty(),
             }
         );
+    }
+
+    // -- Test 14 --
+    #[test]
+    fn env_new_includes_console_effect_ops() {
+        let env = Env::new();
+        let expected = vec![
+            ("print", effect_fn(vec![Type::Str], Type::Unit, "Console")),
+            ("println", effect_fn(vec![Type::Str], Type::Unit, "Console")),
+            ("eprintln", effect_fn(vec![Type::Str], Type::Unit, "Console")),
+            ("read-line", effect_fn(vec![], Type::Str, "Console")),
+        ];
+        for (name, ty) in expected {
+            assert_effect_op(&env, "Console", name, ty);
+        }
+    }
+
+    // -- Test 15 --
+    #[test]
+    fn env_new_includes_filesystem_effect_ops() {
+        let env = Env::new();
+        let bytes = adt0("Bytes");
+        let file_info = adt0("FileInfo");
+        let expected = vec![
+            ("read-file", effect_fn(vec![Type::Str], bytes.clone(), "FileSystem")),
+            (
+                "write-file",
+                effect_fn(vec![Type::Str, bytes.clone()], Type::Unit, "FileSystem"),
+            ),
+            (
+                "append-file",
+                effect_fn(vec![Type::Str, bytes.clone()], Type::Unit, "FileSystem"),
+            ),
+            (
+                "delete-file",
+                effect_fn(vec![Type::Str], Type::Unit, "FileSystem"),
+            ),
+            (
+                "list-dir",
+                effect_fn(
+                    vec![Type::Str],
+                    Type::Vec(Box::new(Type::Str)),
+                    "FileSystem",
+                ),
+            ),
+            (
+                "make-dir",
+                effect_fn(vec![Type::Str], Type::Unit, "FileSystem"),
+            ),
+            ("stat", effect_fn(vec![Type::Str], file_info.clone(), "FileSystem")),
+        ];
+        for (name, ty) in expected {
+            assert_effect_op(&env, "FileSystem", name, ty);
+        }
+    }
+
+    // -- Test 16 --
+    #[test]
+    fn env_new_includes_time_effect_ops() {
+        let env = Env::new();
+        let expected = vec![
+            ("now", effect_fn(vec![], Type::Int, "Time")),
+            ("sleep", effect_fn(vec![Type::Int], Type::Unit, "Time")),
+        ];
+        for (name, ty) in expected {
+            assert_effect_op(&env, "Time", name, ty);
+        }
+    }
+
+    // -- Test 17 --
+    #[test]
+    fn env_new_includes_random_effect_ops() {
+        let env = Env::new();
+        let bytes = adt0("Bytes");
+        let expected = vec![
+            ("random-int", effect_fn(vec![], Type::Int, "Random")),
+            (
+                "random-int-range",
+                effect_fn(vec![Type::Int, Type::Int], Type::Int, "Random"),
+            ),
+            ("random-float", effect_fn(vec![], Type::Float, "Random")),
+            ("random-bytes", effect_fn(vec![Type::Int], bytes.clone(), "Random")),
+            ("random-u8", effect_fn(vec![], Type::U8, "Random")),
+            ("random-f32", effect_fn(vec![], Type::F32, "Random")),
+        ];
+        for (name, ty) in expected {
+            assert_effect_op(&env, "Random", name, ty);
+        }
     }
 }
