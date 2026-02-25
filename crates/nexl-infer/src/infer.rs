@@ -2060,8 +2060,9 @@ pub fn infer_defn(
     };
 
     // Optional contract clauses: :requires / :ensures / :examples
-    let mut seen_requires = false;
-    let mut seen_ensures = false;
+    // Save the vector nodes for later type-checking.
+    let mut requires_vec: Option<&Node> = None;
+    let mut ensures_vec: Option<&Node> = None;
     let mut seen_examples = false;
     while idx + 1 < items.len() {
         let clause = match &items[idx].kind {
@@ -2070,7 +2071,7 @@ pub fn infer_defn(
         };
         match clause {
             "requires" => {
-                if seen_requires {
+                if requires_vec.is_some() {
                     return Err(TypeError::new(TypeErrorKind::MalformedForm {
                         description: "defn has duplicate :requires clause".to_string(),
                     }));
@@ -2080,11 +2081,11 @@ pub fn infer_defn(
                         description: ":requires must be followed by a vector".to_string(),
                     }));
                 }
-                seen_requires = true;
+                requires_vec = Some(&items[idx + 1]);
                 idx += 2;
             }
             "ensures" => {
-                if seen_ensures {
+                if ensures_vec.is_some() {
                     return Err(TypeError::new(TypeErrorKind::MalformedForm {
                         description: "defn has duplicate :ensures clause".to_string(),
                     }));
@@ -2094,7 +2095,7 @@ pub fn infer_defn(
                         description: ":ensures must be followed by a vector".to_string(),
                     }));
                 }
-                seen_ensures = true;
+                ensures_vec = Some(&items[idx + 1]);
                 idx += 2;
             }
             "examples" => {
@@ -2166,6 +2167,16 @@ pub fn infer_defn(
         body_env = body_env.extend(param_name, Scheme::mono(param_ty));
     }
 
+    // Type-check :requires expressions — each must be Bool, params are in scope.
+    // (spec §4.2.1: "a vector of boolean expressions over the function's parameters")
+    if let Some(vec_node) = requires_vec
+        && let NodeKind::Vector(exprs) = &vec_node.kind
+    {
+        for expr in exprs {
+            check(expr, &Type::Bool, &body_env, state)?;
+        }
+    }
+
     // Infer the body in the extended environment.
     // Push the declared return type (or a fresh var) so that `?` in the body
     // can determine which wrapper type to propagate.
@@ -2182,6 +2193,19 @@ pub fn infer_defn(
     // If a return annotation was provided, unify it with the body type.
     if let Some(ann_ret) = ret_annotation {
         nexl_types::unify(&ann_ret, &body_ty, &mut state.subst)?;
+    }
+
+    // Type-check :ensures expressions — each must be Bool; `result` is bound to the
+    // return type so postconditions can reference the function's output value.
+    // (spec §4.2.1: "The special binding `result` refers to the function's return value")
+    if let Some(vec_node) = ensures_vec
+        && let NodeKind::Vector(exprs) = &vec_node.kind
+    {
+        let result_ty = state.subst.apply(&body_ty);
+        let ensures_env = body_env.extend("result", Scheme::mono(result_ty));
+        for expr in exprs {
+            check(expr, &Type::Bool, &ensures_env, state)?;
+        }
     }
 
     let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
@@ -7573,6 +7597,109 @@ mod tests {
         assert!(
             state.errors.is_empty(),
             "resume must be bound; no errors expected"
+        );
+    }
+
+    // ── Contract clause type checking tests ─────────────────────────────────
+
+    // -- Test 1 (contract: :requires Bool passes) --
+    #[test]
+    fn requires_bool_expr_passes() {
+        // (defn f [n : Int] -> Int :requires [true] n) — Bool literal in :requires → OK
+        // spec §4.2.1: ":requires — a vector of boolean expressions"
+        let (env, mut state) = empty();
+        let node = parse_one("(defn f [n : Int] -> Int :requires [true] n)");
+        let (_name, _ty, _) = infer_defn(&node, &env, &mut state).unwrap();
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+    }
+
+    // -- Test 6 (contract: :ensures can reference `result`) --
+    #[test]
+    fn ensures_can_reference_result() {
+        // (defn f [n : Int] -> Int :ensures [(= result n)] n)
+        // `result` is bound to the return type (Int); = : (Fn [Int Int] -> Bool) in env.
+        // spec §4.2.1: "The special binding `result` refers to the function's return value"
+        let eq_ty = Type::Fn {
+            params: vec![Type::Int, Type::Int],
+            ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
+        };
+        let env = Env::new().extend("=", Scheme::mono(eq_ty));
+        let mut state = InferState::new();
+        let node = parse_one("(defn f [n : Int] -> Int :ensures [(= result n)] n)");
+        let (_name, _ty, _) = infer_defn(&node, &env, &mut state).unwrap();
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+    }
+
+    // -- Test 5 (contract: :ensures non-Bool is error) --
+    #[test]
+    fn ensures_non_bool_expr_is_error() {
+        // (defn f [n : Int] -> Int :ensures [42] n) — 42 : Int, not Bool → type error
+        // spec §4.2.1
+        let (env, mut state) = empty();
+        let node = parse_one("(defn f [n : Int] -> Int :ensures [42] n)");
+        let result = infer_defn(&node, &env, &mut state);
+        assert!(
+            result.is_err() || !state.errors.is_empty(),
+            "expected a type error when :ensures expression is not Bool"
+        );
+    }
+
+    // -- Test 4 (contract: :ensures Bool passes) --
+    #[test]
+    fn ensures_bool_expr_passes() {
+        // (defn f [n : Int] -> Int :ensures [true] n) — Bool literal in :ensures → OK
+        // spec §4.2.1: ":ensures — a vector of boolean expressions"
+        let (env, mut state) = empty();
+        let node = parse_one("(defn f [n : Int] -> Int :ensures [true] n)");
+        let (_name, _ty, _) = infer_defn(&node, &env, &mut state).unwrap();
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+    }
+
+    // -- Test 3 (contract: :requires can reference params) --
+    #[test]
+    fn requires_can_reference_params() {
+        // (defn f [n : Int] -> Int :requires [(pred n)] n)
+        // pred : (Fn [Int] -> Bool) in env — params are in scope in :requires (spec §4.2.1)
+        let pred_ty = Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
+        };
+        let env = Env::new().extend("pred", Scheme::mono(pred_ty));
+        let mut state = InferState::new();
+        let node = parse_one("(defn f [n : Int] -> Int :requires [(pred n)] n)");
+        let (_name, _ty, _) = infer_defn(&node, &env, &mut state).unwrap();
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+    }
+
+    // -- Test 2 (contract: :requires non-Bool is error) --
+    #[test]
+    fn requires_non_bool_expr_is_error() {
+        // (defn f [n : Int] -> Int :requires [42] n) — 42 : Int, not Bool → type error
+        // spec §4.2.1
+        let (env, mut state) = empty();
+        let node = parse_one("(defn f [n : Int] -> Int :requires [42] n)");
+        let result = infer_defn(&node, &env, &mut state);
+        assert!(
+            result.is_err() || !state.errors.is_empty(),
+            "expected a type error when :requires expression is not Bool"
         );
     }
 
