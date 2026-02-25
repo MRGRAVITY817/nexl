@@ -5,3 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+meta = { package = "nexl-ast", path = "../nexl-ast" }
+
+[dev-dependencies]
+nexl-reader = { path = "../nexl-reader" }

@@ -2,7 +2,7 @@
 
 ## IR Design (nexl-ir crate)
 - [x] Create nexl-ir crate — ANF IR node types (Module, FuncDef, Block, LetBind, Atom, Rhs, Tail, MatchArm)
-- [ ] IR lowering pass — lower typed AST → nexl-ir (closures → env structs, match → decision trees, `?` → jumps)
+- [x] IR lowering pass — lower typed AST → nexl-ir (closures → env structs, match → decision trees, `?` → jumps)
 
 ## WASM Codegen (nexl-wasm crate)
 - [ ] Create nexl-wasm crate scaffold with wasm-encoder dependency

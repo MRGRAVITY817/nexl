@@ -1,10 +1,16 @@
 //! ANF (Administrative Normal Form) Intermediate Representation for the Nexl compiler.
 //!
+//! # Modules
+//! - [`lower`] — lowering pass: reader AST → ANF IR
+//!
 //! After type inference and effect elaboration, the typed AST is lowered to this IR.
 //! ANF ensures every intermediate computation is explicitly named: call arguments
 //! must be [`Atom`]s (variables or constants), never nested expressions.
 //!
 //! Pipeline position: Lowering → **nexl-ir** → Optimization → WASM / Native / Bytecode.
+
+pub mod lower;
+pub use lower::{LowerError, Lowerer};
 
 use std::rc::Rc;
 
