@@ -332,6 +332,8 @@ fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         captures: env.capture_closure(),
         module_captures: env.capture_modules(),
         body: items[2..].to_vec(),
+        requires: vec![],
+        ensures: vec![],
     };
 
     Ok(EvalReturn::Value(Value::Function(Rc::new(func))))
@@ -358,7 +360,48 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         return Err(EvalError::Arity);
     }
 
-    // Build an equivalent (fn [params] body...) form
+    // Scan for contract clauses (:requires, :ensures, :examples) before body expressions.
+    let mut requires_nodes: Vec<Node> = vec![];
+    let mut ensures_nodes: Vec<Node> = vec![];
+    let mut actual_body_start = body_start;
+
+    let mut scan = body_start;
+    while scan + 1 < items.len() {
+        match &items[scan].kind {
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "requires" => {
+                if let NodeKind::Vector(exprs) = &items[scan + 1].kind {
+                    requires_nodes = exprs.clone();
+                    scan += 2;
+                    actual_body_start = scan;
+                } else {
+                    break;
+                }
+            }
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "ensures" => {
+                if let NodeKind::Vector(exprs) = &items[scan + 1].kind {
+                    ensures_nodes = exprs.clone();
+                    scan += 2;
+                    actual_body_start = scan;
+                } else {
+                    break;
+                }
+            }
+            NodeKind::Atom(Atom::Keyword { ns: None, name })
+                if name == "examples" || name == "example" =>
+            {
+                // :examples are for documentation/testing tools, not dev-mode eval.
+                scan += 2;
+                actual_body_start = scan;
+            }
+            _ => break,
+        }
+    }
+
+    if actual_body_start >= items.len() {
+        return Err(EvalError::Arity);
+    }
+
+    // Build an equivalent (fn [params] body...) form using only the actual body items.
     let mut fn_items = Vec::new();
     fn_items.push(Node {
         kind: NodeKind::Atom(Atom::Symbol {
@@ -370,7 +413,7 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         trailing_comment: None,
     });
     fn_items.push(items[params_idx].clone());
-    fn_items.extend_from_slice(&items[body_start..]);
+    fn_items.extend_from_slice(&items[actual_body_start..]);
 
     let fn_value = eval_list(&fn_items, env, None)?;
 
@@ -384,6 +427,8 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
             captures: f.captures.clone(),
             module_captures: f.module_captures.clone(),
             body: f.body.clone(),
+            requires: requires_nodes,
+            ensures: ensures_nodes,
         })),
         EvalReturn::Value(other) => other,
         EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
@@ -821,6 +866,20 @@ fn eval_apply<'a>(
         return Err(EvalError::Arity);
     }
 
+    // Check preconditions (spec §4.2.1: evaluated before body in dev mode).
+    for req_expr in &func.requires {
+        let cond = match eval_with_loop(req_expr, &call_env, None) {
+            Ok(EvalReturn::Value(v)) => v,
+            Ok(EvalReturn::Recur(_)) => return Err(EvalError::InvalidRecur),
+            Err(e) => return Err(e),
+        };
+        match cond {
+            Value::Bool(true) => {}
+            Value::Bool(false) => return Err(EvalError::Panic("precondition failed".to_string())),
+            _ => return Err(EvalError::InvalidConditionType),
+        }
+    }
+
     let mut last = Value::Unit;
     for expr in &func.body {
         match eval_with_loop(expr, &call_env, loop_state) {
@@ -830,6 +889,27 @@ fn eval_apply<'a>(
             Err(e) => return Err(e),
         }
     }
+
+    // Check postconditions (spec §4.2.1: evaluated after body; `result` bound to return value).
+    if !func.ensures.is_empty() {
+        let ensures_env = Rc::new(Env::child(Rc::clone(&call_env)));
+        ensures_env.define("result", last.clone());
+        for ens_expr in &func.ensures {
+            let cond = match eval_with_loop(ens_expr, &ensures_env, None) {
+                Ok(EvalReturn::Value(v)) => v,
+                Ok(EvalReturn::Recur(_)) => return Err(EvalError::InvalidRecur),
+                Err(e) => return Err(e),
+            };
+            match cond {
+                Value::Bool(true) => {}
+                Value::Bool(false) => {
+                    return Err(EvalError::Panic("postcondition failed".to_string()))
+                }
+                _ => return Err(EvalError::InvalidConditionType),
+            }
+        }
+    }
+
     Ok(EvalReturn::Value(last))
 }
 
@@ -872,6 +952,19 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
         call_env.define(rest_name.clone(), Value::Unit);
     }
 
+    for req_expr in &func.requires {
+        let cond = match eval_with_loop(req_expr, &call_env, None) {
+            Ok(EvalReturn::Value(v)) => v,
+            Ok(EvalReturn::Recur(_)) => return Err(EvalError::InvalidRecur),
+            Err(e) => return Err(e),
+        };
+        match cond {
+            Value::Bool(true) => {}
+            Value::Bool(false) => return Err(EvalError::Panic("precondition failed".to_string())),
+            _ => return Err(EvalError::InvalidConditionType),
+        }
+    }
+
     let mut last = Value::Unit;
     for expr in &func.body {
         match eval_with_loop(expr, &call_env, None) {
@@ -881,6 +974,26 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
             Err(e) => return Err(e),
         }
     }
+
+    if !func.ensures.is_empty() {
+        let ensures_env = Rc::new(Env::child(Rc::clone(&call_env)));
+        ensures_env.define("result", last.clone());
+        for ens_expr in &func.ensures {
+            let cond = match eval_with_loop(ens_expr, &ensures_env, None) {
+                Ok(EvalReturn::Value(v)) => v,
+                Ok(EvalReturn::Recur(_)) => return Err(EvalError::InvalidRecur),
+                Err(e) => return Err(e),
+            };
+            match cond {
+                Value::Bool(true) => {}
+                Value::Bool(false) => {
+                    return Err(EvalError::Panic("postcondition failed".to_string()))
+                }
+                _ => return Err(EvalError::InvalidConditionType),
+            }
+        }
+    }
+
     Ok(last)
 }
 

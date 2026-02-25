@@ -16,7 +16,7 @@
 - [x] `panic` evaluation (runtime termination with message + source location)
 - [x] `assert!` / `assert-unreachable!` evaluation
 - [x] `?` operator evaluation (early return from function on `Err` for `Result`; early return on `None` for `Option`)
-- [ ] Contract enforcement in dev mode (`:requires` before body, `:ensures` after)
+- [x] Contract enforcement in dev mode (`:requires` before body, `:ensures` after)
 - [ ] `try`/`catch` evaluation (desugar to match on Result)
 
 ## Blocked

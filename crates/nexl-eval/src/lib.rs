@@ -200,10 +200,21 @@ pub enum EvalError {
 mod tests {
     use super::*;
     use crate::eval::eval;
-    use meta::{Atom, Node, NodeKind};
+    use meta::{self, Atom, Node, NodeKind};
+    use nexl_reader::read;
 
     fn int(n: i64) -> Value {
         Value::Int(n)
+    }
+
+    /// Parse `src` and evaluate all top-level forms in `env`, returning the last result.
+    fn eval_forms(src: &str, env: &Rc<Env>) -> Result<Value, EvalError> {
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error in test");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval(node, env)?;
+        }
+        Ok(last)
     }
 
     // --- function application tests ---
@@ -3948,5 +3959,65 @@ mod tests {
         ]);
         let result = eval(&expr, &env);
         assert_eq!(result, Ok(Value::Int(42)));
+    }
+
+    // --- contract enforcement tests (spec §4.2.1) ---
+
+    // Test 1: :requires [x] with x=true → body runs, returns 42
+    #[test]
+    fn contracts_requires_passes_allows_body() {
+        let env = Rc::new(Env::new());
+        // (defn f [x] :requires [x] 42)  then  (f true)
+        eval_forms("(defn f [x] :requires [x] 42)", &env).unwrap();
+        let result = eval_forms("(f true)", &env);
+        assert_eq!(result, Ok(Value::Int(42)));
+    }
+
+    // Test 2: :requires [x] with x=false → EvalError::Panic (spec §4.2.1: "panic on failure")
+    #[test]
+    fn contracts_requires_fails_panics() {
+        let env = Rc::new(Env::new());
+        eval_forms("(defn f [x] :requires [x] 42)", &env).unwrap();
+        let result = eval_forms("(f false)", &env);
+        assert!(matches!(result, Err(EvalError::Panic(_))));
+    }
+
+    // Test 3: :ensures [result] with body=true → returns true (spec §4.2.1: postcondition passes)
+    #[test]
+    fn contracts_ensures_passes_returns_result() {
+        let env = Rc::new(Env::new());
+        // Body returns `true`; :ensures [result] checks `result` which is true → OK
+        eval_forms("(defn g [] :ensures [result] true)", &env).unwrap();
+        let result = eval_forms("(g)", &env);
+        assert_eq!(result, Ok(Value::Bool(true)));
+    }
+
+    // Test 4: :ensures [result] with body=false → EvalError::Panic (spec §4.2.1: postcondition fails)
+    #[test]
+    fn contracts_ensures_fails_panics() {
+        let env = Rc::new(Env::new());
+        // Body returns `false`; :ensures [result] checks `result` which is false → panic
+        eval_forms("(defn g [] :ensures [result] false)", &env).unwrap();
+        let result = eval_forms("(g)", &env);
+        assert!(matches!(result, Err(EvalError::Panic(_))));
+    }
+
+    // Test 5: multiple :requires clauses — all must pass (spec §4.2.1 example with 2 clauses)
+    #[test]
+    fn contracts_multiple_requires_all_checked() {
+        let env = Rc::new(Env::new());
+        // :requires [a b]; call with a=true b=false → second clause fails
+        eval_forms("(defn f [a b] :requires [a b] 42)", &env).unwrap();
+        let result = eval_forms("(f true false)", &env);
+        assert!(matches!(result, Err(EvalError::Panic(_))));
+    }
+
+    // Test 6: :examples clause is parsed but not checked at eval time
+    #[test]
+    fn contracts_examples_clause_is_skipped() {
+        let env = Rc::new(Env::new());
+        eval_forms("(defn f [x] :examples [] x)", &env).unwrap();
+        let result = eval_forms("(f 99)", &env);
+        assert_eq!(result, Ok(Value::Int(99)));
     }
 }

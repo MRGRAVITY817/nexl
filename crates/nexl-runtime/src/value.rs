@@ -42,6 +42,10 @@ pub struct Function {
     pub module_captures: Vec<(Rc<str>, ModuleExports)>,
     /// Body expressions to evaluate when called (in order).
     pub body: Vec<Node>,
+    /// Precondition expressions (`:requires` clause). Checked before body in dev mode (spec §4.2.1).
+    pub requires: Vec<Node>,
+    /// Postcondition expressions (`:ensures` clause). Checked after body; `result` is bound (spec §4.2.1).
+    pub ensures: Vec<Node>,
 }
 
 /// A runtime value produced by the Nexl tree-walk interpreter.
@@ -300,6 +304,8 @@ mod tests {
             captures: vec![],
             module_captures: vec![],
             body: vec![Node::atom(meta::Atom::Unit, meta::span::Span::synthetic())],
+            requires: vec![],
+            ensures: vec![],
         }))
     }
 
@@ -628,6 +634,8 @@ mod tests {
                 .collect(),
             module_captures: vec![],
             body: vec![Node::atom(meta::Atom::Unit, meta::span::Span::synthetic())],
+            requires: vec![],
+            ensures: vec![],
         }));
 
         let Value::Function(rc_func) = func else {
