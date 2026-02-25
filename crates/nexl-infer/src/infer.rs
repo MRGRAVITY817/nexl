@@ -36,6 +36,8 @@ pub struct InferState {
     pub errors: Vec<TypeError>,
     /// Non-fatal warnings accumulated during inference.
     pub warnings: Vec<TypeError>,
+    /// Stack of effect rows for nested function bodies.
+    pub effect_stack: Vec<EffectRow>,
 }
 
 impl InferState {
@@ -47,12 +49,36 @@ impl InferState {
             recur_types: None,
             errors: Vec::new(),
             warnings: Vec::new(),
+            effect_stack: Vec::new(),
         }
     }
 
     /// Allocate a fresh unification variable and return it as a `Type`.
     pub fn fresh_var(&mut self) -> Type {
         Type::Var(self.supply.fresh())
+    }
+
+    /// Allocate a fresh effect row variable name.
+    pub fn fresh_effect_var(&mut self) -> String {
+        self.subst.fresh_effect_var()
+    }
+
+    /// Begin a new effect-collection scope.
+    pub fn push_effect_scope(&mut self) {
+        self.effect_stack.push(EffectRow::empty());
+    }
+
+    /// Finish the current effect-collection scope and return its row.
+    pub fn pop_effect_scope(&mut self) -> EffectRow {
+        self.effect_stack.pop().unwrap_or_else(EffectRow::empty)
+    }
+
+    /// Add effects to the current scope (no-op when not in a function body).
+    pub fn add_effects(&mut self, row: &EffectRow) {
+        let Some(current) = self.effect_stack.last_mut() else {
+            return;
+        };
+        merge_effect_rows(current, row, &mut self.subst);
     }
 
     /// Push a non-fatal error into the accumulated error list.
@@ -64,6 +90,28 @@ impl InferState {
     pub fn push_warning(&mut self, w: TypeError) {
         self.warnings.push(w);
     }
+}
+
+fn merge_effect_rows(into: &mut EffectRow, incoming: &EffectRow, subst: &mut Subst) {
+    let current = subst.apply_effect_row(into);
+    let incoming = subst.apply_effect_row(incoming);
+
+    let mut effects = current.effects;
+    effects.extend(incoming.effects);
+
+    let tail = match (current.tail, incoming.tail) {
+        (None, None) => None,
+        (Some(tail), None) | (None, Some(tail)) => Some(tail),
+        (Some(a), Some(b)) if a == b => Some(a),
+        (Some(a), Some(b)) => {
+            let fresh = subst.fresh_effect_var();
+            subst.insert_effect_row(a, EffectRow::new(Vec::new(), Some(fresh.clone())));
+            subst.insert_effect_row(b, EffectRow::new(Vec::new(), Some(fresh.clone())));
+            Some(fresh)
+        }
+    };
+
+    *into = EffectRow::new(effects, tail);
 }
 
 impl Default for InferState {
@@ -503,10 +551,14 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
     let expected_fn = Type::Fn {
         params: arg_types.clone(),
         ret: Box::new(ret_var.clone()),
-        effects: EffectRow::empty(),
+        effects: EffectRow::new(Vec::new(), Some(state.fresh_effect_var())),
     };
     nexl_types::unify(&callee_ty, &expected_fn, &mut state.subst)
         .map_err(|e| arithmetic_help(e, head_sym(items), &arg_types))?;
+
+    if let Type::Fn { effects, .. } = state.subst.apply(&expected_fn) {
+        state.add_effects(&effects);
+    }
 
     Ok(state.subst.apply(&ret_var))
 }
@@ -916,9 +968,12 @@ fn infer_map_op(fn_ty: &Type, coll_ty: &Type, state: &mut InferState) -> Result<
     let expected_fn = Type::Fn {
         params: vec![elem_var.clone()],
         ret: Box::new(out_var.clone()),
-        effects: EffectRow::empty(),
+        effects: EffectRow::new(Vec::new(), Some(state.fresh_effect_var())),
     };
     nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
+    if let Type::Fn { effects, .. } = state.subst.apply(&expected_fn) {
+        state.add_effects(&effects);
+    }
 
     let resolved = state.subst.apply(coll_ty);
     match resolved {
@@ -957,9 +1012,12 @@ fn infer_filter_op(
     let expected_fn = Type::Fn {
         params: vec![elem_var.clone()],
         ret: Box::new(Type::Bool),
-        effects: EffectRow::empty(),
+        effects: EffectRow::new(Vec::new(), Some(state.fresh_effect_var())),
     };
     nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
+    if let Type::Fn { effects, .. } = state.subst.apply(&expected_fn) {
+        state.add_effects(&effects);
+    }
 
     let resolved = state.subst.apply(coll_ty);
     match resolved {
@@ -1000,9 +1058,12 @@ fn infer_reduce_op(
     let expected_fn = Type::Fn {
         params: vec![acc_var.clone(), elem_var.clone()],
         ret: Box::new(acc_var.clone()),
-        effects: EffectRow::empty(),
+        effects: EffectRow::new(Vec::new(), Some(state.fresh_effect_var())),
     };
     nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
+    if let Type::Fn { effects, .. } = state.subst.apply(&expected_fn) {
+        state.add_effects(&effects);
+    }
     nexl_types::unify(init_ty, &acc_var, &mut state.subst)?;
 
     let resolved = state.subst.apply(coll_ty);
@@ -1394,17 +1455,20 @@ fn synth_fn(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, T
     }
 
     // Infer the body type in the extended environment.
+    state.push_effect_scope();
     let ret_ty = synth(&items[2], &body_env, state)?;
+    let body_effects = state.pop_effect_scope();
 
     // Apply the accumulated substitution so any param vars that were unified
     // during body inference are resolved in the returned type.
     let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
     let ret_ty = state.subst.apply(&ret_ty);
+    let effects = state.subst.apply_effect_row(&body_effects);
 
     Ok(Type::Fn {
         params: param_types,
         ret: Box::new(ret_ty),
-        effects: EffectRow::empty(),
+        effects,
     })
 }
 
@@ -1881,7 +1945,9 @@ pub fn infer_defn(
     }
 
     // Infer the body in the extended environment.
+    state.push_effect_scope();
     let body_ty = synth(body_node, &body_env, state)?;
+    let body_effects = state.pop_effect_scope();
 
     // If a return annotation was provided, unify it with the body type.
     if let Some(ann_ret) = ret_annotation {
@@ -1890,11 +1956,12 @@ pub fn infer_defn(
 
     let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
     let ret_ty = state.subst.apply(&body_ty);
+    let effects = state.subst.apply_effect_row(&body_effects);
 
     let fn_ty = Type::Fn {
         params: param_types,
         ret: Box::new(ret_ty),
-        effects: EffectRow::empty(),
+        effects,
     };
     let new_env = env.extend(name.clone(), Scheme::mono(fn_ty.clone()));
     Ok((name, fn_ty, new_env))
@@ -4039,6 +4106,133 @@ mod tests {
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
             "expected UnboundVariable(unknown), got {err:?}"
         );
+    }
+
+    // -- Test 7 (defn effects) --
+    #[test]
+    fn infer_defn_effect_row_from_call() {
+        // (defn greet [] (print "hi")) → effects [Console]
+        let env = Env::new().extend(
+            "print",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: None,
+                },
+            }),
+        );
+        let node = defn_node(
+            "greet",
+            vec![],
+            app_node(sym_node("print"), vec![atom_node(Atom::Str("hi".into()))]),
+        );
+        let mut state = InferState::new();
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: None,
+                },
+            }
+        );
+    }
+
+    // -- Test 8 (defn effects) --
+    #[test]
+    fn infer_defn_effect_row_union() {
+        // (defn fetch-log! [] (do (print "hi") (fetch "url"))) → effects [Console Net]
+        let env = Env::new()
+            .extend(
+                "print",
+                Scheme::mono(Type::Fn {
+                    params: vec![Type::Str],
+                    ret: Box::new(Type::Unit),
+                    effects: EffectRow {
+                        effects: vec!["Console".to_string()],
+                        tail: None,
+                    },
+                }),
+            )
+            .extend(
+                "fetch",
+                Scheme::mono(Type::Fn {
+                    params: vec![Type::Str],
+                    ret: Box::new(Type::Str),
+                    effects: EffectRow {
+                        effects: vec!["Net".to_string()],
+                        tail: None,
+                    },
+                }),
+            );
+        let body = do_node(vec![
+            app_node(sym_node("print"), vec![atom_node(Atom::Str("hi".into()))]),
+            app_node(sym_node("fetch"), vec![atom_node(Atom::Str("url".into()))]),
+        ]);
+        let node = defn_node("fetch_log!", vec![], body);
+        let mut state = InferState::new();
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Str),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string(), "Net".to_string()],
+                    tail: None,
+                },
+            }
+        );
+    }
+
+    // -- Test 9 (defn effects) --
+    #[test]
+    fn infer_defn_nested_fn_effects_scoped() {
+        // (defn outer [] (fn [] (print "hi"))) → outer is pure, inner has [Console]
+        let env = Env::new().extend(
+            "print",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: None,
+                },
+            }),
+        );
+        let inner = fn_node(
+            vec![],
+            app_node(sym_node("print"), vec![atom_node(Atom::Str("hi".into()))]),
+        );
+        let node = defn_node("outer", vec![], inner);
+        let mut state = InferState::new();
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+
+        match ty {
+            Type::Fn { effects, ret, .. } => {
+                assert!(effects.is_empty(), "outer should be pure");
+                match *ret {
+                    Type::Fn { effects, .. } => {
+                        assert_eq!(
+                            effects,
+                            EffectRow {
+                                effects: vec!["Console".to_string()],
+                                tail: None,
+                            }
+                        );
+                    }
+                    other => panic!("expected inner Fn type, got {other:?}"),
+                }
+            }
+            other => panic!("expected outer Fn type, got {other:?}"),
+        }
     }
 
     // -- Test 6 (defn) --
