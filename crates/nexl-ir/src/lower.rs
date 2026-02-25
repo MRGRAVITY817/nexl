@@ -241,7 +241,14 @@ impl Lowerer {
                             let (binds, atom) = self.lower_fn_expr(items, env)?;
                             return Ok((binds, Tail::Return(atom)));
                         }
-                        _ => {}
+                        _ => {
+                            // Uppercase head → constructor application.
+                            if name.chars().next().is_some_and(|c| c.is_uppercase()) {
+                                let (binds, atom) =
+                                    self.lower_ctor_expr(name, &items[1..], env)?;
+                                return Ok((binds, Tail::Return(atom)));
+                            }
+                        }
                     }
                 }
                 // Generic function call in tail position.
@@ -384,12 +391,15 @@ impl Lowerer {
             NodeKind::Atom(AstAtom::Unit) => Ok((vec![], Atom::Unit)),
             NodeKind::Atom(AstAtom::Str(s)) => Ok((vec![], Atom::Str(Rc::from(s.as_str())))),
 
-            // Variable reference — local first, then global function.
+            // Variable reference — local first, then global function, then nullary ctor.
             NodeKind::Atom(AstAtom::Symbol { ns: None, name }) => {
                 if let Some(&var) = env.get(name) {
                     Ok((vec![], Atom::Var(var)))
                 } else if let Some(&fid) = self.global_funcs.get(name) {
                     Ok((vec![], Atom::FuncRef(fid)))
+                } else if name.chars().next().is_some_and(|c| c.is_uppercase()) {
+                    // Nullary constructor (e.g. `None`, `True`).
+                    self.lower_ctor_expr(name, &[], env)
                 } else {
                     Err(LowerError::UnboundVariable(name.clone()))
                 }
@@ -398,6 +408,10 @@ impl Lowerer {
             // Complex forms.
             NodeKind::List(items) if !items.is_empty() => {
                 if let NodeKind::Atom(AstAtom::Symbol { ns: None, name }) = &items[0].kind {
+                    // Uppercase head → constructor application.
+                    if name.chars().next().is_some_and(|c| c.is_uppercase()) {
+                        return self.lower_ctor_expr(name, &items[1..], env);
+                    }
                     match name.as_str() {
                         "fn" => return self.lower_fn_expr(items, env),
                         "let" => return self.lower_let_expr(items, env),
@@ -496,6 +510,31 @@ impl Lowerer {
             }],
             Atom::Var(closure_var),
         ))
+    }
+
+    /// Lower a constructor application `Ctor(args...)` in expression position.
+    ///
+    /// Returns `(binds, Atom::Var(result))` where `result` is bound to
+    /// `Rhs::MakeTuple { ctor, fields }`.
+    fn lower_ctor_expr(
+        &mut self,
+        ctor: &str,
+        arg_nodes: &[Node],
+        env: &HashMap<String, VarId>,
+    ) -> Result<(Vec<LetBind>, Atom), LowerError> {
+        let mut all_binds: Vec<LetBind> = vec![];
+        let mut fields: Vec<Atom> = vec![];
+        for arg in arg_nodes {
+            let (binds, atom) = self.lower_expr(arg, env)?;
+            all_binds.extend(binds);
+            fields.push(atom);
+        }
+        let result_var = self.var_gen.fresh();
+        all_binds.push(LetBind {
+            var: result_var,
+            rhs: Rhs::MakeTuple { ctor: ctor.to_string(), fields },
+        });
+        Ok((all_binds, Atom::Var(result_var)))
     }
 
     fn lower_let_expr(
@@ -821,4 +860,39 @@ mod tests {
         assert_eq!(m.funcs[0].name.as_deref(), Some("a"));
         assert_eq!(m.funcs[1].name.as_deref(), Some("b"));
     }
+
+    // ─── 15. constructor application (Some x) ────────────────────────────────
+    #[test]
+    fn lower_adt_constructor() {
+        // (defn wrap [x] (Some x))
+        // Body: 1 bind: %r = MakeTuple { ctor: "Some", fields: [Var(x)] }
+        //       tail: Return(Var(%r))
+        let m = lower("(defn wrap [x] (Some x))").unwrap();
+        let body = &m.funcs[0].body;
+        assert_eq!(body.binds.len(), 1);
+        let Rhs::MakeTuple { ref ctor, ref fields } = body.binds[0].rhs else {
+            panic!("expected MakeTuple, got {:?}", body.binds[0].rhs)
+        };
+        assert_eq!(ctor, "Some");
+        assert_eq!(fields.len(), 1);
+        let x_var = m.funcs[0].params[0];
+        assert!(matches!(fields[0], Atom::Var(v) if v == x_var));
+    }
+
+    // ─── 16. nullary constructor (None) ──────────────────────────────────────
+    #[test]
+    fn lower_adt_nullary() {
+        // (defn nothing [] None)
+        // Body: 1 bind: %r = MakeTuple { ctor: "None", fields: [] }
+        //       tail: Return(Var(%r))
+        let m = lower("(defn nothing [] None)").unwrap();
+        let body = &m.funcs[0].body;
+        assert_eq!(body.binds.len(), 1);
+        let Rhs::MakeTuple { ref ctor, ref fields } = body.binds[0].rhs else {
+            panic!("expected MakeTuple, got {:?}", body.binds[0].rhs)
+        };
+        assert_eq!(ctor, "None");
+        assert!(fields.is_empty());
+    }
+
 }

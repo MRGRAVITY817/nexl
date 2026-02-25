@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use nexl_ir::{Atom, Block, FuncDef, Module, Rhs, Tail, VarId};
+use nexl_ir::{Atom, Block, FuncDef, MatchArm, Module, Rhs, Tail, VarId};
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, ExportKind, ExportSection, Function, FunctionSection,
     GlobalSection, GlobalType, Instruction, MemArg, MemorySection, MemoryType, TypeSection,
@@ -171,6 +171,14 @@ fn collect_bind_vars(block: &Block, local_map: &mut HashMap<VarId, u32>, next: &
         }
         Tail::Match { arms, .. } => {
             for arm in arms {
+                // Register arm field-bind variables as locals.
+                for &bind_var in &arm.binds {
+                    local_map.entry(bind_var).or_insert_with(|| {
+                        let idx = *next;
+                        *next += 1;
+                        idx
+                    });
+                }
                 collect_bind_vars(&arm.body, local_map, next);
             }
         }
@@ -221,9 +229,7 @@ fn emit_tail(
             }
             emit_call_atom(f_atom, local_map, func)
         }
-        Tail::Match { .. } => Err(EmitError(
-            "match codegen not yet implemented (requires ADT runtime)".to_string(),
-        )),
+        Tail::Match { scrutinee, arms } => emit_match_arms(scrutinee, arms, local_map, func),
     }
 }
 
@@ -243,9 +249,7 @@ fn emit_rhs(
         Rhs::MakeClosure { func_id, captures } => {
             emit_make_closure(func_id.0, captures, local_map, func)
         }
-        Rhs::MakeTuple { .. } => {
-            Err(EmitError("ADT codegen not yet implemented".to_string()))
-        }
+        Rhs::MakeTuple { ctor, fields } => emit_make_tuple(ctor, fields, local_map, func),
         Rhs::Project { .. } => {
             Err(EmitError("field projection codegen not yet implemented".to_string()))
         }
@@ -344,6 +348,119 @@ fn emit_call_atom(
                 .to_string(),
         )),
     }
+}
+
+/// FNV-1a hash of a constructor name — used as the ADT discriminant tag.
+fn ctor_tag(name: &str) -> i64 {
+    let mut hash: u64 = 14_695_981_039_346_656_037;
+    for byte in name.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    hash as i64
+}
+
+/// Emit instructions that allocate an ADT value in linear memory and leave
+/// a pointer to it (as `i64`) on the WASM stack.
+///
+/// Layout: `[tag: i64, field_0: i64, field_1: i64, ...]`
+fn emit_make_tuple(
+    ctor: &str,
+    fields: &[Atom],
+    local_map: &HashMap<VarId, u32>,
+    func: &mut Function,
+) -> Result<(), EmitError> {
+    let num_slots = 1 + fields.len(); // 1 for tag
+    let size = (num_slots * 8) as i32;
+
+    // Bump heap pointer: __heap_ptr += size
+    func.instruction(&Instruction::GlobalGet(HEAP_PTR));
+    func.instruction(&Instruction::I32Const(size));
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::GlobalSet(HEAP_PTR));
+
+    let push_ptr = |f: &mut Function| {
+        f.instruction(&Instruction::GlobalGet(HEAP_PTR));
+        f.instruction(&Instruction::I32Const(size));
+        f.instruction(&Instruction::I32Sub);
+    };
+
+    // Store tag at offset 0
+    push_ptr(func);
+    func.instruction(&Instruction::I64Const(ctor_tag(ctor)));
+    func.instruction(&Instruction::I64Store(MemArg { offset: 0, align: 3, memory_index: 0 }));
+
+    // Store each field at offset 8, 16, …
+    for (i, field) in fields.iter().enumerate() {
+        push_ptr(func);
+        emit_atom(field, local_map, func)?;
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 8 + (i as u64) * 8,
+            align: 3,
+            memory_index: 0,
+        }));
+    }
+
+    // Result: ptr as i64
+    push_ptr(func);
+    func.instruction(&Instruction::I64ExtendI32U);
+    Ok(())
+}
+
+/// Recursively emit a decision-tree match as nested WASM `if/else` blocks.
+///
+/// The scrutinee is a pointer (stored as `i64`) to a heap-allocated ADT value
+/// whose first word is the [`ctor_tag`] discriminant.
+fn emit_match_arms(
+    scrutinee: &Atom,
+    arms: &[MatchArm],
+    local_map: &HashMap<VarId, u32>,
+    func: &mut Function,
+) -> Result<(), EmitError> {
+    if arms.is_empty() {
+        // Exhaustiveness is guaranteed by the type checker; emit a trap.
+        func.instruction(&Instruction::Unreachable);
+        return Ok(());
+    }
+
+    let arm = &arms[0];
+
+    if arm.ctor == "_" {
+        // Wildcard arm — unconditionally execute body.
+        return emit_block(&arm.body, local_map, func);
+    }
+
+    // Load tag from scrutinee (ptr as i32, tag is i64 at offset 0).
+    emit_atom(scrutinee, local_map, func)?;
+    func.instruction(&Instruction::I32WrapI64);
+    func.instruction(&Instruction::I64Load(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    func.instruction(&Instruction::I64Const(ctor_tag(&arm.ctor)));
+    // i64.eq returns i32 (0 or 1) — consumed directly by `if`.
+    func.instruction(&Instruction::I64Eq);
+
+    func.instruction(&Instruction::If(BlockType::Result(DEFAULT_VAL)));
+
+    // Arm taken: bind fields from memory, then run arm body.
+    for (field_idx, &bind_var) in arm.binds.iter().enumerate() {
+        emit_atom(scrutinee, local_map, func)?;
+        func.instruction(&Instruction::I32WrapI64);
+        func.instruction(&Instruction::I64Load(MemArg {
+            offset: 8 + (field_idx as u64) * 8,
+            align: 3,
+            memory_index: 0,
+        }));
+        let bind_local = *local_map
+            .get(&bind_var)
+            .ok_or_else(|| EmitError(format!("unresolved bind var VarId({})", bind_var.0)))?;
+        func.instruction(&Instruction::LocalSet(bind_local));
+    }
+    emit_block(&arm.body, local_map, func)?;
+
+    func.instruction(&Instruction::Else);
+    emit_match_arms(scrutinee, &arms[1..], local_map, func)?;
+    func.instruction(&Instruction::End);
+
+    Ok(())
 }
 
 fn local_idx(var: VarId, local_map: &HashMap<VarId, u32>) -> Result<u32, EmitError> {
@@ -489,4 +606,32 @@ mod tests {
         let has_memory_marker = bytes.windows(2).any(|w| w == [0x05, 0x01]);
         assert!(has_memory_marker, "expected memory section in WASM bytes");
     }
+
+    // ─── 15. ADT constructor (Some x) codegen ────────────────────────────────
+    #[test]
+    fn emit_adt_some() {
+        // (defn wrap [x] (Some x)) — MakeTuple with 1 field
+        let bytes = emit("(defn wrap [x] (Some x))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 16. Nullary ADT constructor (None) codegen ──────────────────────────
+    #[test]
+    fn emit_adt_none() {
+        // (defn nothing [] None) — MakeTuple with 0 fields
+        let bytes = emit("(defn nothing [] None)");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 17. Match on ADT ────────────────────────────────────────────────────
+    #[test]
+    fn emit_match_with_adt() {
+        // (defn unwrap [v d] (match v (Some x) x None d))
+        let bytes = emit("(defn unwrap [v d] (match v (Some x) x None d))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
 }
