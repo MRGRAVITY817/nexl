@@ -140,7 +140,7 @@ pub enum EnvError {
 }
 
 /// Errors produced while evaluating a node.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq)]
 pub enum EvalError {
     /// Referenced an unbound symbol.
     #[error("unbound symbol: {0}")]
@@ -187,6 +187,13 @@ pub enum EvalError {
     /// Explicit `(panic "message")` — unrecoverable termination (spec §9.4).
     #[error("panic: {0}")]
     Panic(String),
+    /// Non-local early return signal from the `?` operator (spec §9.3).
+    ///
+    /// Produced when `?` is applied to an `Err` or `None` value. Caught by
+    /// `eval_apply` at the enclosing function boundary and converted into that
+    /// function's return value.
+    #[error("early return")]
+    EarlyReturn(Value),
 }
 
 #[cfg(test)]
@@ -3789,5 +3796,157 @@ mod tests {
         ]);
         let result = eval(&expr, &env);
         assert_eq!(result, Err(EvalError::Arity));
+    }
+
+    // --- ? operator evaluation tests (spec §9.3) ---
+
+    fn ok_val(inner: Value) -> Value {
+        Value::Adt {
+            type_name: Rc::from("Result"),
+            ctor: Rc::from("Ok"),
+            fields: Rc::new(vec![inner]),
+        }
+    }
+
+    fn err_val(inner: Value) -> Value {
+        Value::Adt {
+            type_name: Rc::from("Result"),
+            ctor: Rc::from("Err"),
+            fields: Rc::new(vec![inner]),
+        }
+    }
+
+    fn some_val(inner: Value) -> Value {
+        Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("Some"),
+            fields: Rc::new(vec![inner]),
+        }
+    }
+
+    fn none_val() -> Value {
+        Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("None"),
+            fields: Rc::new(vec![]),
+        }
+    }
+
+    // Test 1: (? ok-val) → unwraps inner value (spec §9.3: "If (Ok v), produces v")
+    #[test]
+    fn question_ok_result_unwraps_inner() {
+        let env = Rc::new(Env::new());
+        env.define("ok-val", ok_val(Value::Int(42)));
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "?".into() }),
+            lit(Atom::Symbol { ns: None, name: "ok-val".into() }),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Ok(Value::Int(42)));
+    }
+
+    // Test 2: ? on Err inside fn → function returns Err value (spec §9.3: "returns (Err e)")
+    // Red: EarlyReturn bubbles out as Err rather than being caught as function return.
+    #[test]
+    fn question_err_result_early_returns_from_fn() {
+        let env = Rc::new(Env::new());
+        env.define("err-val", err_val(Value::Str(Rc::from("boom"))));
+        // ((fn [] (? err-val)))
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![]),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "?".into() }),
+                    lit(Atom::Symbol { ns: None, name: "err-val".into() }),
+                ]),
+            ]),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Ok(err_val(Value::Str(Rc::from("boom")))));
+    }
+
+    // Test 3: (? some-val) → unwraps inner value (spec §9.3 Option: "If (Some v), produces v")
+    #[test]
+    fn question_some_option_unwraps_inner() {
+        let env = Rc::new(Env::new());
+        env.define("some-val", some_val(Value::Int(7)));
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "?".into() }),
+            lit(Atom::Symbol { ns: None, name: "some-val".into() }),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Ok(Value::Int(7)));
+    }
+
+    // Test 4: ? on None inside fn → function returns None (spec §9.3: "returns None")
+    #[test]
+    fn question_none_option_early_returns_from_fn() {
+        let env = Rc::new(Env::new());
+        env.define("none-val", none_val());
+        // ((fn [] (? none-val)))
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![]),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "?".into() }),
+                    lit(Atom::Symbol { ns: None, name: "none-val".into() }),
+                ]),
+            ]),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Ok(none_val()));
+    }
+
+    // Test 5: ? on Err skips subsequent body expressions (spec §9.3: "no remaining code executes")
+    #[test]
+    fn question_err_skips_subsequent_body_exprs() {
+        let env = Rc::new(Env::new());
+        env.define("err-val", err_val(Value::Int(99)));
+        // ((fn [] (? err-val) (panic "reached")))  — panic must not fire
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![]),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "?".into() }),
+                    lit(Atom::Symbol { ns: None, name: "err-val".into() }),
+                ]),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "panic".into() }),
+                    lit(Atom::Str("reached".into())),
+                ]),
+            ]),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Ok(err_val(Value::Int(99))));
+    }
+
+    // Test 6: ? on Ok unwraps into let binding and is returned (spec §9.3: usage in let)
+    #[test]
+    fn question_ok_result_bound_and_used() {
+        let env = Rc::new(Env::new());
+        env.define("ok-val", ok_val(Value::Int(42)));
+        // ((fn [] (let [x (? ok-val)] x)))
+        let expr = list(vec![
+            list(vec![
+                lit(Atom::Symbol { ns: None, name: "fn".into() }),
+                vector(vec![]),
+                list(vec![
+                    lit(Atom::Symbol { ns: None, name: "let".into() }),
+                    vector(vec![
+                        lit(Atom::Symbol { ns: None, name: "x".into() }),
+                        list(vec![
+                            lit(Atom::Symbol { ns: None, name: "?".into() }),
+                            lit(Atom::Symbol { ns: None, name: "ok-val".into() }),
+                        ]),
+                    ]),
+                    lit(Atom::Symbol { ns: None, name: "x".into() }),
+                ]),
+            ]),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Ok(Value::Int(42)));
     }
 }

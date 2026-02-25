@@ -111,6 +111,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "assert-unreachable!" => {
             eval_assert_unreachable(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "?" => {
+            eval_question(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -820,9 +823,11 @@ fn eval_apply<'a>(
 
     let mut last = Value::Unit;
     for expr in &func.body {
-        match eval_with_loop(expr, &call_env, loop_state)? {
-            EvalReturn::Value(v) => last = v,
-            EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
+        match eval_with_loop(expr, &call_env, loop_state) {
+            Ok(EvalReturn::Value(v)) => last = v,
+            Ok(EvalReturn::Recur(vals)) => return Ok(EvalReturn::Recur(vals)),
+            Err(EvalError::EarlyReturn(v)) => return Ok(EvalReturn::Value(v)),
+            Err(e) => return Err(e),
         }
     }
     Ok(EvalReturn::Value(last))
@@ -869,9 +874,11 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
 
     let mut last = Value::Unit;
     for expr in &func.body {
-        match eval_with_loop(expr, &call_env, None)? {
-            EvalReturn::Value(v) => last = v,
-            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        match eval_with_loop(expr, &call_env, None) {
+            Ok(EvalReturn::Value(v)) => last = v,
+            Ok(EvalReturn::Recur(_)) => return Err(EvalError::InvalidRecur),
+            Err(EvalError::EarlyReturn(v)) => return Ok(v),
+            Err(e) => return Err(e),
         }
     }
     Ok(last)
@@ -971,4 +978,55 @@ fn eval_assert_unreachable<'a>(
         "assert-unreachable! reached".to_string()
     };
     Err(EvalError::Panic(msg))
+}
+
+/// Evaluate the `?` postfix operator: `(? expr)` (spec §9.3).
+///
+/// - On `(Ok v)` / `(Some v)`: unwraps and returns `v`.
+/// - On `(Err e)` / `None`: triggers a non-local early return via
+///   `EvalError::EarlyReturn`, caught by the enclosing `eval_apply`.
+fn eval_question<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() != 2 {
+        return Err(EvalError::Arity);
+    }
+    let val = match eval_with_loop(&items[1], env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+    };
+    match &val {
+        Value::Adt { type_name, ctor, fields } if type_name.as_ref() == "Result" => {
+            match ctor.as_ref() {
+                "Ok" => {
+                    let inner = fields
+                        .first()
+                        .ok_or_else(|| EvalError::NativeError("Result.Ok missing field".into()))?
+                        .clone();
+                    Ok(EvalReturn::Value(inner))
+                }
+                "Err" => Err(EvalError::EarlyReturn(val)),
+                _ => Err(EvalError::NativeError(format!("unknown Result constructor: {ctor}"))),
+            }
+        }
+        Value::Adt { type_name, ctor, fields } if type_name.as_ref() == "Option" => {
+            match ctor.as_ref() {
+                "Some" => {
+                    let inner = fields
+                        .first()
+                        .ok_or_else(|| EvalError::NativeError("Option.Some missing field".into()))?
+                        .clone();
+                    Ok(EvalReturn::Value(inner))
+                }
+                "None" => Err(EvalError::EarlyReturn(val)),
+                _ => Err(EvalError::NativeError(format!("unknown Option constructor: {ctor}"))),
+            }
+        }
+        other => Err(EvalError::NativeError(format!(
+            "? applied to non-Result/Option value: {}",
+            other.type_name()
+        ))),
+    }
 }
