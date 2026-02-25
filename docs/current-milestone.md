@@ -1,22 +1,31 @@
-# Current Milestone: M4 — Persistent Collections
+# Current Milestone: M5 — Module System
 
-**Goal:** Add persistent data structures (vectors, maps, sets) with type inference support and core operations.
+**Goal:** Multi-file compilation with imports, exports, visibility, and qualified access.
 
-**Crates:** `nexl-runtime`, `nexl-infer`, `nexl-types`
+**Crates:** `nexl-ast`, `nexl-reader`, `nexl-modules` (new), `nexl-infer`, `nexl-eval`
 
 **Spec sections to reference:**
-- §5.3 Composite Types (lines 1204–1218) — `Vec`, `Map`, `Set`, `List`, `Tuple`
-- §4 (core forms) for collection literals and operations
+- §8 Module System (lines 2447–2686) — module declarations, imports, visibility, init order
+- §8.1 Module Declaration (lines 2449–2474)
+- §8.2 Importing Modules (lines 2476–2504)
+- §8.3 Namespace (lines 2506–2517) — qualified access
+- §8.6 Circular Dependencies (line 2562)
+- §8.8 Visibility (lines 2598–2622) — public, package-private, module-private
+- §8.9 Module Initialization Order (lines 2624–2632)
+- §8.11 Package ↔ Module Relationship (lines 2667–2684)
 
 **Key ADRs:** none yet (consult `decisions/` as they appear)
 
 **Acceptance criteria:**
-- Persistent `Vec`, `Map`, and `Set` value forms and types
-- Inference for collection literals and common ops (lookup, assoc/update, membership)
-- Sequence destructuring for collections where specified in §4
-- Works with existing ADT/pattern machinery; `cargo test` passes
+- `(module ...)` and `(import ...)` forms parse to AST nodes
+- Qualified symbols (`alias/name`) are distinct from bare symbols
+- Module dependency graph with topological sort and cycle detection
+- Visibility enforcement (public, package-private, module-private)
+- Cross-module type checking at import boundaries
+- Multi-file evaluation with correct initialization order
+- `cargo test` passes across all crates
 
-**When done:** Update this file to point to M5.
+**When done:** Update this file to point to M6.
 
-See `docs/todo-m4.md` (to be created) for the task checklist.
+See `docs/todo-m5.md` for the task checklist.
 See `milestones.md` for the full plan.
