@@ -85,6 +85,12 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "recur" => {
             eval_recur(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "each" => {
+            eval_each(items, env)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "times" => {
+            eval_times(items, env)
+        }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "set!" => {
             eval_set_bang(items, env)
         }
@@ -446,6 +452,125 @@ fn eval_recur<'a>(
     }
 
     Ok(EvalReturn::Recur(values))
+}
+
+fn eval_each(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    if items.len() < 3 {
+        return Err(EvalError::Arity);
+    }
+
+    let bindings = match &items[1].kind {
+        NodeKind::Vector(items) => items,
+        _ => return Err(EvalError::Arity),
+    };
+    if bindings.len() != 2 {
+        return Err(EvalError::Arity);
+    }
+
+    let name = match &bindings[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => return Err(EvalError::InvalidBindingTarget),
+    };
+
+    let coll_value = match eval_with_loop(&bindings[1], env, None)? {
+        EvalReturn::Value(v) => v,
+        EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+    };
+
+    let mut iter_values: Vec<Value> = Vec::new();
+    match coll_value {
+        Value::Vec(items) => iter_values.extend(items.iter().cloned()),
+        Value::Set(items) => iter_values.extend(items.iter().cloned()),
+        Value::Map(entries) => iter_values.extend(entries.iter().map(|(_, v)| v.clone())),
+        Value::Adt {
+            type_name,
+            ctor,
+            fields,
+        } if type_name.as_ref() == "Option" => match ctor.as_ref() {
+            "None" => {}
+            "Some" => {
+                let value = fields
+                    .first()
+                    .ok_or_else(|| EvalError::NativeError("Option.Some missing field".into()))?;
+                iter_values.push(value.clone());
+            }
+            _ => {
+                return Err(EvalError::NativeError(
+                    "unknown Option constructor".into(),
+                ))
+            }
+        },
+        other => {
+            return Err(EvalError::NativeError(format!(
+                "`each` expected Vec, Map, Set, or Option, got {}",
+                other.type_name()
+            )))
+        }
+    }
+
+    for value in iter_values {
+        let iter_env = Rc::new(Env::child(Rc::clone(env)));
+        iter_env.define(name.clone(), value);
+        for expr in &items[2..] {
+            match eval_with_loop(expr, &iter_env, None)? {
+                EvalReturn::Value(_) => {}
+                EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+            }
+        }
+    }
+
+    Ok(EvalReturn::Value(Value::Unit))
+}
+
+fn eval_times(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    if items.len() < 3 {
+        return Err(EvalError::Arity);
+    }
+
+    let bindings = match &items[1].kind {
+        NodeKind::Vector(items) => items,
+        _ => return Err(EvalError::Arity),
+    };
+    if bindings.len() != 2 {
+        return Err(EvalError::Arity);
+    }
+
+    let name = match &bindings[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => return Err(EvalError::InvalidBindingTarget),
+    };
+
+    let count_value = match eval_with_loop(&bindings[1], env, None)? {
+        EvalReturn::Value(v) => v,
+        EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+    };
+    let count = match count_value {
+        Value::Int(n) if n >= 0 => n,
+        Value::Int(n) => {
+            return Err(EvalError::NativeError(format!(
+                "`times` count must be non-negative, got {n}"
+            )))
+        }
+        other => {
+            return Err(EvalError::NativeError(format!(
+                "`times` expected Int count, got {}",
+                other.type_name()
+            )))
+        }
+    };
+
+    for i in 0..count {
+        let iter_env = Rc::new(Env::child(Rc::clone(env)));
+        iter_env.define(name.clone(), Value::Int(i));
+        for expr in &items[2..] {
+            match eval_with_loop(expr, &iter_env, None)? {
+                EvalReturn::Value(_) => {}
+                EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+            }
+        }
+    }
+
+    Ok(EvalReturn::Value(Value::Unit))
 }
 
 fn eval_apply<'a>(

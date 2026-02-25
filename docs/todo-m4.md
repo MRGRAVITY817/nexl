@@ -27,7 +27,7 @@
 
 ## Sequence Operations (stretch — may defer to later)
 - [x] `map`, `filter`, `reduce` (compiler-dispatched)
-- [ ] `each`, `times` forms
+- [x] `each`, `times` forms
 - [ ] `for` / `for!` comprehensions
 
 ## Blocked

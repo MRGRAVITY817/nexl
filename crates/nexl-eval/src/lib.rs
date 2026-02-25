@@ -2957,6 +2957,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn each_iterates_vec_for_side_effects() {
+        let src = r#"
+            (let [mut acc 0]
+              (each [x [1 2 3]]
+                (set! acc (+ acc x)))
+              acc)
+        "#;
+        assert_eq!(eval_str(src).unwrap(), Value::Int(6));
+    }
+
+    #[test]
+    fn each_iterates_map_values_for_side_effects() {
+        let src = r#"
+            (let [mut acc 0]
+              (each [x {:a 1 :b 2}]
+                (set! acc (+ acc x)))
+              acc)
+        "#;
+        assert_eq!(eval_str(src).unwrap(), Value::Int(3));
+    }
+
+    #[test]
+    fn times_iterates_from_zero() {
+        let src = r#"
+            (let [mut acc 0]
+              (times [i 3]
+                (set! acc (+ acc i)))
+              acc)
+        "#;
+        assert_eq!(eval_str(src).unwrap(), Value::Int(3));
+    }
+
     // --- integration test ---
 
     #[test]

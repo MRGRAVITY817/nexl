@@ -115,6 +115,8 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("fn") => synth_fn(items, env, state),
         Some("loop") => synth_loop(items, env, state),
         Some("recur") => synth_recur(items, env, state),
+        Some("each") => synth_each(items, env, state),
+        Some("times") => synth_times(items, env, state),
         _ => synth_application(items, env, state),
     }
 }
@@ -222,6 +224,118 @@ fn synth_recur(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type
     }
 
     Ok(Type::Never)
+}
+
+fn synth_each(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    if items.len() < 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "each expects (each [binding coll] body...), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let bvec = match &items[1].kind {
+        NodeKind::Vector(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "each bindings must be a vector".to_string(),
+            }));
+        }
+    };
+
+    if bvec.len() != 2 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "each expects a binding vector of length 2, got {}",
+                bvec.len()
+            ),
+        }));
+    }
+
+    let name = match &bvec[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "each binding name must be an unqualified symbol".to_string(),
+            }));
+        }
+    };
+
+    let coll_ty = synth(&bvec[1], env, state)?;
+    let elem_ty = infer_each_elem_type(&coll_ty, state)?;
+    let body_env = env.extend(name, Scheme::mono(elem_ty));
+
+    let exprs = &items[2..];
+    if exprs.is_empty() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "each requires at least one body expression".to_string(),
+        }));
+    }
+
+    for expr in exprs {
+        if let Err(e) = synth(expr, &body_env, state) {
+            state.push_error(e);
+        }
+    }
+    Ok(Type::Unit)
+}
+
+fn synth_times(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    if items.len() < 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "times expects (times [binding n] body...), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let bvec = match &items[1].kind {
+        NodeKind::Vector(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "times bindings must be a vector".to_string(),
+            }));
+        }
+    };
+
+    if bvec.len() != 2 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "times expects a binding vector of length 2, got {}",
+                bvec.len()
+            ),
+        }));
+    }
+
+    let name = match &bvec[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "times binding name must be an unqualified symbol".to_string(),
+            }));
+        }
+    };
+
+    let count_ty = synth(&bvec[1], env, state)?;
+    nexl_types::unify(&Type::Int, &count_ty, &mut state.subst)?;
+
+    let body_env = env.extend(name, Scheme::mono(Type::Int));
+    let exprs = &items[2..];
+    if exprs.is_empty() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "times requires at least one body expression".to_string(),
+        }));
+    }
+
+    for expr in exprs {
+        if let Err(e) = synth(expr, &body_env, state) {
+            state.push_error(e);
+        }
+    }
+    Ok(Type::Unit)
 }
 
 /// Synthesize the type of a function application `(callee arg0 arg1 ...)`.
@@ -801,6 +915,22 @@ fn infer_reduce_op(
         Type::Adt { name, args } if name == "Option" && args.len() == 1 => {
             nexl_types::unify(&args[0], &elem_var, &mut state.subst)?;
             Ok(state.subst.apply(&acc_var))
+        }
+        other => Err(TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Vec(Box::new(state.fresh_var())),
+            found: other,
+        })),
+    }
+}
+
+fn infer_each_elem_type(coll_ty: &Type, state: &mut InferState) -> Result<Type, TypeError> {
+    let resolved = state.subst.apply(coll_ty);
+    match resolved {
+        Type::Vec(elem) => Ok(state.subst.apply(&elem)),
+        Type::Set(elem) => Ok(state.subst.apply(&elem)),
+        Type::Map { val, .. } => Ok(state.subst.apply(&val)),
+        Type::Adt { name, args } if name == "Option" && args.len() == 1 => {
+            Ok(state.subst.apply(&args[0]))
         }
         other => Err(TypeError::new(TypeErrorKind::Mismatch {
             expected: Type::Vec(Box::new(state.fresh_var())),
@@ -3162,6 +3292,27 @@ mod tests {
 
         let reduce_node = parse_one("(reduce (fn [acc x] acc) 0 (Some 1))");
         assert_eq!(synth(&reduce_node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    #[test]
+    fn infer_each_over_vec_returns_unit() {
+        let (env, mut state) = empty();
+        let node = parse_one("(each [x [1 2]] (if true x 0))");
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Unit);
+    }
+
+    #[test]
+    fn infer_each_over_map_returns_unit() {
+        let (env, mut state) = empty();
+        let node = parse_one(r#"(each [x {:a 1}] (if true x 0))"#);
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Unit);
+    }
+
+    #[test]
+    fn infer_times_returns_unit() {
+        let (env, mut state) = empty();
+        let node = parse_one("(times [i 3] (if true i 0))");
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Unit);
     }
 
     // -- Test 13 --
