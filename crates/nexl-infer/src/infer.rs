@@ -89,7 +89,7 @@ pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, Typ
                 synth_list(items, env, state)
             }
         }
-        NodeKind::Vector(items) => synth_tuple_literal(items, env, state),
+        NodeKind::Vector(items) => synth_vec_literal(items, env, state),
         _ => unimplemented!("synth: {:?}", node.kind),
     };
     // Attach this node's span to any error that doesn't already carry one.
@@ -722,7 +722,13 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         }
         let expr_node = &bvec[i];
         i += 1;
-        let ty = match synth(expr_node, &current_env, state) {
+        let ty_result = match (&pattern, &expr_node.kind) {
+            (Pattern::Tuple(_), NodeKind::Vector(items)) => {
+                synth_tuple_literal(items, &current_env, state)
+            }
+            _ => synth(expr_node, &current_env, state),
+        };
+        let ty = match ty_result {
             Ok(t) => t,
             Err(e) => {
                 state.push_error(e);
@@ -765,6 +771,39 @@ fn synth_atom(atom: &Atom, env: &Env, state: &mut InferState) -> Result<Type, Ty
             unimplemented!("qualified symbol lookup")
         }
     }
+}
+
+/// Synthesize a type for a vector literal `[a b ...]` (homogeneous elements).
+fn synth_vec_literal(
+    items: &[Node],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    if items.is_empty() {
+        return Ok(Type::Vec(Box::new(state.fresh_var())));
+    }
+
+    let mut elem_ty = match synth(&items[0], env, state) {
+        Ok(ty) => ty,
+        Err(e) => {
+            state.push_error(e);
+            state.fresh_var()
+        }
+    };
+
+    for item in &items[1..] {
+        let ty = match synth(item, env, state) {
+            Ok(ty) => ty,
+            Err(e) => {
+                state.push_error(e);
+                state.fresh_var()
+            }
+        };
+        nexl_types::unify(&elem_ty, &ty, &mut state.subst)?;
+        elem_ty = state.subst.apply(&elem_ty);
+    }
+
+    Ok(Type::Vec(Box::new(state.subst.apply(&elem_ty))))
 }
 
 /// Synthesize a type for a tuple literal `[a b ...]` (2–8 elements).
@@ -1073,7 +1112,10 @@ pub fn check(
     env: &Env,
     state: &mut InferState,
 ) -> Result<(), TypeError> {
-    let actual = synth(node, env, state)?;
+    let actual = match (&node.kind, expected) {
+        (NodeKind::Vector(items), Type::Tuple(_)) => synth_tuple_literal(items, env, state)?,
+        _ => synth(node, env, state)?,
+    };
     // Put `expected` first so Mismatch errors read "expected X but got Y".
     nexl_types::unify(expected, &actual, &mut state.subst).map_err(|e| {
         if e.span.is_none() && !node.span.is_synthetic() {
@@ -2177,6 +2219,43 @@ mod tests {
         assert_eq!(
             synth(&atom_node(Atom::Unit), &env, &mut state).unwrap(),
             Type::Unit
+        );
+    }
+
+    // --- vector literal tests ---
+
+    #[test]
+    fn synth_vec_literal_ints() {
+        let (env, mut state) = empty();
+        let node = Node::new(NodeKind::Vector(vec![int_node(1), int_node(2)]), syn_span());
+        assert_eq!(
+            synth(&node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Int))
+        );
+    }
+
+    #[test]
+    fn synth_vec_literal_empty() {
+        let (env, mut state) = empty();
+        let node = Node::new(NodeKind::Vector(vec![]), syn_span());
+        let ty = synth(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Vec(elem) => assert!(matches!(*elem, Type::Var(_))),
+            other => panic!("expected Vec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_vec_literal_mismatch() {
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::Vector(vec![int_node(1), atom_node(Atom::Bool(true))]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
         );
     }
 

@@ -14,10 +14,10 @@
 - [x] Evaluate set literals `#{1 2 3}` → `Value::Set`
 
 ## Type Inference (`nexl-infer`)
-- [ ] Infer vector literals as `(Vec a)` (homogeneous elements)
+- [x] Infer vector literals as `(Vec a)` (homogeneous elements)
 - [ ] Infer map literals as `(Map k v)` (homogeneous keys and values)
 - [ ] Infer set literals as `(Set a)` (homogeneous elements)
-- [ ] Distinguish `(Tuple a b)` from `(Vec a)` based on context
+- [x] Distinguish `(Tuple a b)` from `(Vec a)` based on context
 
 ## Collection Operations — Built-in Functions
 - [ ] Vec: `get`, `put`, `append`, `count`, `first`, `rest`, `last`, `slice`
