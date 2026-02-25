@@ -4,7 +4,7 @@
 //! [`FuncDef`]s with explicit capture parameters, and normalises expressions
 //! into ANF (all intermediate results named via [`LetBind`]s).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use meta::{Atom as AstAtom, Node, NodeKind, Pattern, parse_pattern};
@@ -65,12 +65,20 @@ impl std::error::Error for LowerError {}
 /// produce a [`Module`].
 pub struct Lowerer {
     module_name: String,
-    /// All function definitions accumulated so far (including lifted lambdas).
-    funcs: Vec<FuncDef>,
+    /// Function definitions keyed by `FuncId.0`.
+    ///
+    /// A `BTreeMap` guarantees that [`Module::funcs`] is ordered by `FuncId`,
+    /// so `module.funcs[i].id == FuncId(i)` — matching WASM function indices.
+    funcs: BTreeMap<u32, FuncDef>,
     /// Counter for assigning [`FuncId`]s.
     func_counter: u32,
     /// Counter for assigning [`VarId`]s (shared across the whole module).
     var_gen: VarGen,
+    /// Top-level function names → pre-assigned [`FuncId`]s.
+    ///
+    /// Populated in a pre-pass so that cross-function references can be
+    /// resolved to [`Atom::FuncRef`] during the main lowering pass.
+    global_funcs: HashMap<String, FuncId>,
 }
 
 impl Lowerer {
@@ -78,9 +86,10 @@ impl Lowerer {
     pub fn new(module_name: &str) -> Self {
         Lowerer {
             module_name: module_name.to_string(),
-            funcs: vec![],
+            funcs: BTreeMap::new(),
             func_counter: 0,
             var_gen: VarGen::new(),
+            global_funcs: HashMap::new(),
         }
     }
 
@@ -91,14 +100,32 @@ impl Lowerer {
     }
 
     /// Lower a list of top-level nodes into a [`Module`].
+    ///
+    /// Runs a pre-pass to assign [`FuncId`]s to all named `defn` forms so
+    /// cross-function references resolve to [`Atom::FuncRef`] during the main
+    /// lowering pass.
     pub fn lower_module(mut self, nodes: &[Node]) -> Result<Module, LowerError> {
+        // Pre-pass: register top-level defn names → FuncIds.
+        for node in nodes {
+            if let NodeKind::List(items) = &node.kind
+                && items.len() >= 4
+                && let NodeKind::Atom(AstAtom::Symbol { ns: None, name }) = &items[0].kind
+                && name == "defn"
+                && let NodeKind::Atom(AstAtom::Symbol { name: fn_name, .. }) = &items[1].kind
+            {
+                let fid = self.fresh_func_id();
+                self.global_funcs.insert(fn_name.clone(), fid);
+            }
+        }
+
+        // Main pass: lower each form.
         for node in nodes {
             self.lower_top_level(node)?;
         }
-        Ok(Module {
-            name: self.module_name,
-            funcs: self.funcs,
-        })
+
+        // Collect in FuncId order so module.funcs[i].id == FuncId(i).
+        let funcs: Vec<FuncDef> = self.funcs.into_values().collect();
+        Ok(Module { name: self.module_name, funcs })
     }
 
     fn lower_top_level(&mut self, node: &Node) -> Result<(), LowerError> {
@@ -107,7 +134,7 @@ impl Lowerer {
                 match &items[0].kind {
                     NodeKind::Atom(AstAtom::Symbol { ns: None, name }) if name == "defn" => {
                         let func = self.lower_defn(items)?;
-                        self.funcs.push(func);
+                        self.funcs.insert(func.id.0, func);
                         Ok(())
                     }
                     _ => Err(LowerError::UnsupportedTopLevel),
@@ -133,7 +160,8 @@ impl Lowerer {
             _ => return Err(LowerError::MalformedDefn),
         };
 
-        let func_id = self.fresh_func_id();
+        // Look up the FuncId assigned during the pre-pass.
+        let func_id = *self.global_funcs.get(&name).ok_or(LowerError::MalformedDefn)?;
 
         let mut env: HashMap<String, VarId> = HashMap::new();
         let mut param_ids = vec![];
@@ -356,11 +384,16 @@ impl Lowerer {
             NodeKind::Atom(AstAtom::Unit) => Ok((vec![], Atom::Unit)),
             NodeKind::Atom(AstAtom::Str(s)) => Ok((vec![], Atom::Str(Rc::from(s.as_str())))),
 
-            // Variable reference.
-            NodeKind::Atom(AstAtom::Symbol { ns: None, name }) => match env.get(name) {
-                Some(&var) => Ok((vec![], Atom::Var(var))),
-                None => Err(LowerError::UnboundVariable(name.clone())),
-            },
+            // Variable reference — local first, then global function.
+            NodeKind::Atom(AstAtom::Symbol { ns: None, name }) => {
+                if let Some(&var) = env.get(name) {
+                    Ok((vec![], Atom::Var(var)))
+                } else if let Some(&fid) = self.global_funcs.get(name) {
+                    Ok((vec![], Atom::FuncRef(fid)))
+                } else {
+                    Err(LowerError::UnboundVariable(name.clone()))
+                }
+            }
 
             // Complex forms.
             NodeKind::List(items) if !items.is_empty() => {
@@ -448,7 +481,7 @@ impl Lowerer {
         }
 
         let body = self.lower_body(body_nodes, &fn_env)?;
-        self.funcs.push(FuncDef {
+        self.funcs.insert(func_id.0, FuncDef {
             id: func_id,
             name: None,
             params: param_ids,

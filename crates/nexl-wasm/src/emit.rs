@@ -357,4 +357,48 @@ mod tests {
         assert_eq!(&bytes[..4], &WASM_MAGIC);
         assert!(bytes.len() > 8);
     }
+
+    // ─── 6. Let binding ──────────────────────────────────────────────────────
+    #[test]
+    fn emit_let_binding() {
+        let bytes = emit("(defn f [] (let [x 42] x))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 7. Sequential let bindings ──────────────────────────────────────────
+    #[test]
+    fn emit_sequential_lets() {
+        let bytes = emit("(defn f [] (let [x 1 y 2] y))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 8. if branch ────────────────────────────────────────────────────────
+    #[test]
+    fn emit_if_branch() {
+        // choose(b): if b then 10 else 20 — exercises Tail::If codegen
+        let bytes = emit("(defn choose [b] (if b 10 20))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 9. Direct inter-function call ───────────────────────────────────────
+    #[test]
+    fn emit_direct_call() {
+        // double calls identity — exercises Rhs::Call with Atom::FuncRef
+        let bytes = emit("(defn identity [x] x)\n(defn double [x] (identity x))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 10. Export names appear in bytes ────────────────────────────────────
+    #[test]
+    fn emit_exports_named_function() {
+        let bytes = emit("(defn my-answer [] 42)");
+        // The function name should appear literally in the export section.
+        let name_bytes = b"my-answer";
+        let found = bytes.windows(name_bytes.len()).any(|w| w == name_bytes);
+        assert!(found, "export name 'my-answer' not found in WASM bytes");
+    }
 }

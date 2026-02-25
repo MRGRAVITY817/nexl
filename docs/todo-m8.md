@@ -6,7 +6,7 @@
 
 ## WASM Codegen (nexl-wasm crate)
 - [x] Create nexl-wasm crate scaffold with wasm-encoder dependency
-- [ ] Codegen: functions → WASM functions
+- [x] Codegen: functions → WASM functions
 - [ ] Codegen: closures → code pointer + env struct in linear memory
 - [ ] Codegen: ADTs → tagged unions in linear memory
 - [ ] Codegen: strings → pointer + length in linear memory
