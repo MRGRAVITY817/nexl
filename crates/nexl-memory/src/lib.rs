@@ -17,6 +17,8 @@
 //!
 //! Pipeline position: nexl-ir → **nexl-memory** (dup/drop pass) → nexl-wasm
 
+use std::collections::HashMap;
+
 use nexl_ir::{Atom, Block, FuncDef, LetBind, Module, Rhs, Tail, VarId};
 
 // ── Layout constants ─────────────────────────────────────────────────────────
@@ -169,6 +171,104 @@ fn is_heap_alloc(rhs: &Rhs) -> bool {
     matches!(rhs, Rhs::MakeTuple { .. } | Rhs::MakeClosure { .. })
 }
 
+// ── Reuse analysis ───────────────────────────────────────────────────────────
+
+/// A reuse token: a dropped allocation whose memory slot can be repurposed for
+/// a subsequent allocation of the same size.
+///
+/// When a new [`RcStep::Bind`] creates a heap value of size `slot_count` and a
+/// matching token is available, the new allocation can write in-place into the
+/// dropped slot instead of calling the bump allocator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReuseToken {
+    /// Variable whose slot is available for reuse.
+    pub dropped_var: VarId,
+    /// Number of `i64` words in the allocation (including header slot).
+    pub slot_count: usize,
+}
+
+/// Maps each new-allocation variable to the reuse token it should consume.
+///
+/// Produced by [`ReusePass`] and consumed by the WASM code generator to
+/// emit in-place mutation instead of bump-allocating a new object.
+pub type ReuseMap = HashMap<VarId, ReuseToken>;
+
+/// Identifies uniquely-owned allocations that can be mutated in-place.
+///
+/// Scans each [`RcAnnotatedBlock`] for the pattern:
+/// `Drop(dead_var)` → `Bind(new_var = MakeTuple/MakeClosure)`
+/// where both sides have the same `slot_count`.  When found, records
+/// `new_var → ReuseToken { dropped_var: dead_var, slot_count }` in the map.
+pub struct ReusePass;
+
+impl ReusePass {
+    /// Create a new reuse-analysis pass.
+    pub fn new() -> Self {
+        ReusePass
+    }
+
+    /// Analyse `module` and return a [`ReuseMap`] of reusable allocations.
+    pub fn run(&self, module: &RcAnnotatedModule) -> ReuseMap {
+        let mut map = ReuseMap::new();
+        for func in &module.funcs {
+            analyze_block_for_reuse(&func.body, &mut map);
+        }
+        map
+    }
+}
+
+impl Default for ReusePass {
+    fn default() -> Self {
+        ReusePass
+    }
+}
+
+/// Returns the number of `i64` allocation slots for a heap-allocating rhs,
+/// or `None` if it does not heap-allocate.
+///
+/// * `MakeTuple { fields }` → `1 + fields.len()` (1 for the tag word)
+/// * `MakeClosure { captures }` → `1 + captures.len()` (1 for the func_id word)
+fn alloc_slot_count(rhs: &Rhs) -> Option<usize> {
+    match rhs {
+        Rhs::MakeTuple { fields, .. } => Some(1 + fields.len()),
+        Rhs::MakeClosure { captures, .. } => Some(1 + captures.len()),
+        _ => None,
+    }
+}
+
+fn analyze_block_for_reuse(block: &RcAnnotatedBlock, map: &mut ReuseMap) {
+    // Pre-compute slot counts for all bound variables in this block.
+    let mut slot_counts: HashMap<VarId, usize> = HashMap::new();
+    for step in &block.steps {
+        if let RcStep::Bind(bind) = step
+            && let Some(n) = alloc_slot_count(&bind.rhs)
+        {
+            slot_counts.insert(bind.var, n);
+        }
+    }
+
+    // Scan for Drop → Bind(heap) pattern.
+    let mut available: Vec<ReuseToken> = vec![];
+    for step in &block.steps {
+        match step {
+            RcStep::Rc(RcOp::Drop { var }) => {
+                if let Some(&n) = slot_counts.get(var) {
+                    available.push(ReuseToken { dropped_var: *var, slot_count: n });
+                }
+            }
+            RcStep::Bind(bind) => {
+                if let Some(needed) = alloc_slot_count(&bind.rhs)
+                    && let Some(pos) = available.iter().position(|t| t.slot_count == needed)
+                {
+                    let token = available.remove(pos);
+                    map.insert(bind.var, token);
+                }
+            }
+            RcStep::Rc(RcOp::Dup { .. }) => {}
+        }
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -297,5 +397,98 @@ mod tests {
         // Only 1 step (the bind); no Drop because v is returned.
         assert_eq!(body.steps.len(), 1);
         assert!(matches!(body.steps[0], RcStep::Bind(_)));
+    }
+
+    // ─── helper: manually build an RcAnnotatedBlock ───────────────────────
+
+    fn make_annotated_block(steps: Vec<RcStep>, tail: Tail) -> RcAnnotatedBlock {
+        RcAnnotatedBlock { steps, tail: Box::new(tail) }
+    }
+
+    fn make_annotated_module(block: RcAnnotatedBlock) -> RcAnnotatedModule {
+        use nexl_ir::FuncId;
+        RcAnnotatedModule {
+            name: "test".to_string(),
+            funcs: vec![RcAnnotatedFunc {
+                id: FuncId(0),
+                name: Some("f".to_string()),
+                params: vec![],
+                body: block,
+            }],
+        }
+    }
+
+    // ─── 10. Reuse token for same-shape ADT after drop ────────────────────
+    #[test]
+    fn reuse_identifies_same_shape_adt() {
+        // Steps: Bind(v1=None), Drop(v1), Bind(v2=None)
+        // v2 should reuse v1's slot (both 1 word: tag only).
+        let v1 = VarId(0);
+        let v2 = VarId(1);
+        let block = make_annotated_block(
+            vec![
+                RcStep::Bind(LetBind {
+                    var: v1,
+                    rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] },
+                }),
+                RcStep::Rc(RcOp::Drop { var: v1 }),
+                RcStep::Bind(LetBind {
+                    var: v2,
+                    rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] },
+                }),
+            ],
+            Tail::Return(Atom::Var(v2)),
+        );
+        let m = make_annotated_module(block);
+        let reuse_map = ReusePass::new().run(&m);
+        let token = reuse_map.get(&v2).expect("v2 should have a reuse token");
+        assert_eq!(token.dropped_var, v1);
+        assert_eq!(token.slot_count, 1); // tag only; None has 0 fields
+    }
+
+    // ─── 11. No reuse when sizes differ ──────────────────────────────────
+    #[test]
+    fn reuse_no_match_different_sizes() {
+        // Steps: Bind(v1=Some(1)), Drop(v1), Bind(v2=None)
+        // v1 has 2 slots (tag + 1 field); v2 has 1 slot — no match.
+        let v1 = VarId(0);
+        let v2 = VarId(1);
+        let block = make_annotated_block(
+            vec![
+                RcStep::Bind(LetBind {
+                    var: v1,
+                    rhs: Rhs::MakeTuple {
+                        ctor: "Some".to_string(),
+                        fields: vec![Atom::Int(1)],
+                    },
+                }),
+                RcStep::Rc(RcOp::Drop { var: v1 }),
+                RcStep::Bind(LetBind {
+                    var: v2,
+                    rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] },
+                }),
+            ],
+            Tail::Return(Atom::Var(v2)),
+        );
+        let m = make_annotated_module(block);
+        let reuse_map = ReusePass::new().run(&m);
+        assert!(!reuse_map.contains_key(&v2), "different sizes → no reuse");
+    }
+
+    // ─── 12. No reuse when there is no preceding drop ─────────────────────
+    #[test]
+    fn reuse_no_token_without_drop() {
+        // Steps: Bind(v1=None) — no Drop before it.
+        let v1 = VarId(0);
+        let block = make_annotated_block(
+            vec![RcStep::Bind(LetBind {
+                var: v1,
+                rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] },
+            })],
+            Tail::Return(Atom::Var(v1)),
+        );
+        let m = make_annotated_module(block);
+        let reuse_map = ReusePass::new().run(&m);
+        assert!(reuse_map.is_empty(), "no drop → no reuse token");
     }
 }
