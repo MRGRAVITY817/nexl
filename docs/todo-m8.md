@@ -17,7 +17,7 @@
 - [x] Reuse analysis: uniquely-owned values mutated in-place
 
 ## Effect Runtime
-- [ ] Evidence vectors as WASM linear memory arrays
+- [x] Evidence vectors as WASM linear memory arrays
 - [ ] Tail-resumptive handlers → direct function calls through evidence
 
 ## Tail Calls

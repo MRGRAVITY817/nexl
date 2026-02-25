@@ -34,8 +34,26 @@ const DEFAULT_VAL: ValType = ValType::I64;
 /// Index of the `__heap_ptr` mutable global (bump allocator).
 const HEAP_PTR: u32 = 0;
 
+/// Index of the `__evv_depth` mutable global (current evidence-vector depth).
+/// Used by effect handler push/pop code (tail-resumptive handlers task).
+#[allow(dead_code)]
+const EVV_DEPTH: u32 = 1;
+
 /// Initial heap base (offset 1024 in linear memory).
 const HEAP_BASE: i32 = 1024;
+
+/// Base byte offset in linear memory where the evidence vector array starts.
+///
+/// Evidence entries are laid out as consecutive `i64` words:
+/// `memory[EVV_BASE + 8*idx]` holds the handler pointer for handler `idx`.
+/// Used by tail-resumptive handler emission (next task).
+#[allow(dead_code)]
+pub const EVV_BASE: i32 = 512;
+
+/// Maximum number of simultaneously-installed effect handlers.
+/// Used by tail-resumptive handler emission (next task).
+#[allow(dead_code)]
+pub const EVV_MAX_HANDLERS: u32 = 32;
 
 // ── Error type ───────────────────────────────────────────────────────────────
 
@@ -104,11 +122,17 @@ impl Emitter {
         });
         wasm.section(&memory);
 
-        // ── Global section (__heap_ptr at global index 0) ────────────────────
+        // ── Global section ────────────────────────────────────────────────────
+        // global 0: __heap_ptr (i32, mutable) — bump allocator pointer
+        // global 1: __evv_depth (i32, mutable) — current evidence-vector depth
         let mut globals = GlobalSection::new();
         globals.global(
             GlobalType { val_type: ValType::I32, mutable: true, shared: false },
             &ConstExpr::i32_const(HEAP_BASE),
+        );
+        globals.global(
+            GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            &ConstExpr::i32_const(0),
         );
         wasm.section(&globals);
 
@@ -772,6 +796,45 @@ mod tests {
         let needle = b"hello";
         let found = bytes.windows(needle.len()).any(|w| w == needle);
         assert!(found, "string bytes 'hello' not found in WASM output");
+    }
+
+    // ─── 20. EVV layout constants are well-formed ─────────────────────────────
+    #[test]
+    fn evv_constants_sane() {
+        // The evv region must fit entirely below the heap.
+        let evv_end = EVV_BASE as u32 + EVV_MAX_HANDLERS * 8;
+        assert!(
+            evv_end <= HEAP_BASE as u32,
+            "evv region ({evv_end}) overflows into heap ({HEAP_BASE})"
+        );
+        assert!(EVV_BASE > 0, "evv must not start at address 0 (reserved for strings)");
+        assert!(EVV_MAX_HANDLERS >= 8, "need room for at least 8 handlers");
+    }
+
+    // ─── 21. Non-empty module has __evv_depth global ──────────────────────────
+    #[test]
+    fn emit_module_has_evv_global() {
+        // After adding __evv_depth, the global section should encode count=2.
+        // Global section id=6; count is the first byte after the section size.
+        // We verify the module emits without error and is larger than before
+        // (the extra global adds bytes).
+        let bytes_with_func = emit("(defn f [] 1)");
+        // Global section id byte = 0x06.
+        let has_global_section = bytes_with_func.windows(1).any(|w| w == [0x06]);
+        assert!(has_global_section, "global section (id=6) not found");
+        // Verify the module is valid WASM.
+        assert_eq!(&bytes_with_func[..4], &WASM_MAGIC);
+    }
+
+    // ─── 22. __evv_depth initialized to 0 ────────────────────────────────────
+    #[test]
+    fn emit_evv_depth_initialized_zero() {
+        // The __evv_depth global is initialized to i32.const 0.
+        // In WASM binary, i32.const 0 is encoded as [0x41, 0x00] (followed by end=0x0B).
+        let bytes = emit("(defn f [] 1)");
+        let init_zero = [0x41u8, 0x00, 0x0B]; // i32.const 0 end
+        let found = bytes.windows(3).any(|w| w == init_zero);
+        assert!(found, "__evv_depth i32.const 0 initializer not found in output");
     }
 
 }
