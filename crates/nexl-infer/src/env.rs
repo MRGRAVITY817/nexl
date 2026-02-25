@@ -210,6 +210,11 @@ impl Env {
         self.constructors.get(name)
     }
 
+    /// Return all binding names defined in this environment.
+    pub fn all_binding_names(&self) -> Vec<String> {
+        self.bindings.keys().cloned().collect()
+    }
+
     /// Collect all type variables that are free in this environment after
     /// applying `subst`.
     ///

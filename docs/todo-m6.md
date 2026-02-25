@@ -10,7 +10,7 @@
 - [x] Row unification and polymorphism (`! [E | r]`)
 - [x] Effect inference for function bodies
 - [x] `handle` removes handled effects from rows
-- [ ] Module `:performs` effect checking
+- [x] Module `:performs` effect checking
 
 ## Effects / Runtime
 - [ ] Evidence passing representation

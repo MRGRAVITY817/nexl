@@ -4,7 +4,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, NodeKind, Pattern, parse_handle_form, parse_pattern};
+use nexl_ast::{
+    Atom, FloatSuffix, IntSuffix, ModuleDecl, Node, NodeKind, Pattern, parse_handle_form,
+    parse_pattern,
+};
 use nexl_types::{
     Constructor, EffectRow, Scheme, Subst, Type, TypeDef, TypeError, TypeErrorKind, TypeVar,
     TypeVarSupply,
@@ -2153,6 +2156,57 @@ fn generalize(ty: &Type, env: &Env, state: &InferState) -> Scheme {
 // Module performs validation
 // ---------------------------------------------------------------------------
 
+/// Check a module's `:performs` declaration against the inferred effects of
+/// its exported functions.
+///
+/// - If `module_decl.performs` is `Some`, every exported effect must be a
+///   subset of the declared set.
+/// - If `module_decl.performs` is `None`, the effective list is inferred as
+///   the union of all exported effects.
+/// - If `module_decl.exports` is `Some`, only those names are examined.
+///   If `None`, all names in `env` are examined.
+///
+/// Returns the effective `:performs` list (sorted, deduplicated).
+pub fn check_module_performs(
+    module_decl: &ModuleDecl,
+    env: &Env,
+    state: &InferState,
+) -> Result<Vec<String>, TypeError> {
+    // Determine which names to examine.
+    let names: Vec<String> = match &module_decl.exports {
+        Some(exports) => exports.clone(),
+        None => env.all_binding_names(),
+    };
+
+    // Build export_effects: name → concrete effect names from its type.
+    let mut export_effects: HashMap<String, Vec<String>> = HashMap::new();
+    for name in &names {
+        if let Some(scheme) = env.lookup(name) {
+            let effects = fn_effect_names(&scheme.body, &state.subst);
+            if !effects.is_empty() {
+                export_effects.insert(name.clone(), effects);
+            }
+        }
+    }
+
+    validate_module_performs(module_decl.performs.as_deref(), &export_effects)
+}
+
+/// Extract concrete named effects from a function type after applying `subst`.
+///
+/// Returns the sorted, deduplicated effect names; row tail variables are
+/// ignored (they are polymorphic placeholders, not concrete effects).
+fn fn_effect_names(ty: &Type, subst: &Subst) -> Vec<String> {
+    let resolved = subst.apply(ty);
+    match resolved {
+        Type::Fn { effects, .. } => {
+            let row = subst.apply_effect_row(&effects);
+            row.effects
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Validate or infer a module's `:performs` list from exported function effects.
 ///
 /// If `declared` is `Some`, every exported effect must be contained in it.
@@ -3194,12 +3248,12 @@ fn synth_handle(items: &[Node], env: &Env, state: &mut InferState) -> Result<Typ
 mod tests {
     use std::collections::HashMap;
 
-    use nexl_ast::{Atom, FileId, FloatSuffix, IntSuffix, Node, Pattern, Span};
+    use nexl_ast::{Atom, FileId, FloatSuffix, IntSuffix, ModuleDecl, Node, Pattern, Span};
     use nexl_types::{Constructor, EffectRow, Scheme, Type, TypeDef, TypeErrorKind, TypeVar};
 
     use super::{
-        DeftypeDecl, InferState, check, infer_def, infer_defn, parse_match, register_deftype, synth,
-        validate_module_performs,
+        DeftypeDecl, InferState, check, check_module_performs, infer_def, infer_defn, parse_match,
+        register_deftype, synth, validate_module_performs,
     };
     use crate::Env;
     use nexl_ast::NodeKind;
@@ -3997,6 +4051,142 @@ mod tests {
             }
             other => panic!("expected MalformedForm, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // check_module_performs tests
+    // -----------------------------------------------------------------------
+
+    /// Helper: build a `Type::Fn` with the given named effects and no tail.
+    fn effectful_fn_ty(effects: Vec<&str>) -> Type {
+        Type::Fn {
+            params: vec![],
+            ret: Box::new(Type::Unit),
+            effects: EffectRow {
+                effects: effects.iter().map(|s| s.to_string()).collect(),
+                tail: None,
+            },
+        }
+    }
+
+    // -- Test 1 (check_module_performs) --
+    #[test]
+    fn check_module_declared_valid() {
+        // Module declares :performs [Net], exports [start!].
+        // start! has effects [Net] → OK, returns ["Net"].
+        let module_decl = ModuleDecl {
+            name: "my.mod".to_string(),
+            exports: Some(vec!["start!".to_string()]),
+            performs: Some(vec!["Net".to_string()]),
+        };
+        let env = Env::new().extend("start!", Scheme::mono(effectful_fn_ty(vec!["Net"])));
+        let state = InferState::new();
+        let result = check_module_performs(&module_decl, &env, &state).unwrap();
+        assert_eq!(result, vec!["Net".to_string()]);
+    }
+
+    // -- Test 2 (check_module_performs) --
+    #[test]
+    fn check_module_declared_missing_effect() {
+        // Module declares :performs [Net], but start! also performs Console.
+        // → Error: Console not in declared performs.
+        let module_decl = ModuleDecl {
+            name: "my.mod".to_string(),
+            exports: Some(vec!["start!".to_string()]),
+            performs: Some(vec!["Net".to_string()]),
+        };
+        let env = Env::new().extend(
+            "start!",
+            Scheme::mono(effectful_fn_ty(vec!["Console", "Net"])),
+        );
+        let state = InferState::new();
+        let err = check_module_performs(&module_decl, &env, &state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { ref description }
+                if description.contains("Console") && description.contains("start!")),
+            "expected MalformedForm mentioning Console and start!, got {err:?}"
+        );
+    }
+
+    // -- Test 3 (check_module_performs) --
+    #[test]
+    fn check_module_inferred_union() {
+        // No :performs declared. start! has [Net], stop! has [IO].
+        // Inferred performs = ["IO", "Net"].
+        let module_decl = ModuleDecl {
+            name: "my.mod".to_string(),
+            exports: Some(vec!["start!".to_string(), "stop!".to_string()]),
+            performs: None,
+        };
+        let env = Env::new()
+            .extend("start!", Scheme::mono(effectful_fn_ty(vec!["Net"])))
+            .extend("stop!", Scheme::mono(effectful_fn_ty(vec!["IO"])));
+        let state = InferState::new();
+        let result = check_module_performs(&module_decl, &env, &state).unwrap();
+        assert_eq!(result, vec!["IO".to_string(), "Net".to_string()]);
+    }
+
+    // -- Test 4 (check_module_performs) --
+    #[test]
+    fn check_module_pure_export_valid() {
+        // Module declares :performs [Net]; helper is pure (Fn [] -> Int).
+        // Pure exports satisfy any declared set.
+        let module_decl = ModuleDecl {
+            name: "my.mod".to_string(),
+            exports: Some(vec!["helper".to_string()]),
+            performs: Some(vec!["Net".to_string()]),
+        };
+        let env = Env::new().extend(
+            "helper",
+            Scheme::mono(Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
+            }),
+        );
+        let state = InferState::new();
+        let result = check_module_performs(&module_decl, &env, &state).unwrap();
+        assert_eq!(result, vec!["Net".to_string()]);
+    }
+
+    // -- Test 5 (check_module_performs) --
+    #[test]
+    fn check_module_exports_filter() {
+        // :exports [start!] with :performs [Net].
+        // internal! performs Console but is not exported — must not cause error.
+        let module_decl = ModuleDecl {
+            name: "my.mod".to_string(),
+            exports: Some(vec!["start!".to_string()]),
+            performs: Some(vec!["Net".to_string()]),
+        };
+        let env = Env::new()
+            .extend("start!", Scheme::mono(effectful_fn_ty(vec!["Net"])))
+            .extend("internal!", Scheme::mono(effectful_fn_ty(vec!["Console"])));
+        let state = InferState::new();
+        let result = check_module_performs(&module_decl, &env, &state).unwrap();
+        assert_eq!(result, vec!["Net".to_string()]);
+    }
+
+    // -- Test 6 (check_module_performs) --
+    #[test]
+    fn check_module_no_exports_all_pure() {
+        // No :performs, no :exports. All bindings pure → inferred performs = [].
+        let module_decl = ModuleDecl {
+            name: "my.mod".to_string(),
+            exports: None,
+            performs: None,
+        };
+        let env = Env::new().extend(
+            "f",
+            Scheme::mono(Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
+            }),
+        );
+        let state = InferState::new();
+        let result = check_module_performs(&module_decl, &env, &state).unwrap();
+        assert_eq!(result, vec![] as Vec<String>);
     }
 
     // -----------------------------------------------------------------------
