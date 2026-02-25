@@ -252,6 +252,12 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
     if let Some(field) = head_keyword(items) {
         return synth_keyword_access(field, &items[1..], env, state);
     }
+    if let Some(name) = head_sym(items)
+        && env.lookup(name).is_none()
+        && let Some(ty) = synth_collection_op(name, &items[1..], env, state)?
+    {
+        return Ok(ty);
+    }
 
     let callee_node = &items[0];
     let arg_nodes = &items[1..];
@@ -285,6 +291,373 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
         .map_err(|e| arithmetic_help(e, head_sym(items), &arg_types))?;
 
     Ok(state.subst.apply(&ret_var))
+}
+
+fn synth_collection_op(
+    name: &str,
+    arg_nodes: &[Node],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Option<Type>, TypeError> {
+    let arg_types = synth_arg_types(arg_nodes, env, state);
+    let ty = match name {
+        "get" => {
+            if arg_types.len() != 2 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: arg_types.len(),
+                }));
+            }
+            let coll_ty = &arg_types[0];
+            let key_ty = &arg_types[1];
+            Some(infer_get(coll_ty, key_ty, state)?)
+        }
+        "put" => {
+            if arg_types.len() != 3 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 3,
+                    found: arg_types.len(),
+                }));
+            }
+            let coll_ty = &arg_types[0];
+            let key_ty = &arg_types[1];
+            let val_ty = &arg_types[2];
+            Some(infer_put(coll_ty, key_ty, val_ty, state)?)
+        }
+        "append" => {
+            if arg_types.len() != 2 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: arg_types.len(),
+                }));
+            }
+            let elem_var = state.fresh_var();
+            let vec_ty = Type::Vec(Box::new(elem_var.clone()));
+            nexl_types::unify(&vec_ty, &arg_types[0], &mut state.subst)?;
+            nexl_types::unify(&elem_var, &arg_types[1], &mut state.subst)?;
+            Some(Type::Vec(Box::new(state.subst.apply(&elem_var))))
+        }
+        "first" => {
+            if arg_types.len() != 1 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: arg_types.len(),
+                }));
+            }
+            let elem_var = state.fresh_var();
+            let vec_ty = Type::Vec(Box::new(elem_var.clone()));
+            nexl_types::unify(&vec_ty, &arg_types[0], &mut state.subst)?;
+            Some(option_type(state.subst.apply(&elem_var)))
+        }
+        "rest" => {
+            if arg_types.len() != 1 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: arg_types.len(),
+                }));
+            }
+            let elem_var = state.fresh_var();
+            let vec_ty = Type::Vec(Box::new(elem_var.clone()));
+            nexl_types::unify(&vec_ty, &arg_types[0], &mut state.subst)?;
+            Some(Type::Vec(Box::new(state.subst.apply(&elem_var))))
+        }
+        "last" => {
+            if arg_types.len() != 1 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: arg_types.len(),
+                }));
+            }
+            let elem_var = state.fresh_var();
+            let vec_ty = Type::Vec(Box::new(elem_var.clone()));
+            nexl_types::unify(&vec_ty, &arg_types[0], &mut state.subst)?;
+            Some(option_type(state.subst.apply(&elem_var)))
+        }
+        "slice" => {
+            if arg_types.len() != 3 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 3,
+                    found: arg_types.len(),
+                }));
+            }
+            let elem_var = state.fresh_var();
+            let vec_ty = Type::Vec(Box::new(elem_var.clone()));
+            nexl_types::unify(&vec_ty, &arg_types[0], &mut state.subst)?;
+            nexl_types::unify(&Type::Int, &arg_types[1], &mut state.subst)?;
+            nexl_types::unify(&Type::Int, &arg_types[2], &mut state.subst)?;
+            Some(Type::Vec(Box::new(state.subst.apply(&elem_var))))
+        }
+        "remove" => {
+            if arg_types.len() != 2 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: arg_types.len(),
+                }));
+            }
+            let coll_ty = state.subst.apply(&arg_types[0]);
+            let key_ty = &arg_types[1];
+            match coll_ty {
+                Type::Map { key, val } => {
+                    nexl_types::unify(&key, key_ty, &mut state.subst)?;
+                    Some(Type::Map {
+                        key: Box::new(state.subst.apply(&key)),
+                        val: Box::new(state.subst.apply(&val)),
+                    })
+                }
+                Type::Set(elem) => {
+                    nexl_types::unify(&elem, key_ty, &mut state.subst)?;
+                    Some(Type::Set(Box::new(state.subst.apply(&elem))))
+                }
+                other => {
+                    return Err(TypeError::new(TypeErrorKind::Mismatch {
+                        expected: Type::Map {
+                            key: Box::new(state.fresh_var()),
+                            val: Box::new(state.fresh_var()),
+                        },
+                        found: other,
+                    }));
+                }
+            }
+        }
+        "keys" => {
+            if arg_types.len() != 1 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: arg_types.len(),
+                }));
+            }
+            let key_var = state.fresh_var();
+            let val_var = state.fresh_var();
+            let map_ty = Type::Map {
+                key: Box::new(key_var.clone()),
+                val: Box::new(val_var),
+            };
+            nexl_types::unify(&map_ty, &arg_types[0], &mut state.subst)?;
+            Some(Type::Vec(Box::new(state.subst.apply(&key_var))))
+        }
+        "vals" => {
+            if arg_types.len() != 1 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: arg_types.len(),
+                }));
+            }
+            let key_var = state.fresh_var();
+            let val_var = state.fresh_var();
+            let map_ty = Type::Map {
+                key: Box::new(key_var),
+                val: Box::new(val_var.clone()),
+            };
+            nexl_types::unify(&map_ty, &arg_types[0], &mut state.subst)?;
+            Some(Type::Vec(Box::new(state.subst.apply(&val_var))))
+        }
+        "entries" => {
+            if arg_types.len() != 1 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: arg_types.len(),
+                }));
+            }
+            let key_var = state.fresh_var();
+            let val_var = state.fresh_var();
+            let map_ty = Type::Map {
+                key: Box::new(key_var.clone()),
+                val: Box::new(val_var.clone()),
+            };
+            nexl_types::unify(&map_ty, &arg_types[0], &mut state.subst)?;
+            Some(Type::Vec(Box::new(Type::Tuple(vec![
+                state.subst.apply(&key_var),
+                state.subst.apply(&val_var),
+            ]))))
+        }
+        "contains?" => {
+            if arg_types.len() != 2 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: arg_types.len(),
+                }));
+            }
+            let coll_ty = state.subst.apply(&arg_types[0]);
+            let key_ty = &arg_types[1];
+            match coll_ty {
+                Type::Map { key, .. } => {
+                    nexl_types::unify(&key, key_ty, &mut state.subst)?;
+                    Some(Type::Bool)
+                }
+                Type::Set(elem) => {
+                    nexl_types::unify(&elem, key_ty, &mut state.subst)?;
+                    Some(Type::Bool)
+                }
+                other => {
+                    return Err(TypeError::new(TypeErrorKind::Mismatch {
+                        expected: Type::Map {
+                            key: Box::new(state.fresh_var()),
+                            val: Box::new(state.fresh_var()),
+                        },
+                        found: other,
+                    }));
+                }
+            }
+        }
+        "count" => {
+            if arg_types.len() != 1 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 1,
+                    found: arg_types.len(),
+                }));
+            }
+            let coll_ty = state.subst.apply(&arg_types[0]);
+            match coll_ty {
+                Type::Str | Type::Vec(_) | Type::Map { .. } | Type::Set(_) | Type::Var(_) => {
+                    Some(Type::Int)
+                }
+                other => {
+                    return Err(TypeError::new(TypeErrorKind::Mismatch {
+                        expected: Type::Vec(Box::new(state.fresh_var())),
+                        found: other,
+                    }));
+                }
+            }
+        }
+        "add" => {
+            if arg_types.len() != 2 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: arg_types.len(),
+                }));
+            }
+            let elem_var = state.fresh_var();
+            let set_ty = Type::Set(Box::new(elem_var.clone()));
+            nexl_types::unify(&set_ty, &arg_types[0], &mut state.subst)?;
+            nexl_types::unify(&elem_var, &arg_types[1], &mut state.subst)?;
+            Some(Type::Set(Box::new(state.subst.apply(&elem_var))))
+        }
+        "union" | "intersection" | "difference" => {
+            if arg_types.len() != 2 {
+                return Err(TypeError::new(TypeErrorKind::ArityMismatch {
+                    expected: 2,
+                    found: arg_types.len(),
+                }));
+            }
+            let elem_var = state.fresh_var();
+            let set_ty = Type::Set(Box::new(elem_var.clone()));
+            nexl_types::unify(&set_ty, &arg_types[0], &mut state.subst)?;
+            nexl_types::unify(&set_ty, &arg_types[1], &mut state.subst)?;
+            Some(Type::Set(Box::new(state.subst.apply(&elem_var))))
+        }
+        _ => None,
+    };
+    Ok(ty)
+}
+
+fn synth_arg_types(arg_nodes: &[Node], env: &Env, state: &mut InferState) -> Vec<Type> {
+    let mut arg_types = Vec::with_capacity(arg_nodes.len());
+    for arg in arg_nodes {
+        match synth(arg, env, state) {
+            Ok(ty) => arg_types.push(ty),
+            Err(e) => {
+                state.push_error(e);
+                arg_types.push(state.fresh_var());
+            }
+        }
+    }
+    arg_types
+}
+
+fn option_type(inner: Type) -> Type {
+    Type::Adt {
+        name: "Option".to_string(),
+        args: vec![inner],
+    }
+}
+
+fn infer_get(coll_ty: &Type, key_ty: &Type, state: &mut InferState) -> Result<Type, TypeError> {
+    let resolved = state.subst.apply(coll_ty);
+    match resolved {
+        Type::Vec(elem) => {
+            nexl_types::unify(&Type::Int, key_ty, &mut state.subst)?;
+            Ok(option_type(state.subst.apply(&elem)))
+        }
+        Type::Map { key, val } => {
+            nexl_types::unify(&key, key_ty, &mut state.subst)?;
+            Ok(option_type(state.subst.apply(&val)))
+        }
+        Type::Var(_) => {
+            let snapshot = state.subst.clone();
+            if nexl_types::unify(&Type::Int, key_ty, &mut state.subst).is_ok() {
+                let elem_var = state.fresh_var();
+                let vec_ty = Type::Vec(Box::new(elem_var.clone()));
+                nexl_types::unify(&vec_ty, coll_ty, &mut state.subst)?;
+                return Ok(option_type(state.subst.apply(&elem_var)));
+            }
+            state.subst = snapshot;
+            let key_var = state.fresh_var();
+            let val_var = state.fresh_var();
+            let map_ty = Type::Map {
+                key: Box::new(key_var.clone()),
+                val: Box::new(val_var.clone()),
+            };
+            nexl_types::unify(&map_ty, coll_ty, &mut state.subst)?;
+            nexl_types::unify(&key_var, key_ty, &mut state.subst)?;
+            Ok(option_type(state.subst.apply(&val_var)))
+        }
+        other => Err(TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Vec(Box::new(state.fresh_var())),
+            found: other,
+        })),
+    }
+}
+
+fn infer_put(
+    coll_ty: &Type,
+    key_ty: &Type,
+    val_ty: &Type,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    let resolved = state.subst.apply(coll_ty);
+    match resolved {
+        Type::Vec(elem) => {
+            nexl_types::unify(&Type::Int, key_ty, &mut state.subst)?;
+            nexl_types::unify(&elem, val_ty, &mut state.subst)?;
+            Ok(Type::Vec(Box::new(state.subst.apply(&elem))))
+        }
+        Type::Map { key, val } => {
+            nexl_types::unify(&key, key_ty, &mut state.subst)?;
+            nexl_types::unify(&val, val_ty, &mut state.subst)?;
+            Ok(Type::Map {
+                key: Box::new(state.subst.apply(&key)),
+                val: Box::new(state.subst.apply(&val)),
+            })
+        }
+        Type::Var(_) => {
+            let snapshot = state.subst.clone();
+            if nexl_types::unify(&Type::Int, key_ty, &mut state.subst).is_ok() {
+                let elem_var = state.fresh_var();
+                let vec_ty = Type::Vec(Box::new(elem_var.clone()));
+                nexl_types::unify(&vec_ty, coll_ty, &mut state.subst)?;
+                nexl_types::unify(&elem_var, val_ty, &mut state.subst)?;
+                return Ok(Type::Vec(Box::new(state.subst.apply(&elem_var))));
+            }
+            state.subst = snapshot;
+            let key_var = state.fresh_var();
+            let val_var = state.fresh_var();
+            let map_ty = Type::Map {
+                key: Box::new(key_var.clone()),
+                val: Box::new(val_var.clone()),
+            };
+            nexl_types::unify(&map_ty, coll_ty, &mut state.subst)?;
+            nexl_types::unify(&key_var, key_ty, &mut state.subst)?;
+            nexl_types::unify(&val_var, val_ty, &mut state.subst)?;
+            Ok(Type::Map {
+                key: Box::new(state.subst.apply(&key_var)),
+                val: Box::new(state.subst.apply(&val_var)),
+            })
+        }
+        other => Err(TypeError::new(TypeErrorKind::Mismatch {
+            expected: Type::Vec(Box::new(state.fresh_var())),
+            found: other,
+        })),
+    }
 }
 
 fn synth_record_constructor(
@@ -2221,6 +2594,13 @@ mod tests {
         })
     }
 
+    fn option_ty(inner: Type) -> Type {
+        Type::Adt {
+            name: "Option".to_string(),
+            args: vec![inner],
+        }
+    }
+
     /// Build `(def name expr)` as a List node.
     fn def_node(name: &str, expr: Node) -> Node {
         let head = sym_node("def");
@@ -2464,6 +2844,92 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::Mismatch { .. }),
             "expected Mismatch, got {err:?}"
+        );
+    }
+
+    // --- collection operation inference tests ---
+
+    #[test]
+    fn infer_vec_ops_types() {
+        let (env, mut state) = empty();
+        let get_node = parse_one("(get [1 2] 0)");
+        assert_eq!(
+            synth(&get_node, &env, &mut state).unwrap(),
+            option_ty(Type::Int)
+        );
+
+        let put_node = parse_one("(put [1 2] 0 3)");
+        assert_eq!(
+            synth(&put_node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Int))
+        );
+
+        let first_node = parse_one("(first [1 2])");
+        assert_eq!(
+            synth(&first_node, &env, &mut state).unwrap(),
+            option_ty(Type::Int)
+        );
+
+        let last_node = parse_one("(last [1 2])");
+        assert_eq!(
+            synth(&last_node, &env, &mut state).unwrap(),
+            option_ty(Type::Int)
+        );
+
+        let slice_node = parse_one("(slice [1 2 3] 0 2)");
+        assert_eq!(
+            synth(&slice_node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Int))
+        );
+    }
+
+    #[test]
+    fn infer_map_ops_types() {
+        let (env, mut state) = empty();
+        let get_node = parse_one(r#"(get {:a 1} :a)"#);
+        assert_eq!(
+            synth(&get_node, &env, &mut state).unwrap(),
+            option_ty(Type::Int)
+        );
+
+        let keys_node = parse_one(r#"(keys {:a 1 :b 2})"#);
+        assert_eq!(
+            synth(&keys_node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Keyword))
+        );
+
+        let entries_node = parse_one(r#"(entries {:a 1})"#);
+        assert_eq!(
+            synth(&entries_node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Tuple(vec![Type::Keyword, Type::Int])))
+        );
+
+        let contains_node = parse_one(r#"(contains? {:a 1} :a)"#);
+        assert_eq!(
+            synth(&contains_node, &env, &mut state).unwrap(),
+            Type::Bool
+        );
+    }
+
+    #[test]
+    fn infer_set_ops_types() {
+        let (env, mut state) = empty();
+        let add_node = parse_one(r#"(add #{1 2} 3)"#);
+        assert_eq!(
+            synth(&add_node, &env, &mut state).unwrap(),
+            Type::Set(Box::new(Type::Int))
+        );
+
+        let union_node = parse_one(r#"(union #{1 2} #{2 3})"#);
+        assert_eq!(
+            synth(&union_node, &env, &mut state).unwrap(),
+            Type::Set(Box::new(Type::Int))
+        );
+
+        let contains_node = parse_one(r#"(contains? #{1 2} 1)"#);
+        assert_eq!(
+            synth(&contains_node, &env, &mut state).unwrap(),
+            Type::Bool
         );
     }
 
