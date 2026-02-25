@@ -17,7 +17,7 @@
 - [x] `assert!` / `assert-unreachable!` evaluation
 - [x] `?` operator evaluation (early return from function on `Err` for `Result`; early return on `None` for `Option`)
 - [x] Contract enforcement in dev mode (`:requires` before body, `:ensures` after)
-- [ ] `try`/`catch` evaluation (desugar to match on Result)
+- [x] `try`/`catch` evaluation (desugar to match on Result)
 
 ## Blocked
 - [ ] (none yet)

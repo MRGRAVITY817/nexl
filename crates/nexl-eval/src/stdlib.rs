@@ -14,6 +14,10 @@ pub fn standard_env() -> Rc<Env> {
     env.define("None", option_none());
     env.define("Some", native("Some", some_ctor));
 
+    // Result constructors
+    env.define("Ok", native("Ok", ok_ctor));
+    env.define("Err", native("Err", err_ctor));
+
     // Arithmetic
     env.define("+", native("+", add));
     env.define("-", native("-", sub));
@@ -86,6 +90,24 @@ fn option_some(value: Value) -> Value {
 fn some_ctor(args: &[Value]) -> Result<Value, String> {
     let v = one_arg("Some", args)?;
     Ok(option_some(v.clone()))
+}
+
+fn ok_ctor(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("Ok", args)?;
+    Ok(Value::Adt {
+        type_name: Rc::from("Result"),
+        ctor: Rc::from("Ok"),
+        fields: Rc::new(vec![v.clone()]),
+    })
+}
+
+fn err_ctor(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("Err", args)?;
+    Ok(Value::Adt {
+        type_name: Rc::from("Result"),
+        ctor: Rc::from("Err"),
+        fields: Rc::new(vec![v.clone()]),
+    })
 }
 
 /// Unpack exactly two arguments.

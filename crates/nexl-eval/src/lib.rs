@@ -4020,4 +4020,55 @@ mod tests {
         let result = eval_forms("(f 99)", &env);
         assert_eq!(result, Ok(Value::Int(99)));
     }
+
+    // --- try/catch evaluation tests (spec §9: desugars to match on Result) ---
+
+    fn result_env() -> Rc<Env> {
+        crate::stdlib::standard_env()
+    }
+
+    // Test 1: Ok branch unwraps inner value; catch is not run (spec §9)
+    #[test]
+    fn try_catch_ok_unwraps_value() {
+        let env = result_env();
+        // (try (Ok 42) (catch e 0))  → 42
+        let result = eval_forms("(try (Ok 42) (catch e 0))", &env);
+        assert_eq!(result, Ok(Value::Int(42)));
+    }
+
+    // Test 2: Err branch runs catch body; catch name bound to inner error value (spec §9)
+    #[test]
+    fn try_catch_err_runs_catch_with_inner() {
+        let env = result_env();
+        // (try (Err "boom") (catch e e))  → "boom"  (e = inner value, not the Err ADT)
+        let result = eval_forms(r#"(try (Err "boom") (catch e e))"#, &env);
+        assert_eq!(result, Ok(Value::Str(Rc::from("boom"))));
+    }
+
+    // Test 3: catch body receives the numeric inner value (confirms e = inner)
+    #[test]
+    fn try_catch_catch_body_uses_error_value() {
+        let env = result_env();
+        // (try (Err 99) (catch n n))  → 99
+        let result = eval_forms("(try (Err 99) (catch n n))", &env);
+        assert_eq!(result, Ok(Value::Int(99)));
+    }
+
+    // Test 4: multiple body exprs; last one is the Result (spec §9)
+    #[test]
+    fn try_catch_multi_body_last_is_result() {
+        let env = result_env();
+        // (try 1 (Ok 2) (catch e e))  → 2  (first body expr is 1, last is (Ok 2))
+        let result = eval_forms("(try 1 (Ok 2) (catch e e))", &env);
+        assert_eq!(result, Ok(Value::Int(2)));
+    }
+
+    // Test 5: malformed try (missing catch) → error
+    #[test]
+    fn try_catch_malformed_missing_catch_errors() {
+        let env = result_env();
+        // (try (Ok 1))  → error (needs catch clause)
+        let result = eval_forms("(try (Ok 1))", &env);
+        assert!(matches!(result, Err(EvalError::NativeError(_))));
+    }
 }

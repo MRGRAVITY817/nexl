@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use meta::{Atom, Node, NodeKind};
+use meta::{Atom, Node, NodeKind, parse_try_form, TryCatchForm};
 use nexl_runtime::{Value, value::Function};
 
 use crate::{Env, EvalError};
@@ -113,6 +113,9 @@ fn eval_list<'a>(
         }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "?" => {
             eval_question(items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "try" => {
+            eval_try(items, env, loop_state)
         }
         _ => eval_apply(items, env, loop_state),
     }
@@ -1139,6 +1142,78 @@ fn eval_question<'a>(
         }
         other => Err(EvalError::NativeError(format!(
             "? applied to non-Result/Option value: {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// Evaluate a `(try body... (catch name catch-body...))` form (spec §9).
+///
+/// Desugars to a match on `Result`:
+/// - `(Ok v)` → yields `v`
+/// - `(Err e)` → evaluates `catch-body` with `name` bound to `e`
+fn eval_try<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    let form = parse_try_form(items)
+        .map_err(|e| EvalError::NativeError(e.description))?;
+    eval_try_form(&form, env, loop_state)
+}
+
+fn eval_try_form<'a>(
+    form: &TryCatchForm,
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    // Evaluate body expressions; last result must be a Result ADT.
+    let mut last = Value::Unit;
+    for expr in &form.body {
+        match eval_with_loop(expr, env, loop_state) {
+            Ok(EvalReturn::Value(v)) => last = v,
+            Ok(EvalReturn::Recur(vals)) => return Ok(EvalReturn::Recur(vals)),
+            Err(EvalError::EarlyReturn(v)) => return Ok(EvalReturn::Value(v)),
+            Err(e) => return Err(e),
+        }
+    }
+
+    // Desugar: match last on Ok/Err.
+    match last {
+        Value::Adt { ref type_name, ref ctor, ref fields } if type_name.as_ref() == "Result" => {
+            match ctor.as_ref() {
+                "Ok" => {
+                    let inner = fields
+                        .first()
+                        .ok_or_else(|| EvalError::NativeError("Result.Ok missing field".into()))?
+                        .clone();
+                    Ok(EvalReturn::Value(inner))
+                }
+                "Err" => {
+                    let inner = fields
+                        .first()
+                        .ok_or_else(|| EvalError::NativeError("Result.Err missing field".into()))?
+                        .clone();
+                    let catch_env = Rc::new(Env::child(Rc::clone(env)));
+                    catch_env.define(form.catch_name.as_str(), inner);
+                    let mut catch_last = Value::Unit;
+                    for expr in &form.catch_body {
+                        match eval_with_loop(expr, &catch_env, loop_state) {
+                            Ok(EvalReturn::Value(v)) => catch_last = v,
+                            Ok(EvalReturn::Recur(vals)) => return Ok(EvalReturn::Recur(vals)),
+                            Err(EvalError::EarlyReturn(v)) => return Ok(EvalReturn::Value(v)),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    Ok(EvalReturn::Value(catch_last))
+                }
+                _ => Err(EvalError::NativeError(format!(
+                    "try: expected Result (Ok or Err), got constructor `{ctor}`"
+                ))),
+            }
+        }
+        other => Err(EvalError::NativeError(format!(
+            "try: body must produce a Result, got {}",
             other.type_name()
         ))),
     }
