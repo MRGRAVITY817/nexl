@@ -17,7 +17,7 @@
 - `panic` terminates with message and source location
 - `assert!` checks condition, panics on false
 - `assert-unreachable!` typed as `Never`, always panics
-- `?` operator propagates `Err` from `Result`, unwraps `Ok`
+- `?` operator propagates `Err` from `Result`, unwraps `Ok`; and propagates `None` from `Option`, unwraps `Some`
 - Contract clauses (`:requires`, `:ensures`, `:examples`) parsed and enforced in dev mode
 - `try`/`catch` compiles to `match` on `Result`
 - `cargo test` passes across all crates

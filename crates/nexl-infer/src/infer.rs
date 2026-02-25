@@ -172,6 +172,9 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("for") => synth_for(items, env, state),
         Some("for!") => synth_for(items, env, state),
         Some("handle") => synth_handle(items, env, state),
+        Some("panic") => synth_panic(items, env, state),
+        Some("assert!") => synth_assert(items, env, state),
+        Some("assert-unreachable!") => synth_assert_unreachable(items, env, state),
         _ => synth_application(items, env, state),
     }
 }
@@ -1503,6 +1506,59 @@ fn synth_if(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, T
     nexl_types::unify(&then_ty, &synth(else_node, env, state)?, &mut state.subst)?;
 
     Ok(state.subst.apply(&then_ty))
+}
+
+/// Synthesize the type of a `(panic msg)` form.
+///
+/// `panic` always diverges, so its type is `Never` (spec §9.4).
+fn synth_panic(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    if items.len() != 2 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "panic expects (panic message), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+    let _ = synth(&items[1], env, state)?;
+    Ok(Type::Never)
+}
+
+/// Synthesize the type of an `(assert! cond [msg])` form.
+fn synth_assert(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    if items.len() < 2 || items.len() > 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "assert! expects (assert! condition [message]), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+    check(&items[1], &Type::Bool, env, state)?;
+    if let Some(msg) = items.get(2) {
+        let _ = synth(msg, env, state)?;
+    }
+    Ok(Type::Unit)
+}
+
+/// Synthesize the type of an `(assert-unreachable! [msg])` form.
+fn synth_assert_unreachable(
+    items: &[Node],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    if items.len() > 2 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "assert-unreachable! expects (assert-unreachable! [message]), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+    if let Some(msg) = items.get(1) {
+        let _ = synth(msg, env, state)?;
+    }
+    Ok(Type::Never)
 }
 
 /// Synthesize the type of a `(let [x e1 y e2 ...] body)` form.
@@ -4467,6 +4523,31 @@ mod tests {
             Type::Fn { ret, .. } => assert_eq!(*ret, Type::Int),
             other => panic!("expected Fn type, got {other:?}"),
         }
+    }
+
+    // -- Test 10 (panic/assert) --
+    #[test]
+    fn infer_panic_has_never_type() {
+        let (env, mut state) = empty();
+        let node = parse_one(r#"(panic "oops")"#);
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Never);
+    }
+
+    #[test]
+    fn infer_assert_has_unit_type() {
+        let (env, mut state) = empty();
+        let node = parse_one("(assert! true)");
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Unit);
+    }
+
+    #[test]
+    fn infer_assert_unreachable_has_never_type() {
+        let (env, mut state) = empty();
+        let node = parse_one("(assert-unreachable!)");
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Never);
     }
 
     // -- Test 7 (defn effects) --

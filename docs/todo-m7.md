@@ -8,14 +8,14 @@
 - [x] Parse `try`/`catch` form
 
 ## Types / Inference
-- [ ] `panic` typed as `Never`; `assert!` typed as `Unit`; `assert-unreachable!` typed as `Never`
-- [ ] `?` operator type checking (unwrap Result, early return on Err)
+- [x] `panic` typed as `Never`; `assert!` typed as `Unit`; `assert-unreachable!` typed as `Never`
+- [ ] `?` operator type checking (unwrap `Ok`/early-return `Err` for `Result`; unwrap `Some`/early-return `None` for `Option`; mixing the two in the same function is a compile error)
 - [ ] Contract clause type checking (`:requires`/`:ensures` must be Bool expressions)
 
 ## Eval / Runtime
 - [x] `panic` evaluation (runtime termination with message + source location)
 - [ ] `assert!` / `assert-unreachable!` evaluation
-- [ ] `?` operator evaluation (early return from function on Err)
+- [ ] `?` operator evaluation (early return from function on `Err` for `Result`; early return on `None` for `Option`)
 - [ ] Contract enforcement in dev mode (`:requires` before body, `:ensures` after)
 - [ ] `try`/`catch` evaluation (desugar to match on Result)
 
