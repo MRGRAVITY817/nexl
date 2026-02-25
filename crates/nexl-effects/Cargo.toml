@@ -1,0 +1,10 @@
+[package]
+name = "nexl-effects"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Evidence passing representation for Nexl algebraic effects"
+
+[dependencies]
+nexl-types  = { path = "../nexl-types" }
+nexl-errors = { path = "../nexl-errors" }

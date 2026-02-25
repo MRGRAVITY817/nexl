@@ -26,6 +26,15 @@ nexl-eval
 nexl-modules
 ```
 
+## M6 Crates
+
+```
+nexl-effects
+├── nexl-types
+├── nexl-infer
+└── nexl-errors
+```
+
 ## Planned (future milestones)
 
 ```
@@ -42,11 +51,6 @@ nexl-cli (M8)
 nexl-infer (M2)
 ├── nexl-ast
 ├── nexl-types
-└── nexl-errors
-
-nexl-effects (M6)
-├── nexl-types
-├── nexl-infer
 └── nexl-errors
 ```
 

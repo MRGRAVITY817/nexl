@@ -13,7 +13,7 @@
 - [x] Module `:performs` effect checking
 
 ## Effects / Runtime
-- [ ] Evidence passing representation
+- [x] Evidence passing representation
 - [ ] Continuation handlers (one-shot, ADR-003)
 - [ ] Built-in effects: `Console`, `FileSystem`, `Time`, `Random`
 
