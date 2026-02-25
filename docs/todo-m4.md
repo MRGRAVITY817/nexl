@@ -28,7 +28,7 @@
 ## Sequence Operations (stretch — may defer to later)
 - [x] `map`, `filter`, `reduce` (compiler-dispatched)
 - [x] `each`, `times` forms
-- [ ] `for` / `for!` comprehensions
+- [x] `for` / `for!` comprehensions
 
 ## Blocked
 - [ ] List type (low priority — primarily used in macros, defer to M10)

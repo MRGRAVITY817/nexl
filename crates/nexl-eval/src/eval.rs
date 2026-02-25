@@ -11,6 +11,12 @@ enum EvalReturn {
     Recur(Vec<Value>),
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ForControl {
+    Continue,
+    Break,
+}
+
 struct LoopFrame<'a> {
     names: &'a [Rc<str>],
 }
@@ -85,6 +91,8 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "recur" => {
             eval_recur(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "for" => eval_for(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "for!" => eval_for(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "each" => {
             eval_each(items, env)
         }
@@ -384,7 +392,7 @@ fn eval_loop(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         NodeKind::Vector(items) => items,
         _ => return Err(EvalError::Arity),
     };
-    if bindings.len() % 2 != 0 {
+    if !bindings.len().is_multiple_of(2) {
         return Err(EvalError::Arity);
     }
 
@@ -571,6 +579,174 @@ fn eval_times(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     }
 
     Ok(EvalReturn::Value(Value::Unit))
+}
+
+fn eval_for(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    if items.len() < 3 {
+        return Err(EvalError::Arity);
+    }
+
+    let bindings = match &items[1].kind {
+        NodeKind::Vector(items) => items,
+        _ => return Err(EvalError::Arity),
+    };
+
+    let body = &items[2..];
+    if body.is_empty() {
+        return Err(EvalError::Arity);
+    }
+
+    let mut out = Vec::new();
+    eval_for_bindings(bindings, 0, env, body, &mut out)?;
+    Ok(EvalReturn::Value(Value::Vec(Rc::new(out))))
+}
+
+fn eval_for_bindings(
+    bindings: &[Node],
+    idx: usize,
+    env: &Rc<Env>,
+    body: &[Node],
+    out: &mut Vec<Value>,
+) -> Result<ForControl, EvalError> {
+    if idx >= bindings.len() {
+        let mut last = Value::Unit;
+        for expr in body {
+            match eval_with_loop(expr, env, None)? {
+                EvalReturn::Value(v) => last = v,
+                EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+            }
+        }
+        out.push(last);
+        return Ok(ForControl::Continue);
+    }
+
+    match &bindings[idx].kind {
+        NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "when" => {
+            let cond_node = bindings.get(idx + 1).ok_or(EvalError::Arity)?;
+            let cond_val = match eval_with_loop(cond_node, env, None)? {
+                EvalReturn::Value(v) => v,
+                EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+            };
+            match cond_val {
+                Value::Bool(true) => eval_for_bindings(bindings, idx + 2, env, body, out),
+                Value::Bool(false) => Ok(ForControl::Continue),
+                other => Err(EvalError::NativeError(format!(
+                    "`for` :when expected Bool, got {}",
+                    other.type_name()
+                ))),
+            }
+        }
+        NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "while" => {
+            let cond_node = bindings.get(idx + 1).ok_or(EvalError::Arity)?;
+            let cond_val = match eval_with_loop(cond_node, env, None)? {
+                EvalReturn::Value(v) => v,
+                EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+            };
+            match cond_val {
+                Value::Bool(true) => eval_for_bindings(bindings, idx + 2, env, body, out),
+                Value::Bool(false) => Ok(ForControl::Break),
+                other => Err(EvalError::NativeError(format!(
+                    "`for` :while expected Bool, got {}",
+                    other.type_name()
+                ))),
+            }
+        }
+        NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "let" => {
+            let binding_node = bindings.get(idx + 1).ok_or(EvalError::Arity)?;
+            let binding_vec = match &binding_node.kind {
+                NodeKind::Vector(items) => items,
+                _ => return Err(EvalError::Arity),
+            };
+            let let_env = eval_for_let_bindings(binding_vec, env)?;
+            eval_for_bindings(bindings, idx + 2, &let_env, body, out)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+            let coll_node = bindings.get(idx + 1).ok_or(EvalError::Arity)?;
+            let coll_val = match eval_with_loop(coll_node, env, None)? {
+                EvalReturn::Value(v) => v,
+                EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+            };
+
+            let mut iter_values: Vec<Value> = Vec::new();
+            match coll_val {
+                Value::Vec(items) => iter_values.extend(items.iter().cloned()),
+                Value::Set(items) => iter_values.extend(items.iter().cloned()),
+                Value::Map(entries) => iter_values.extend(entries.iter().map(|(_, v)| v.clone())),
+                Value::Adt {
+                    type_name,
+                    ctor,
+                    fields,
+                } if type_name.as_ref() == "Option" => match ctor.as_ref() {
+                    "None" => {}
+                    "Some" => {
+                        let value = fields.first().ok_or_else(|| {
+                            EvalError::NativeError("Option.Some missing field".into())
+                        })?;
+                        iter_values.push(value.clone());
+                    }
+                    _ => {
+                        return Err(EvalError::NativeError(
+                            "unknown Option constructor".into(),
+                        ))
+                    }
+                },
+                other => {
+                    return Err(EvalError::NativeError(format!(
+                        "`for` expected Vec, Map, Set, or Option, got {}",
+                        other.type_name()
+                    )))
+                }
+            }
+
+            for value in iter_values {
+                let iter_env = Rc::new(Env::child(Rc::clone(env)));
+                iter_env.define(name.clone(), value);
+                let control = eval_for_bindings(bindings, idx + 2, &iter_env, body, out)?;
+                if matches!(control, ForControl::Break) {
+                    break;
+                }
+            }
+            Ok(ForControl::Continue)
+        }
+        _ => Err(EvalError::Arity),
+    }
+}
+
+fn eval_for_let_bindings(
+    bindings: &[Node],
+    env: &Rc<Env>,
+) -> Result<Rc<Env>, EvalError> {
+    if !bindings.len().is_multiple_of(2) {
+        return Err(EvalError::Arity);
+    }
+
+    let child_env = Rc::new(Env::child(Rc::clone(env)));
+    let mut i = 0;
+    while i < bindings.len() {
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &bindings[i].kind
+            && name == "mut"
+        {
+            i += 1;
+        }
+
+        let name_node = bindings.get(i).ok_or(EvalError::Arity)?;
+        let name = match &name_node.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+            _ => return Err(EvalError::InvalidBindingTarget),
+        };
+        i += 1;
+
+        let value_node = bindings.get(i).ok_or(EvalError::Arity)?;
+        i += 1;
+
+        let value = match eval_with_loop(value_node, &child_env, None)? {
+            EvalReturn::Value(v) => v,
+            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        };
+        child_env.define(name, value);
+    }
+
+    Ok(child_env)
 }
 
 fn eval_apply<'a>(

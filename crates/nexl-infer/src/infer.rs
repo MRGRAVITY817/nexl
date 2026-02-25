@@ -117,6 +117,8 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("recur") => synth_recur(items, env, state),
         Some("each") => synth_each(items, env, state),
         Some("times") => synth_times(items, env, state),
+        Some("for") => synth_for(items, env, state),
+        Some("for!") => synth_for(items, env, state),
         _ => synth_application(items, env, state),
     }
 }
@@ -336,6 +338,106 @@ fn synth_times(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type
         }
     }
     Ok(Type::Unit)
+}
+
+fn synth_for(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    if items.len() < 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "for expects (for [bindings...] body...), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let bvec = match &items[1].kind {
+        NodeKind::Vector(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "for bindings must be a vector".to_string(),
+            }));
+        }
+    };
+
+    let mut current_env = env.clone();
+    let mut i = 0;
+    while i < bvec.len() {
+        match &bvec[i].kind {
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "when" => {
+                let cond_node = bvec.get(i + 1).ok_or_else(|| {
+                    TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "for :when requires a condition expression".to_string(),
+                    })
+                })?;
+                let cond_ty = synth(cond_node, &current_env, state)?;
+                nexl_types::unify(&Type::Bool, &cond_ty, &mut state.subst)?;
+                i += 2;
+            }
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "while" => {
+                let cond_node = bvec.get(i + 1).ok_or_else(|| {
+                    TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "for :while requires a condition expression".to_string(),
+                    })
+                })?;
+                let cond_ty = synth(cond_node, &current_env, state)?;
+                nexl_types::unify(&Type::Bool, &cond_ty, &mut state.subst)?;
+                i += 2;
+            }
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "let" => {
+                let binding_node = bvec.get(i + 1).ok_or_else(|| {
+                    TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "for :let requires a binding vector".to_string(),
+                    })
+                })?;
+                let binding_vec = match &binding_node.kind {
+                    NodeKind::Vector(items) => items,
+                    _ => {
+                        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                            description: "for :let expects a vector of bindings".to_string(),
+                        }));
+                    }
+                };
+                current_env = extend_for_let_bindings(&current_env, binding_vec, state)?;
+                i += 2;
+            }
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+                let coll_node = bvec.get(i + 1).ok_or_else(|| {
+                    TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "for binding is missing its collection expression".to_string(),
+                    })
+                })?;
+                let coll_ty = synth(coll_node, &current_env, state)?;
+                let elem_ty = infer_each_elem_type(&coll_ty, state)?;
+                current_env = current_env.extend(name.clone(), Scheme::mono(elem_ty));
+                i += 2;
+            }
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "for bindings must be symbol/keyword clauses".to_string(),
+                }));
+            }
+        }
+    }
+
+    let body_exprs = &items[2..];
+    if body_exprs.is_empty() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "for requires at least one body expression".to_string(),
+        }));
+    }
+
+    let mut body_ty = Type::Unit;
+    for expr in body_exprs {
+        match synth(expr, &current_env, state) {
+            Ok(ty) => body_ty = ty,
+            Err(e) => {
+                state.push_error(e);
+                body_ty = state.fresh_var();
+            }
+        }
+    }
+
+    Ok(Type::Vec(Box::new(state.subst.apply(&body_ty))))
 }
 
 /// Synthesize the type of a function application `(callee arg0 arg1 ...)`.
@@ -937,6 +1039,62 @@ fn infer_each_elem_type(coll_ty: &Type, state: &mut InferState) -> Result<Type, 
             found: other,
         })),
     }
+}
+
+fn extend_for_let_bindings(
+    env: &Env,
+    bindings: &[Node],
+    state: &mut InferState,
+) -> Result<Env, TypeError> {
+    if !bindings.len().is_multiple_of(2) {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "for :let bindings must have an even number of forms".to_string(),
+        }));
+    }
+
+    let mut current_env = env.clone();
+    let mut i = 0;
+    while i < bindings.len() {
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &bindings[i].kind
+            && name == "mut"
+        {
+            i += 1;
+        }
+
+        let name_node = bindings.get(i).ok_or_else(|| {
+            TypeError::new(TypeErrorKind::MalformedForm {
+                description: "for :let binding is missing a name".to_string(),
+            })
+        })?;
+        let name = match &name_node.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "for :let binding name must be a symbol".to_string(),
+                }));
+            }
+        };
+        i += 1;
+
+        let value_node = bindings.get(i).ok_or_else(|| {
+            TypeError::new(TypeErrorKind::MalformedForm {
+                description: "for :let binding is missing its expression".to_string(),
+            })
+        })?;
+        i += 1;
+
+        let ty = match synth(value_node, &current_env, state) {
+            Ok(ty) => ty,
+            Err(e) => {
+                state.push_error(e);
+                state.fresh_var()
+            }
+        };
+        let scheme = generalize(&ty, &current_env, state);
+        current_env = current_env.extend(name, scheme);
+    }
+
+    Ok(current_env)
 }
 
 fn synth_record_constructor(
@@ -3313,6 +3471,36 @@ mod tests {
         let (env, mut state) = empty();
         let node = parse_one("(times [i 3] (if true i 0))");
         assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Unit);
+    }
+
+    #[test]
+    fn infer_for_returns_vec() {
+        let (env, mut state) = empty();
+        let node = parse_one("(for [x [1 2]] x)");
+        assert_eq!(
+            synth(&node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Int))
+        );
+    }
+
+    #[test]
+    fn infer_for_with_clauses_returns_vec() {
+        let (env, mut state) = empty();
+        let node = parse_one("(for [x [1 2] :let [y x] :when true :while true] y)");
+        assert_eq!(
+            synth(&node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Int))
+        );
+    }
+
+    #[test]
+    fn infer_for_bang_returns_vec() {
+        let (env, mut state) = empty();
+        let node = parse_one("(for! [x [1 2]] x)");
+        assert_eq!(
+            synth(&node, &env, &mut state).unwrap(),
+            Type::Vec(Box::new(Type::Int))
+        );
     }
 
     // -- Test 13 --

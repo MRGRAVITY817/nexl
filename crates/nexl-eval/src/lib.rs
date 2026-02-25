@@ -2990,6 +2990,36 @@ mod tests {
         assert_eq!(eval_str(src).unwrap(), Value::Int(3));
     }
 
+    #[test]
+    fn for_with_when_and_nested_bindings() {
+        assert_eq!(
+            eval_str(r#"(for [x [1 2] y [10 20] :when (= x 2)] [x y])"#).unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(10)])),
+                Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(20)])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn for_with_let_when_while() {
+        assert_eq!(
+            eval_str(
+                r#"(for [x [1 2 3] :let [y (+ x 1)] :when (> y 2) :while (< y 4)] y)"#
+            )
+            .unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn for_bang_returns_vec() {
+        assert_eq!(
+            eval_str(r#"(for! [x [1 2]] (+ x 1))"#).unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(3)]))
+        );
+    }
+
     // --- integration test ---
 
     #[test]
