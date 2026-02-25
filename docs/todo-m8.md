@@ -12,7 +12,7 @@
 - [x] Codegen: strings → pointer + length in linear memory
 
 ## Memory Management (nexl-memory crate)
-- [ ] Create nexl-memory crate — Perceus RC data structures (ref-count header, alloc/free)
+- [x] Create nexl-memory crate — Perceus RC data structures (ref-count header, alloc/free)
 - [ ] dup/drop insertion pass over IR
 - [ ] Reuse analysis: uniquely-owned values mutated in-place
 
