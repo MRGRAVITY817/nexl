@@ -25,8 +25,8 @@
 - [x] `:performs` row validation against exported function signatures
 
 ## Evaluation (`nexl-eval`)
-- [ ] Multi-file evaluation with module initialization order
-- [ ] Module-scoped environments
+- [x] Multi-file evaluation with module initialization order
+- [x] Module-scoped environments
 
 ## Blocked
 - [ ] Content-addressed definitions (§8.4 — depends on M18)

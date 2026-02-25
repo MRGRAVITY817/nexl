@@ -5,15 +5,22 @@ use std::rc::Rc;
 use nexl_runtime::Value;
 use thiserror::Error;
 
+pub(crate) type ModuleExports = Rc<HashMap<Rc<str>, Value>>;
+pub(crate) type ModuleAliasMap = HashMap<Rc<str>, ModuleExports>;
+
 pub mod eval;
+pub mod modules;
 pub mod repl;
 pub mod stdlib;
+
+pub use modules::{ModuleSource, eval_modules, parse_module_source};
 
 /// Lexical environment: a frame of bindings plus an optional parent link.
 #[derive(Debug)]
 pub struct Env {
     parent: Option<Rc<Env>>,
     bindings: RefCell<HashMap<Rc<str>, Value>>,
+    modules: RefCell<ModuleAliasMap>,
 }
 
 impl Env {
@@ -22,6 +29,7 @@ impl Env {
         Self {
             parent: None,
             bindings: RefCell::new(HashMap::new()),
+            modules: RefCell::new(HashMap::new()),
         }
     }
 
@@ -30,12 +38,22 @@ impl Env {
         Self {
             parent: Some(parent),
             bindings: RefCell::new(HashMap::new()),
+            modules: RefCell::new(HashMap::new()),
         }
     }
 
     /// Define or overwrite a binding in the current frame.
     pub fn define(&self, name: impl Into<Rc<str>>, value: Value) {
         self.bindings.borrow_mut().insert(name.into(), value);
+    }
+
+    /// Define a module alias mapped to its exported bindings.
+    pub fn define_module_alias(
+        &self,
+        alias: impl Into<Rc<str>>,
+        exports: ModuleExports,
+    ) {
+        self.modules.borrow_mut().insert(alias.into(), exports);
     }
 
     /// Look up a binding, searching parents if needed.
@@ -45,6 +63,19 @@ impl Env {
         }
         match &self.parent {
             Some(parent) => parent.get(name),
+            None => None,
+        }
+    }
+
+    /// Look up a qualified name `alias/name` via imported module aliases.
+    pub fn get_qualified(&self, alias: &str, name: &str) -> Option<Value> {
+        if let Some(exports) = self.modules.borrow().get(alias)
+            && let Some(v) = exports.get(name)
+        {
+            return Some(v.clone());
+        }
+        match &self.parent {
+            Some(parent) => parent.get_qualified(alias, name),
             None => None,
         }
     }
@@ -76,6 +107,22 @@ impl Env {
             map.insert(k.clone(), v.clone());
         }
     }
+
+    /// Snapshot module aliases for closure capture (nearest wins).
+    pub fn capture_modules(&self) -> Vec<(Rc<str>, ModuleExports)> {
+        let mut map = HashMap::new();
+        self.fill_module_map(&mut map);
+        map.into_iter().collect()
+    }
+
+    fn fill_module_map(&self, map: &mut ModuleAliasMap) {
+        if let Some(parent) = &self.parent {
+            parent.fill_module_map(map);
+        }
+        for (k, v) in self.modules.borrow().iter() {
+            map.insert(k.clone(), Rc::clone(v));
+        }
+    }
 }
 
 impl Default for Env {
@@ -101,6 +148,24 @@ pub enum EvalError {
     /// Unsupported feature placeholder.
     #[error("unsupported qualified symbol: {0}")]
     UnsupportedQualifiedSymbol(String),
+    /// Module declaration missing at the top of a file.
+    #[error("missing module declaration")]
+    MissingModuleDecl,
+    /// Module declaration or import could not be parsed.
+    #[error("module parse error: {0}")]
+    ModuleParse(String),
+    /// Module graph construction or ordering failed.
+    #[error("module graph error: {0}")]
+    ModuleGraph(String),
+    /// An import referenced an unknown module.
+    #[error("unknown module: {0}")]
+    UnknownModule(String),
+    /// An import referenced a name not exported by its module.
+    #[error("`{name}` is not exported by module `{module}`")]
+    ImportNotExported { module: String, name: String },
+    /// An export list referenced a name not defined in the module.
+    #[error("module `{module}` does not define export `{name}`")]
+    MissingExport { module: String, name: String },
     /// Attempted to call a non-function value.
     #[error("invalid callable")]
     InvalidCallable,

@@ -60,9 +60,9 @@ fn eval_atom(atom: &Atom, env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         Atom::Symbol { ns: None, name } => env
             .get(name)
             .ok_or_else(|| EvalError::UnboundSymbol(name.clone()))?,
-        Atom::Symbol { ns: Some(_), name } => {
-            return Err(EvalError::UnsupportedQualifiedSymbol(name.clone()));
-        }
+        Atom::Symbol { ns: Some(alias), name } => env
+            .get_qualified(alias, name)
+            .ok_or_else(|| EvalError::UnboundSymbol(format!("{alias}/{name}")))?,
     };
     Ok(EvalReturn::Value(v))
 }
@@ -101,9 +101,6 @@ fn eval_list<'a>(
         }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "set!" => {
             eval_set_bang(items, env)
-        }
-        NodeKind::Atom(Atom::Symbol { ns: Some(_), name }) => {
-            Err(EvalError::UnsupportedQualifiedSymbol(name.clone()))
         }
         _ => eval_apply(items, env, loop_state),
     }
@@ -321,6 +318,7 @@ fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         arity,
         variadic,
         captures: env.capture_closure(),
+        module_captures: env.capture_modules(),
         body: items[2..].to_vec(),
     };
 
@@ -372,6 +370,7 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
             arity: f.arity,
             variadic: f.variadic,
             captures: f.captures.clone(),
+            module_captures: f.module_captures.clone(),
             body: f.body.clone(),
         })),
         EvalReturn::Value(other) => other,
@@ -840,6 +839,9 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
 
     for (name, value) in &func.captures {
         call_env.define(name.clone(), value.clone());
+    }
+    for (alias, exports) in &func.module_captures {
+        call_env.define_module_alias(alias.clone(), Rc::clone(exports));
     }
 
     for (idx, param) in func.params.iter().enumerate() {

@@ -1,5 +1,8 @@
 use meta::Node;
+use std::collections::HashMap;
 use std::rc::Rc;
+
+type ModuleExports = Rc<HashMap<Rc<str>, Value>>;
 
 /// A built-in function implemented natively in Rust.
 ///
@@ -35,6 +38,8 @@ pub struct Function {
     pub variadic: bool,
     /// Captured bindings from the defining environment (name, value).
     pub captures: Vec<(Rc<str>, Value)>,
+    /// Captured module aliases (alias, exports).
+    pub module_captures: Vec<(Rc<str>, ModuleExports)>,
     /// Body expressions to evaluate when called (in order).
     pub body: Vec<Node>,
 }
@@ -293,6 +298,7 @@ mod tests {
             arity,
             variadic,
             captures: vec![],
+            module_captures: vec![],
             body: vec![Node::atom(meta::Atom::Unit, meta::span::Span::synthetic())],
         }))
     }
@@ -620,6 +626,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, v)| (Rc::from(format!("c{i}").as_str()), v.clone()))
                 .collect(),
+            module_captures: vec![],
             body: vec![Node::atom(meta::Atom::Unit, meta::span::Span::synthetic())],
         }));
 
