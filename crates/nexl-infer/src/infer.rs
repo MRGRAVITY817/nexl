@@ -1950,7 +1950,7 @@ fn parse_fn_type(items: &[Node], node: &Node) -> Result<Type, TypeError> {
         .with_span(node.span)
     };
 
-    if items.len() != 4 {
+    if items.len() != 4 && items.len() != 6 {
         return Err(bad());
     }
 
@@ -1984,10 +1984,69 @@ fn parse_fn_type(items: &[Node], node: &Node) -> Result<Type, TypeError> {
         .collect::<Result<_, _>>()?;
     let ret = parse_type_expr(&items[3])?;
 
+    if items.len() == 6 {
+        let is_bang = matches!(
+            &items[4].kind,
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "!"
+        );
+        if !is_bang {
+            return Err(bad());
+        }
+        let _ = parse_effect_row(&items[5])?;
+    }
+
     Ok(Type::Fn {
         params,
         ret: Box::new(ret),
     })
+}
+
+fn parse_effect_row(node: &Node) -> Result<(Vec<String>, Option<String>), TypeError> {
+    let bad = || {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: "effect row expects [Effect ... | r]".to_string(),
+        })
+        .with_span(node.span)
+    };
+
+    let items = match &node.kind {
+        NodeKind::Vector(items) => items,
+        _ => return Err(bad()),
+    };
+
+    if items.is_empty() {
+        return Ok((Vec::new(), None));
+    }
+
+    let mut effects = Vec::new();
+    let mut idx = 0;
+    let mut row_var: Option<String> = None;
+
+    while idx < items.len() {
+        match &items[idx].kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "|" => {
+                if row_var.is_some() || idx == 0 || idx + 1 >= items.len() {
+                    return Err(bad());
+                }
+                let var = match &items[idx + 1].kind {
+                    NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+                    _ => return Err(bad()),
+                };
+                if idx + 2 != items.len() {
+                    return Err(bad());
+                }
+                row_var = Some(var);
+                break;
+            }
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+                effects.push(name.clone());
+            }
+            _ => return Err(bad()),
+        }
+        idx += 1;
+    }
+
+    Ok((effects, row_var))
 }
 
 // ---------------------------------------------------------------------------
@@ -5541,6 +5600,57 @@ mod tests {
     }
 
     // -- Test 4 (annot) --
+    #[test]
+    fn parse_type_expr_fn_with_effects() {
+        // (Fn [Str] -> Unit ! [Console]) → Fn { params: [Str], ret: Unit }
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("Fn"),
+                Node::new(NodeKind::Vector(vec![type_sym("Str")]), syn_span()),
+                sym_node("->"),
+                type_sym("Unit"),
+                sym_node("!"),
+                Node::new(NodeKind::Vector(vec![type_sym("Console")]), syn_span()),
+            ]),
+            syn_span(),
+        );
+        assert_eq!(
+            parse_type_expr(&node).unwrap(),
+            Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Unit)
+            }
+        );
+    }
+
+    // -- Test 5 (annot) --
+    #[test]
+    fn parse_type_expr_fn_with_effect_row_var() {
+        // (Fn [Str] -> Unit ! [Console | r]) → Fn { params: [Str], ret: Unit }
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("Fn"),
+                Node::new(NodeKind::Vector(vec![type_sym("Str")]), syn_span()),
+                sym_node("->"),
+                type_sym("Unit"),
+                sym_node("!"),
+                Node::new(
+                    NodeKind::Vector(vec![type_sym("Console"), sym_node("|"), sym_node("r")]),
+                    syn_span(),
+                ),
+            ]),
+            syn_span(),
+        );
+        assert_eq!(
+            parse_type_expr(&node).unwrap(),
+            Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Unit)
+            }
+        );
+    }
+
+    // -- Test 6 (annot) --
     #[test]
     fn parse_type_expr_unknown_name() {
         // Symbol("Blorp") → MalformedForm (unknown type name)
