@@ -18,7 +18,7 @@
 ## Name Resolution
 - [x] Resolve qualified references (`alias/name`) to module exports
 - [x] Visibility enforcement: public, package-private, module-private (§8.8)
-- [ ] Export validation: unexported names not importable
+- [x] Export validation: unexported names not importable
 
 ## Type Inference (`nexl-infer`)
 - [ ] Cross-module type checking at import boundaries

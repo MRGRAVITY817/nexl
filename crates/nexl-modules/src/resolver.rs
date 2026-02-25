@@ -422,6 +422,21 @@ mod tests {
     // ── Test 7 ──────────────────────────────────────────────────────────────
 
     #[test]
+    fn resolve_unqualified_all_unexported_name() {
+        // (import lib.math) — bare import, exports [add]
+        // resolve `sub` → UnknownName
+        let imports = vec![(
+            mk_import("lib.math", ImportKind::All),
+            exports(&["add"]),
+        )];
+        let resolver = build_name_resolver("app", &imports).expect("build failed");
+        let err = resolver.resolve_unqualified("sub").unwrap_err();
+        assert_eq!(err, ResolveError::UnknownName { name: "sub".to_string() });
+    }
+
+    // ── Test 8 ──────────────────────────────────────────────────────────────
+
+    #[test]
     fn resolve_unqualified_exclude() {
         // (import lib.math :exclude [div]), exports [add sub div]
         let imports = vec![(
@@ -438,7 +453,7 @@ mod tests {
         assert_eq!(err, ResolveError::UnknownName { name: "div".to_string() });
     }
 
-    // ── Test 8 ──────────────────────────────────────────────────────────────
+    // ── Test 10 ─────────────────────────────────────────────────────────────
 
     #[test]
     fn resolve_unqualified_rename() {
@@ -490,7 +505,7 @@ mod tests {
         }
     }
 
-    // ── Test 10 ─────────────────────────────────────────────────────────────
+    // ── Test 11 ─────────────────────────────────────────────────────────────
 
     #[test]
     fn resolve_unqualified_unknown() {
@@ -501,7 +516,7 @@ mod tests {
         assert_eq!(err, ResolveError::UnknownName { name: "baz".to_string() });
     }
 
-    // ── Test 11 ─────────────────────────────────────────────────────────────
+    // ── Test 12 ─────────────────────────────────────────────────────────────
 
     #[test]
     fn resolve_refer_nonexistent_name() {
@@ -524,7 +539,7 @@ mod tests {
         );
     }
 
-    // ── Test 12 ─────────────────────────────────────────────────────────────
+    // ── Test 13 ─────────────────────────────────────────────────────────────
 
     #[test]
     fn resolve_exclude_nonexistent_name() {
@@ -547,7 +562,7 @@ mod tests {
         );
     }
 
-    // ── Test 13 ─────────────────────────────────────────────────────────────
+    // ── Test 14 ─────────────────────────────────────────────────────────────
 
     #[test]
     fn resolve_refer_package_private_external() {
@@ -566,7 +581,7 @@ mod tests {
         );
     }
 
-    // ── Test 14 ─────────────────────────────────────────────────────────────
+    // ── Test 15 ─────────────────────────────────────────────────────────────
 
     #[test]
     fn resolve_refer_package_private_same_package() {
@@ -586,7 +601,7 @@ mod tests {
         assert_eq!(resolved.name, "internal");
     }
 
-    // ── Test 15 ─────────────────────────────────────────────────────────────
+    // ── Test 16 ─────────────────────────────────────────────────────────────
 
     #[test]
     fn resolve_qualified_package_private_external() {
