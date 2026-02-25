@@ -5,7 +5,7 @@
 - [x] IR lowering pass — lower typed AST → nexl-ir (closures → env structs, match → decision trees, `?` → jumps)
 
 ## WASM Codegen (nexl-wasm crate)
-- [ ] Create nexl-wasm crate scaffold with wasm-encoder dependency
+- [x] Create nexl-wasm crate scaffold with wasm-encoder dependency
 - [ ] Codegen: functions → WASM functions
 - [ ] Codegen: closures → code pointer + env struct in linear memory
 - [ ] Codegen: ADTs → tagged unions in linear memory

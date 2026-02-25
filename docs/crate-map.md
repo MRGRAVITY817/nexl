@@ -40,6 +40,10 @@ nexl-effects
 ```
 nexl-ir
 (no workspace-crate dependencies — standalone IR node types)
+
+nexl-wasm
+├── nexl-ir (M8)
+└── wasm-encoder (external)
 ```
 
 ## Planned (future milestones)
