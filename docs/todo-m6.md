@@ -2,7 +2,7 @@
 
 ## AST / Reader
 - [x] Parse `defeffect` declarations
-- [ ] Parse `handle` forms (simple + continuation)
+- [x] Parse `handle` forms (simple + continuation)
 - [ ] Parse effect rows in type annotations (`! [E | r]`)
 
 ## Types / Inference
