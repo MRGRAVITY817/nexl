@@ -14,7 +14,7 @@
 
 ## Effects / Runtime
 - [x] Evidence passing representation
-- [ ] Continuation handlers (one-shot, ADR-003)
+- [x] Continuation handlers (one-shot, ADR-003)
 - [ ] Built-in effects: `Console`, `FileSystem`, `Time`, `Random`
 
 ## Blocked

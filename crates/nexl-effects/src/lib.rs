@@ -9,11 +9,68 @@
 //! so it can be used both by the tree-walk evaluator (where
 //! `F = Rc<dyn Fn(&[Value]) -> Value>`) and by future compilation backends.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+
+const RESUME_PANIC_MSG: &str = "resume called more than once";
+
+// ---------------------------------------------------------------------------
+// Resume (one-shot)
+// ---------------------------------------------------------------------------
+
+/// One-shot continuation handle passed to continuation-style handlers.
+///
+/// Calling `resume` more than once is a runtime panic (ADR-003).
+#[derive(Debug)]
+pub struct Resume<F> {
+    called: Cell<bool>,
+    f: RefCell<Option<F>>,
+}
+
+impl<F> Resume<F> {
+    /// Create a new one-shot resume handle.
+    pub fn new(f: F) -> Self {
+        Self {
+            called: Cell::new(false),
+            f: RefCell::new(Some(f)),
+        }
+    }
+
+    /// Invoke the continuation exactly once.
+    ///
+    /// # Panics
+    /// Panics if called more than once.
+    pub fn call<Args, R>(&self, args: Args) -> R
+    where
+        F: FnOnce(Args) -> R,
+    {
+        if self.called.get() {
+            panic!("{RESUME_PANIC_MSG}");
+        }
+        self.called.set(true);
+        let f = {
+            let mut slot = self.f.borrow_mut();
+            slot.take()
+        };
+        match f {
+            Some(f) => f(args),
+            None => panic!("{RESUME_PANIC_MSG}"),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // HandlerRecord
 // ---------------------------------------------------------------------------
+
+/// An operation handler implementation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HandlerOp<F> {
+    /// Simple (tail-resumptive) handler; resume is implicit.
+    Simple(F),
+    /// Continuation handler; resume is explicit.
+    Continuation(F),
+}
 
 /// Handler record for a single effect.
 ///
@@ -23,7 +80,7 @@ use std::collections::HashMap;
 pub struct HandlerRecord<F> {
     /// Effect name, e.g. `"Console"`.
     pub effect_name: String,
-    operations: HashMap<String, F>,
+    operations: HashMap<String, HandlerOp<F>>,
 }
 
 impl<F> HandlerRecord<F> {
@@ -35,13 +92,20 @@ impl<F> HandlerRecord<F> {
         }
     }
 
-    /// Register an operation implementation.
+    /// Register a simple (tail-resumptive) operation implementation.
     pub fn insert_op(&mut self, op_name: impl Into<String>, handler: F) {
-        self.operations.insert(op_name.into(), handler);
+        self.operations
+            .insert(op_name.into(), HandlerOp::Simple(handler));
+    }
+
+    /// Register a continuation-style operation implementation.
+    pub fn insert_continuation_op(&mut self, op_name: impl Into<String>, handler: F) {
+        self.operations
+            .insert(op_name.into(), HandlerOp::Continuation(handler));
     }
 
     /// Look up an operation implementation by name.
-    pub fn lookup(&self, op_name: &str) -> Option<&F> {
+    pub fn lookup(&self, op_name: &str) -> Option<&HandlerOp<F>> {
         self.operations.get(op_name)
     }
 }
@@ -97,7 +161,7 @@ impl<F: Clone> EvidenceVector<F> {
     ///
     /// Searches from the most recently installed handler (innermost `handle`)
     /// to the earliest (outermost), returning the first match.
-    pub fn lookup(&self, effect_name: &str, op_name: &str) -> Option<&F> {
+    pub fn lookup(&self, effect_name: &str, op_name: &str) -> Option<&HandlerOp<F>> {
         match self {
             Self::Empty => None,
             Self::Single(record) => {
@@ -138,7 +202,7 @@ impl<F: Clone> EvidenceVector<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EvidenceVector, HandlerRecord};
+    use super::{EvidenceVector, HandlerOp, HandlerRecord, Resume};
 
     // -- Test 1 --
     #[test]
@@ -153,7 +217,7 @@ mod tests {
     fn handler_record_insert_and_lookup() {
         let mut rec = HandlerRecord::new("Console");
         rec.insert_op("print", 42_i32);
-        assert_eq!(rec.lookup("print"), Some(&42_i32));
+        assert_eq!(rec.lookup("print"), Some(&HandlerOp::Simple(42_i32)));
     }
 
     // -- Test 3 --
@@ -162,6 +226,17 @@ mod tests {
         let mut rec: HandlerRecord<i32> = HandlerRecord::new("Console");
         rec.insert_op("print", 1);
         assert!(rec.lookup("read-line").is_none());
+    }
+
+    // -- Test 4 --
+    #[test]
+    fn handler_record_insert_continuation_op() {
+        let mut rec = HandlerRecord::new("Console");
+        rec.insert_continuation_op("print", 7_i32);
+        assert_eq!(
+            rec.lookup("print"),
+            Some(&HandlerOp::Continuation(7_i32))
+        );
     }
 
     // -- Test 4 --
@@ -178,7 +253,10 @@ mod tests {
         let mut rec = HandlerRecord::new("Console");
         rec.insert_op("print", 99_i32);
         let ev = EvidenceVector::single(rec);
-        assert_eq!(ev.lookup("Console", "print"), Some(&99_i32));
+        assert_eq!(
+            ev.lookup("Console", "print"),
+            Some(&HandlerOp::Simple(99_i32))
+        );
     }
 
     // -- Test 6 --
@@ -198,7 +276,10 @@ mod tests {
         let mut net = HandlerRecord::new("Net");
         net.insert_op("get", 2_i32);
         let ev = EvidenceVector::from_records(vec![console, net]);
-        assert_eq!(ev.lookup("Console", "print"), Some(&1_i32));
+        assert_eq!(
+            ev.lookup("Console", "print"),
+            Some(&HandlerOp::Simple(1_i32))
+        );
     }
 
     // -- Test 8 --
@@ -209,7 +290,10 @@ mod tests {
         let mut net = HandlerRecord::new("Net");
         net.insert_op("get", 2_i32);
         let ev = EvidenceVector::from_records(vec![console, net]);
-        assert_eq!(ev.lookup("Net", "get"), Some(&2_i32));
+        assert_eq!(
+            ev.lookup("Net", "get"),
+            Some(&HandlerOp::Simple(2_i32))
+        );
     }
 
     // -- Test 9 --
@@ -247,7 +331,7 @@ mod tests {
         let ev = EvidenceVector::single(outer).extend(inner);
         assert_eq!(
             ev.lookup("Console", "print"),
-            Some(&20_i32),
+            Some(&HandlerOp::Simple(20_i32)),
             "innermost (last added) handler must shadow the outer one"
         );
     }
@@ -265,5 +349,22 @@ mod tests {
         let rec: HandlerRecord<i32> = HandlerRecord::new("Log");
         let ev = EvidenceVector::from_records(vec![rec]);
         assert!(matches!(ev, EvidenceVector::Single(_)));
+    }
+
+    // -- Test 14 --
+    #[test]
+    fn resume_call_once_returns_value() {
+        let resume = Resume::new(|n: i32| n + 1);
+        let value = resume.call(41);
+        assert_eq!(value, 42);
+    }
+
+    // -- Test 15 --
+    #[test]
+    #[should_panic(expected = "resume called more than once")]
+    fn resume_call_twice_panics() {
+        let resume = Resume::new(|n: i32| n + 1);
+        let _ = resume.call(1);
+        let _ = resume.call(2);
     }
 }

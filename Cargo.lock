@@ -137,6 +137,14 @@ name = "nexl-ast"
 version = "0.1.0"
 
 [[package]]
+name = "nexl-effects"
+version = "0.1.0"
+dependencies = [
+ "nexl-errors",
+ "nexl-types",
+]
+
+[[package]]
 name = "nexl-errors"
 version = "0.1.0"
 dependencies = [
