@@ -3,7 +3,7 @@
 ## AST / Reader
 - [x] Parse `panic` form
 - [x] Parse `assert!` and `assert-unreachable!` forms
-- [ ] Parse `?` postfix operator (question-mark suffix on expressions)
+- [x] Parse `?` postfix operator (question-mark suffix on expressions)
 - [ ] Parse contract clauses (`:requires`, `:ensures`, `:examples`) on `defn`
 - [ ] Parse `try`/`catch` form
 

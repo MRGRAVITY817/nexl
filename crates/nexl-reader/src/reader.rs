@@ -398,6 +398,7 @@ impl<'src> Reader<'src> {
                 .expect("called after verifying peek_no_comment is Some");
             let mut form = self.dispatch(tok)?;
             form.leading_comments = leading;
+            let mut form = self.apply_postfix_question(form);
             form.trailing_comment = self.try_trailing(form.span.end());
             items.push(form);
         } else {
@@ -426,6 +427,7 @@ impl<'src> Reader<'src> {
                     _ => {
                         let tok = self.advance().unwrap();
                         let inner = self.dispatch(tok)?;
+                        let inner = self.apply_postfix_question(inner);
                         let span = discard_span.merge(inner.span);
                         let mut node = Node::new(NodeKind::Discard(Box::new(inner)), span);
                         node.leading_comments = first_leading.take().unwrap_or_default();
@@ -437,6 +439,39 @@ impl<'src> Reader<'src> {
         }
 
         Ok(())
+    }
+
+    fn apply_postfix_question(&mut self, mut node: Node) -> Node {
+        loop {
+            let Some(tok) = self.peek() else {
+                break;
+            };
+            match &tok.kind {
+                TokenKind::Symbol { ns: None, name } if name == "?" => {
+                    let tok = self.advance().unwrap();
+                    let span = node.span.merge(tok.span);
+                    let leading = std::mem::take(&mut node.leading_comments);
+                    let inner = node;
+                    let mut wrapped = Node::new(
+                        NodeKind::List(vec![
+                            Node::atom(
+                                Atom::Symbol {
+                                    ns: None,
+                                    name: "?".to_string(),
+                                },
+                                tok.span,
+                            ),
+                            inner,
+                        ]),
+                        span,
+                    );
+                    wrapped.leading_comments = leading;
+                    node = wrapped;
+                }
+                _ => break,
+            }
+        }
+        node
     }
 
     /// Consume the next form, erroring if none is available.
@@ -1575,6 +1610,34 @@ mod tests {
             err.message.contains("@"),
             "expected '@' in message, got: {}",
             err.message,
+        );
+    }
+
+    // ── 30. parse_postfix_question_operator ────────────────────────────────
+    #[test]
+    fn parse_postfix_question_operator() {
+        let nodes = read("(parse-thing s)?", fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+        let NodeKind::List(items) = &nodes[0].kind else {
+            panic!("expected List");
+        };
+        assert_eq!(items.len(), 2);
+        assert!(
+            matches!(
+                items[0].kind,
+                NodeKind::Atom(Atom::Symbol { ns: None, ref name }) if name == "?"
+            ),
+            "expected ? operator head"
+        );
+        let NodeKind::List(call) = &items[1].kind else {
+            panic!("expected List for operand");
+        };
+        assert!(
+            matches!(
+                call[0].kind,
+                NodeKind::Atom(Atom::Symbol { ns: None, ref name }) if name == "parse-thing"
+            ),
+            "expected parse-thing call as operand"
         );
     }
 
