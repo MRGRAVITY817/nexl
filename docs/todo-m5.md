@@ -22,7 +22,7 @@
 
 ## Type Inference (`nexl-infer`)
 - [x] Cross-module type checking at import boundaries
-- [ ] `:performs` row validation against exported function signatures
+- [x] `:performs` row validation against exported function signatures
 
 ## Evaluation (`nexl-eval`)
 - [ ] Multi-file evaluation with module initialization order

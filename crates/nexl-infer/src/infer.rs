@@ -2012,6 +2012,53 @@ fn generalize(ty: &Type, env: &Env, state: &InferState) -> Scheme {
 }
 
 // ---------------------------------------------------------------------------
+// Module performs validation
+// ---------------------------------------------------------------------------
+
+/// Validate or infer a module's `:performs` list from exported function effects.
+///
+/// If `declared` is `Some`, every exported effect must be contained in it.
+/// If `declared` is `None`, the effect list is inferred as the union of all
+/// exported effects.
+pub fn validate_module_performs(
+    declared: Option<&[String]>,
+    export_effects: &HashMap<String, Vec<String>>,
+) -> Result<Vec<String>, TypeError> {
+    let mut inferred: HashSet<String> = HashSet::new();
+    for effects in export_effects.values() {
+        for effect in effects {
+            inferred.insert(effect.clone());
+        }
+    }
+
+    match declared {
+        Some(declared) => {
+            let declared_set: HashSet<String> = declared.iter().cloned().collect();
+            for (export, effects) in export_effects {
+                for effect in effects {
+                    if !declared_set.contains(effect) {
+                        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                            description: format!(
+                                "module :performs missing effect `{effect}` for export `{export}`"
+                            ),
+                        }));
+                    }
+                }
+            }
+            let mut normalized = declared.to_vec();
+            normalized.sort();
+            normalized.dedup();
+            Ok(normalized)
+        }
+        None => {
+            let mut normalized: Vec<String> = inferred.into_iter().collect();
+            normalized.sort();
+            Ok(normalized)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Check mode
 // ---------------------------------------------------------------------------
 
@@ -2951,6 +2998,7 @@ mod tests {
 
     use super::{
         DeftypeDecl, InferState, check, infer_def, infer_defn, parse_match, register_deftype, synth,
+        validate_module_performs,
     };
     use crate::Env;
     use nexl_ast::NodeKind;
@@ -3714,6 +3762,37 @@ mod tests {
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "math/sub"),
             "expected UnboundVariable(math/sub), got {err:?}"
         );
+    }
+
+    // -- Test 28 --
+    #[test]
+    fn module_performs_infers_union() {
+        let mut exports = HashMap::new();
+        exports.insert(
+            "start!".to_string(),
+            vec!["Net".to_string(), "IO".to_string()],
+        );
+        exports.insert("stop!".to_string(), vec!["IO".to_string()]);
+        let inferred = validate_module_performs(None, &exports).expect("validate failed");
+        assert_eq!(inferred, vec!["IO".to_string(), "Net".to_string()]);
+    }
+
+    // -- Test 29 --
+    #[test]
+    fn module_performs_rejects_missing_effect() {
+        let mut exports = HashMap::new();
+        exports.insert("start!".to_string(), vec!["Net".to_string()]);
+        let declared = vec!["IO".to_string()];
+        let err = validate_module_performs(Some(&declared), &exports).unwrap_err();
+        match err.kind {
+            TypeErrorKind::MalformedForm { description } => {
+                assert!(
+                    description.contains("Net") && description.contains("start!"),
+                    "unexpected error description: {description}"
+                );
+            }
+            other => panic!("expected MalformedForm, got {other:?}"),
+        }
     }
 
     // -----------------------------------------------------------------------
