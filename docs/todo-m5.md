@@ -5,7 +5,7 @@
 - [x] Add qualified symbol support (`alias/name`) to AST (already existed: `Atom::Symbol { ns }`)
 
 ## Reader (`nexl-reader`)
-- [ ] Parse `(module name :exports [...] :performs [...])` form
+- [x] Parse `(module name :exports [...] :performs [...])` form
 - [ ] Parse `(import mod :as alias)`, `:refer`, `:exclude`, `:rename` variants
 - [ ] Parse qualified symbols `foo/bar` as distinct from bare symbols
 

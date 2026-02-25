@@ -1,4 +1,13 @@
-use nexl_ast::{Atom, Comment, FileId, Node, NodeKind, Span};
+use nexl_ast::{
+    Atom,
+    Comment,
+    FileId,
+    ModuleDecl,
+    Node,
+    NodeKind,
+    Span,
+    parse_module_decl,
+};
 use nexl_errors::{Diagnostic, Label, Severity, codes};
 
 use crate::lexer::{Lexer, StringPart, Token, TokenKind};
@@ -20,6 +29,58 @@ pub fn read(src: &str, file_id: FileId) -> Result<Vec<Node>, Box<Diagnostic>> {
         src,
     };
     reader.read_all()
+}
+
+/// Parse the leading `(module ...)` form in `src` into a [`ModuleDecl`].
+///
+/// Errors if the file is empty or the first form is not a module declaration.
+pub fn read_module_decl(src: &str, file_id: FileId) -> Result<ModuleDecl, Box<Diagnostic>> {
+    let nodes = read(src, file_id)?;
+    let first = nodes.first().ok_or_else(|| {
+        let mut d = Diagnostic::new(Severity::Error, "expected a module declaration at top of file");
+        d.push_label(Label::new(
+            Span::point(file_id, 0),
+            "module form expected here",
+        ));
+        d.set_help("add a `(module <name> ...)` form as the first form in the file");
+        Box::new(d)
+    })?;
+
+    let NodeKind::List(items) = &first.kind else {
+        return Err(expected_module_decl(first.span, "first form is not a `module` declaration"));
+    };
+
+    let head = items
+        .first()
+        .ok_or_else(|| expected_module_decl(first.span, "module form expected here"))?;
+    match &head.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "module" => {}
+        _ => {
+            return Err(expected_module_decl(
+                head.span,
+                "first form is not a `module` declaration",
+            ));
+        }
+    }
+
+    match parse_module_decl(items) {
+        Ok(decl) => Ok(decl),
+        Err(err) => {
+            let mut d = Diagnostic::new(Severity::Error, err.description);
+            d.push_label(Label::new(first.span, "invalid module declaration"));
+            d.set_help(
+                "check the module declaration syntax, e.g. `(module my-app.core :exports [...] :performs [...])`",
+            );
+            Err(Box::new(d))
+        }
+    }
+}
+
+fn expected_module_decl(span: Span, label: &str) -> Box<Diagnostic> {
+    let mut d = Diagnostic::new(Severity::Error, "expected a module declaration at top of file");
+    d.push_label(Label::new(span, label));
+    d.set_help("add a `(module <name> ...)` form as the first form in the file");
+    Box::new(d)
 }
 
 // ---------------------------------------------------------------------------
@@ -1189,6 +1250,31 @@ mod tests {
                 ns: Some("my-mod".into()),
                 name: "my-fn".into()
             }),
+        );
+    }
+
+    // ── 16. module_decl_minimal ─────────────────────────────────────────────
+    #[test]
+    fn module_decl_minimal() {
+        let decl = read_module_decl("(module my-app.server)", fid()).expect("parse failed");
+        assert_eq!(decl.name, "my-app.server");
+        assert_eq!(decl.exports, None);
+        assert_eq!(decl.performs, None);
+    }
+
+    // ── 17. module_decl_with_exports_and_performs ───────────────────────────
+    #[test]
+    fn module_decl_with_exports_and_performs() {
+        let src = "(module my-app.server :performs [Net IO] :exports [start! stop!])";
+        let decl = read_module_decl(src, fid()).expect("parse failed");
+        assert_eq!(decl.name, "my-app.server");
+        assert_eq!(
+            decl.performs,
+            Some(vec!["Net".to_string(), "IO".to_string()])
+        );
+        assert_eq!(
+            decl.exports,
+            Some(vec!["start!".to_string(), "stop!".to_string()])
         );
     }
 
