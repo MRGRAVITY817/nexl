@@ -15,8 +15,8 @@
 
 ## Type Inference (`nexl-infer`)
 - [x] Infer vector literals as `(Vec a)` (homogeneous elements)
-- [ ] Infer map literals as `(Map k v)` (homogeneous keys and values)
-- [ ] Infer set literals as `(Set a)` (homogeneous elements)
+- [x] Infer map literals as `(Map k v)` (homogeneous keys and values)
+- [x] Infer set literals as `(Set a)` (homogeneous elements)
 - [x] Distinguish `(Tuple a b)` from `(Vec a)` based on context
 
 ## Collection Operations — Built-in Functions

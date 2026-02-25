@@ -90,6 +90,8 @@ pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, Typ
             }
         }
         NodeKind::Vector(items) => synth_vec_literal(items, env, state),
+        NodeKind::Map(entries) => synth_map_literal(entries, env, state),
+        NodeKind::Set(items) => synth_set_literal(items, env, state),
         _ => unimplemented!("synth: {:?}", node.kind),
     };
     // Attach this node's span to any error that doesn't already carry one.
@@ -828,6 +830,95 @@ fn synth_tuple_literal(
         }
     }
     Ok(Type::Tuple(elem_types))
+}
+
+/// Synthesize a type for a map literal `{:k v ...}` (homogeneous keys/values).
+fn synth_map_literal(
+    entries: &[(Node, Node)],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    if entries.is_empty() {
+        return Ok(Type::Map {
+            key: Box::new(state.fresh_var()),
+            val: Box::new(state.fresh_var()),
+        });
+    }
+
+    let (first_key, first_val) = &entries[0];
+    let mut key_ty = match synth(first_key, env, state) {
+        Ok(ty) => ty,
+        Err(e) => {
+            state.push_error(e);
+            state.fresh_var()
+        }
+    };
+    let mut val_ty = match synth(first_val, env, state) {
+        Ok(ty) => ty,
+        Err(e) => {
+            state.push_error(e);
+            state.fresh_var()
+        }
+    };
+
+    for (key_node, val_node) in &entries[1..] {
+        let kt = match synth(key_node, env, state) {
+            Ok(ty) => ty,
+            Err(e) => {
+                state.push_error(e);
+                state.fresh_var()
+            }
+        };
+        let vt = match synth(val_node, env, state) {
+            Ok(ty) => ty,
+            Err(e) => {
+                state.push_error(e);
+                state.fresh_var()
+            }
+        };
+        nexl_types::unify(&key_ty, &kt, &mut state.subst)?;
+        nexl_types::unify(&val_ty, &vt, &mut state.subst)?;
+        key_ty = state.subst.apply(&key_ty);
+        val_ty = state.subst.apply(&val_ty);
+    }
+
+    Ok(Type::Map {
+        key: Box::new(state.subst.apply(&key_ty)),
+        val: Box::new(state.subst.apply(&val_ty)),
+    })
+}
+
+/// Synthesize a type for a set literal `#{a b ...}` (homogeneous elements).
+fn synth_set_literal(
+    items: &[Node],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    if items.is_empty() {
+        return Ok(Type::Set(Box::new(state.fresh_var())));
+    }
+
+    let mut elem_ty = match synth(&items[0], env, state) {
+        Ok(ty) => ty,
+        Err(e) => {
+            state.push_error(e);
+            state.fresh_var()
+        }
+    };
+
+    for item in &items[1..] {
+        let ty = match synth(item, env, state) {
+            Ok(ty) => ty,
+            Err(e) => {
+                state.push_error(e);
+                state.fresh_var()
+            }
+        };
+        nexl_types::unify(&elem_ty, &ty, &mut state.subst)?;
+        elem_ty = state.subst.apply(&elem_ty);
+    }
+
+    Ok(Type::Set(Box::new(state.subst.apply(&elem_ty))))
 }
 
 /// Map an integer suffix to its fixed-width type.
@@ -2250,6 +2341,123 @@ mod tests {
         let (env, mut state) = empty();
         let node = Node::new(
             NodeKind::Vector(vec![int_node(1), atom_node(Atom::Bool(true))]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn synth_map_literal_keywords() {
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::Map(vec![
+                (
+                    atom_node(Atom::Keyword {
+                        ns: None,
+                        name: "a".into(),
+                    }),
+                    int_node(1),
+                ),
+                (
+                    atom_node(Atom::Keyword {
+                        ns: None,
+                        name: "b".into(),
+                    }),
+                    int_node(2),
+                ),
+            ]),
+            syn_span(),
+        );
+        assert_eq!(
+            synth(&node, &env, &mut state).unwrap(),
+            Type::Map {
+                key: Box::new(Type::Keyword),
+                val: Box::new(Type::Int),
+            }
+        );
+    }
+
+    #[test]
+    fn synth_map_literal_empty() {
+        let (env, mut state) = empty();
+        let node = Node::new(NodeKind::Map(vec![]), syn_span());
+        let ty = synth(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Map { key, val } => {
+                assert!(matches!(*key, Type::Var(_)));
+                assert!(matches!(*val, Type::Var(_)));
+            }
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_map_literal_key_mismatch() {
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::Map(vec![
+                (int_node(1), int_node(2)),
+                (atom_node(Atom::Bool(true)), int_node(3)),
+            ]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn synth_map_literal_value_mismatch() {
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::Map(vec![
+                (int_node(1), int_node(2)),
+                (int_node(3), atom_node(Atom::Bool(true))),
+            ]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::Mismatch { .. }),
+            "expected Mismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn synth_set_literal_ints() {
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::Set(vec![int_node(1), int_node(2), int_node(3)]),
+            syn_span(),
+        );
+        assert_eq!(
+            synth(&node, &env, &mut state).unwrap(),
+            Type::Set(Box::new(Type::Int))
+        );
+    }
+
+    #[test]
+    fn synth_set_literal_empty() {
+        let (env, mut state) = empty();
+        let node = Node::new(NodeKind::Set(vec![]), syn_span());
+        let ty = synth(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Set(elem) => assert!(matches!(*elem, Type::Var(_))),
+            other => panic!("expected Set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn synth_set_literal_mismatch() {
+        let (env, mut state) = empty();
+        let node = Node::new(
+            NodeKind::Set(vec![int_node(1), atom_node(Atom::Bool(true))]),
             syn_span(),
         );
         let err = synth(&node, &env, &mut state).unwrap_err();
