@@ -6,6 +6,7 @@ pub mod node;
 pub mod pattern;
 pub mod printer;
 pub mod span;
+pub mod try_catch;
 
 pub use assert::{AssertForm, AssertParseError, parse_assert_form};
 pub use effect::{EffectDecl, EffectOpDecl, EffectParseError, parse_effect_decl};
@@ -15,3 +16,4 @@ pub use node::{Atom, Comment, FloatSuffix, IntSuffix, Node, NodeKind};
 pub use pattern::{Pattern, PatternError, parse_pattern};
 pub use printer::{PrettyPrinter, PrintConfig};
 pub use span::{FileId, SourceLocation, Span};
+pub use try_catch::{TryCatchForm, TryParseError, parse_try_form};
