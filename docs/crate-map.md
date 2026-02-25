@@ -35,6 +35,13 @@ nexl-effects
 └── nexl-errors
 ```
 
+## M8 Crates
+
+```
+nexl-ir
+(no workspace-crate dependencies — standalone IR node types)
+```
+
 ## Planned (future milestones)
 
 ```
