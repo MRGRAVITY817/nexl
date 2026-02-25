@@ -1873,33 +1873,14 @@ pub fn infer_defn(
         }
     };
 
-    // Accept (defn name params body) — 4 elements
-    // or     (defn name params -> RetType body) — 6 elements.
-    let (param_node, ret_annotation, body_node) = match items.len() {
-        4 => (&items[2], None, &items[3]),
-        6 => {
-            let is_arrow = matches!(
-                &items[3].kind,
-                NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "->"
-            );
-            if !is_arrow {
-                return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                    description: "defn with 6 elements expects (defn name params -> RetType body)"
-                        .to_string(),
-                }));
-            }
-            let ret_ty = parse_type_expr(&items[4])?;
-            (&items[2], Some(ret_ty), &items[5])
-        }
-        n => {
-            return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                description: format!(
-                    "defn expects (defn name [params...] body) or \
-                     (defn name [params...] -> RetType body), got {n} elements"
-                ),
-            }));
-        }
-    };
+    if items.len() < 4 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "defn expects (defn name [params...] body), got {} elements",
+                items.len()
+            ),
+        }));
+    }
 
     // items[1] must be an unqualified symbol (the function name).
     let name = match &items[1].kind {
@@ -1910,6 +1891,98 @@ pub fn infer_defn(
             }));
         }
     };
+
+    let param_node = &items[2];
+    let mut idx = 3;
+
+    // Optional return annotation: -> RetType
+    let ret_annotation = if items.get(idx).is_some_and(|node| {
+        matches!(
+            &node.kind,
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "->"
+        )
+    }) {
+        if items.get(idx + 1).is_none() {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defn return annotation missing return type".to_string(),
+            }));
+        }
+        let ret_ty = parse_type_expr(&items[idx + 1])?;
+        idx += 2;
+        Some(ret_ty)
+    } else {
+        None
+    };
+
+    // Optional contract clauses: :requires / :ensures / :examples
+    let mut seen_requires = false;
+    let mut seen_ensures = false;
+    let mut seen_examples = false;
+    while idx + 1 < items.len() {
+        let clause = match &items[idx].kind {
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) => name.as_str(),
+            _ => break,
+        };
+        match clause {
+            "requires" => {
+                if seen_requires {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "defn has duplicate :requires clause".to_string(),
+                    }));
+                }
+                if !matches!(items[idx + 1].kind, NodeKind::Vector(_)) {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: ":requires must be followed by a vector".to_string(),
+                    }));
+                }
+                seen_requires = true;
+                idx += 2;
+            }
+            "ensures" => {
+                if seen_ensures {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "defn has duplicate :ensures clause".to_string(),
+                    }));
+                }
+                if !matches!(items[idx + 1].kind, NodeKind::Vector(_)) {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: ":ensures must be followed by a vector".to_string(),
+                    }));
+                }
+                seen_ensures = true;
+                idx += 2;
+            }
+            "examples" => {
+                if seen_examples {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "defn has duplicate :examples clause".to_string(),
+                    }));
+                }
+                if !matches!(items[idx + 1].kind, NodeKind::Vector(_)) {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: ":examples must be followed by a vector".to_string(),
+                    }));
+                }
+                seen_examples = true;
+                idx += 2;
+            }
+            _ => break,
+        }
+    }
+
+    let body_node = items.get(idx).ok_or_else(|| {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: "defn requires a body expression".to_string(),
+        })
+    })?;
+    if idx + 1 != items.len() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "defn expects a single body expression, got {} trailing forms",
+                items.len().saturating_sub(idx)
+            ),
+        }));
+    }
 
     // Parse params with optional `: Type` annotations (scan-style).
     let param_nodes = match &param_node.kind {
@@ -4359,6 +4432,41 @@ mod tests {
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
             "expected UnboundVariable(unknown), got {err:?}"
         );
+    }
+
+    // -- Test 6 (defn contracts) --
+    #[test]
+    fn infer_defn_allows_requires_clause() {
+        // (defn f [x] :requires [true] 42) → parses and infers
+        let (env, mut state) = empty();
+        let pvec = Node::new(NodeKind::Vector(vec![sym_node("x")]), syn_span());
+        let requires_kw = Node::new(
+            NodeKind::Atom(Atom::Keyword {
+                ns: None,
+                name: "requires".into(),
+            }),
+            syn_span(),
+        );
+        let requires_vec = Node::new(
+            NodeKind::Vector(vec![atom_node(Atom::Bool(true))]),
+            syn_span(),
+        );
+        let node = Node::new(
+            NodeKind::List(vec![
+                sym_node("defn"),
+                sym_node("f"),
+                pvec,
+                requires_kw,
+                requires_vec,
+                int_node(42),
+            ]),
+            syn_span(),
+        );
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        match ty {
+            Type::Fn { ret, .. } => assert_eq!(*ret, Type::Int),
+            other => panic!("expected Fn type, got {other:?}"),
+        }
     }
 
     // -- Test 7 (defn effects) --

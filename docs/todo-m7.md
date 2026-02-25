@@ -4,7 +4,7 @@
 - [x] Parse `panic` form
 - [x] Parse `assert!` and `assert-unreachable!` forms
 - [x] Parse `?` postfix operator (question-mark suffix on expressions)
-- [ ] Parse contract clauses (`:requires`, `:ensures`, `:examples`) on `defn`
+- [x] Parse contract clauses (`:requires`, `:ensures`, `:examples`) on `defn`
 - [ ] Parse `try`/`catch` form
 
 ## Types / Inference
