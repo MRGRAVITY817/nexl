@@ -9,7 +9,7 @@
 - [x] Extend type representation with effect rows
 - [x] Row unification and polymorphism (`! [E | r]`)
 - [x] Effect inference for function bodies
-- [ ] `handle` removes handled effects from rows
+- [x] `handle` removes handled effects from rows
 - [ ] Module `:performs` effect checking
 
 ## Effects / Runtime

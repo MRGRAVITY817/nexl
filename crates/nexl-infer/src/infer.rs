@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, NodeKind, Pattern, parse_pattern};
+use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, NodeKind, Pattern, parse_handle_form, parse_pattern};
 use nexl_types::{
     Constructor, EffectRow, Scheme, Subst, Type, TypeDef, TypeError, TypeErrorKind, TypeVar,
     TypeVarSupply,
@@ -168,6 +168,7 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("times") => synth_times(items, env, state),
         Some("for") => synth_for(items, env, state),
         Some("for!") => synth_for(items, env, state),
+        Some("handle") => synth_handle(items, env, state),
         _ => synth_application(items, env, state),
     }
 }
@@ -3121,6 +3122,68 @@ fn parse_type_name_or_adt(name: &str) -> Result<Type, TypeError> {
         }),
     }?;
     Ok(ty)
+}
+
+// ---------------------------------------------------------------------------
+// Handle form — `(handle [Effect ops...] body...)`
+// ---------------------------------------------------------------------------
+
+/// Synthesize the type of a `(handle [...] body...)` form.
+///
+/// Each effect named in the handler vector is removed from the body's effect
+/// row.  Residual (unhandled) effects propagate to the enclosing scope via
+/// `add_effects`.  The form's type is the type of the last body expression.
+fn synth_handle(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // 1. Parse the handle form.
+    let decl = parse_handle_form(items).map_err(|e| {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: e.description,
+        })
+    })?;
+
+    // 2. Collect the set of effect names being handled.
+    let handled: HashSet<String> = decl.effects.iter().map(|e| e.name.clone()).collect();
+
+    // 3. Infer handler operation bodies with fresh types for each param.
+    //    Errors are collected non-fatally so the body is still checked.
+    for handled_effect in &decl.effects {
+        for op in &handled_effect.operations {
+            let mut op_env = env.clone();
+            if op.has_resume {
+                let resume_ty = state.fresh_var();
+                op_env = op_env.extend("resume", Scheme::mono(resume_ty));
+            }
+            for param in &op.params {
+                let param_ty = state.fresh_var();
+                op_env = op_env.extend(param.clone(), Scheme::mono(param_ty));
+            }
+            for expr in &op.body {
+                if let Err(e) = synth(expr, &op_env, state) {
+                    state.push_error(e);
+                }
+            }
+        }
+    }
+
+    // 4. Infer the handle body in a fresh effect scope.
+    state.push_effect_scope();
+    let mut body_ty = Type::Unit;
+    for expr in &decl.body {
+        body_ty = synth(expr, env, state)?;
+    }
+    let body_effects = state.pop_effect_scope();
+
+    // 5. Remove handled effects; add residuals to the enclosing scope.
+    let resolved = state.subst.apply_effect_row(&body_effects);
+    let residual: Vec<String> = resolved
+        .effects
+        .into_iter()
+        .filter(|e| !handled.contains(e))
+        .collect();
+    let residual_row = EffectRow::new(residual, resolved.tail);
+    state.add_effects(&residual_row);
+
+    Ok(body_ty)
 }
 
 // ---------------------------------------------------------------------------
@@ -6694,6 +6757,303 @@ mod tests {
             state.errors.len(),
             2,
             "both unbound-var errors must be collected"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // handle form tests
+    // -----------------------------------------------------------------------
+
+    // Build `(handle [effect-name op-name [params...] op-body] body...)`.
+    // `handler_items` is the raw content of the handler vector.
+    fn handle_node(handler_items: Vec<Node>, body: Vec<Node>) -> Node {
+        let handler_vec = Node::new(NodeKind::Vector(handler_items), syn_span());
+        let mut items = vec![sym_node("handle"), handler_vec];
+        items.extend(body);
+        Node::new(NodeKind::List(items), syn_span())
+    }
+
+    // Build an operation handler: `(op-name [params...] body-expr)`.
+    fn op_handler_node(name: &str, params: Vec<&str>, body: Node) -> Node {
+        let pvec = Node::new(
+            NodeKind::Vector(params.iter().map(|p| sym_node(p)).collect()),
+            syn_span(),
+        );
+        Node::new(
+            NodeKind::List(vec![sym_node(name), pvec, body]),
+            syn_span(),
+        )
+    }
+
+    // -- Test 1 (handle) --
+    #[test]
+    fn synth_handle_single_effect_removed() {
+        // (defn f [] (handle [Console (print [s] s)] (print "hi")))
+        // print : (Fn [Str] -> Unit ! [Console])
+        // After handling Console the function should be pure.
+        let env = Env::new().extend(
+            "print",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: None,
+                },
+            }),
+        );
+        let handler_items = vec![
+            sym_node("Console"),
+            op_handler_node("print", vec!["s"], sym_node("s")),
+        ];
+        let body = app_node(sym_node("print"), vec![atom_node(Atom::Str("hi".into()))]);
+        let handle = handle_node(handler_items, vec![body]);
+        let node = defn_node("f", vec![], handle);
+        let mut state = InferState::new();
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow::empty(),
+            },
+            "Console should be removed; function should be pure"
+        );
+    }
+
+    // -- Test 2 (handle) --
+    #[test]
+    fn synth_handle_unhandled_effects_propagate() {
+        // (defn f [] (handle [Console (print [s] s)] (do (print "hi") (fetch "url"))))
+        // print: (Fn [Str] -> Unit ! [Console]), fetch: (Fn [Str] -> Str ! [Net])
+        // Console is handled; Net should remain in the result.
+        let env = Env::new()
+            .extend(
+                "print",
+                Scheme::mono(Type::Fn {
+                    params: vec![Type::Str],
+                    ret: Box::new(Type::Unit),
+                    effects: EffectRow {
+                        effects: vec!["Console".to_string()],
+                        tail: None,
+                    },
+                }),
+            )
+            .extend(
+                "fetch",
+                Scheme::mono(Type::Fn {
+                    params: vec![Type::Str],
+                    ret: Box::new(Type::Str),
+                    effects: EffectRow {
+                        effects: vec!["Net".to_string()],
+                        tail: None,
+                    },
+                }),
+            );
+        let handler_items = vec![
+            sym_node("Console"),
+            op_handler_node("print", vec!["s"], sym_node("s")),
+        ];
+        let body = do_node(vec![
+            app_node(sym_node("print"), vec![atom_node(Atom::Str("hi".into()))]),
+            app_node(sym_node("fetch"), vec![atom_node(Atom::Str("url".into()))]),
+        ]);
+        let handle = handle_node(handler_items, vec![body]);
+        let node = defn_node("f", vec![], handle);
+        let mut state = InferState::new();
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Str),
+                effects: EffectRow {
+                    effects: vec!["Net".to_string()],
+                    tail: None,
+                },
+            },
+            "Net should remain; Console should be removed"
+        );
+    }
+
+    // -- Test 3 (handle) --
+    #[test]
+    fn synth_handle_multiple_effects_all_removed() {
+        // (defn f [] (handle [Console (print [s] s) Net (fetch [url] "ok")]
+        //              (do (print "hi") (fetch "url"))))
+        // Both Console and Net are handled → pure function.
+        let env = Env::new()
+            .extend(
+                "print",
+                Scheme::mono(Type::Fn {
+                    params: vec![Type::Str],
+                    ret: Box::new(Type::Unit),
+                    effects: EffectRow {
+                        effects: vec!["Console".to_string()],
+                        tail: None,
+                    },
+                }),
+            )
+            .extend(
+                "fetch",
+                Scheme::mono(Type::Fn {
+                    params: vec![Type::Str],
+                    ret: Box::new(Type::Str),
+                    effects: EffectRow {
+                        effects: vec!["Net".to_string()],
+                        tail: None,
+                    },
+                }),
+            );
+        let handler_items = vec![
+            sym_node("Console"),
+            op_handler_node("print", vec!["s"], sym_node("s")),
+            sym_node("Net"),
+            op_handler_node("fetch", vec!["url"], atom_node(Atom::Str("ok".into()))),
+        ];
+        let body = do_node(vec![
+            app_node(sym_node("print"), vec![atom_node(Atom::Str("hi".into()))]),
+            app_node(sym_node("fetch"), vec![atom_node(Atom::Str("url".into()))]),
+        ]);
+        let handle = handle_node(handler_items, vec![body]);
+        let node = defn_node("f", vec![], handle);
+        let mut state = InferState::new();
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Str),
+                effects: EffectRow::empty(),
+            },
+            "both Console and Net handled; function should be pure"
+        );
+    }
+
+    // -- Test 4 (handle) --
+    #[test]
+    fn synth_handle_body_return_type() {
+        // (defn f [] (handle [Console (print [s] s)] 42))
+        // The body is 42 : Int; Console is handled (not performed here).
+        // Result type: (Fn [] -> Int ! [])
+        let env = Env::new().extend(
+            "print",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: None,
+                },
+            }),
+        );
+        let handler_items = vec![
+            sym_node("Console"),
+            op_handler_node("print", vec!["s"], sym_node("s")),
+        ];
+        let handle = handle_node(handler_items, vec![int_node(42)]);
+        let node = defn_node("f", vec![], handle);
+        let mut state = InferState::new();
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![],
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
+            },
+            "handle form should take its type from the body"
+        );
+    }
+
+    // -- Test 5 (handle) --
+    #[test]
+    fn synth_handle_malformed_missing_body() {
+        // (handle [Console (print [s] s)]) — no body → MalformedForm
+        let handler_items = vec![
+            sym_node("Console"),
+            op_handler_node("print", vec!["s"], sym_node("s")),
+        ];
+        let handler_vec = Node::new(NodeKind::Vector(handler_items), syn_span());
+        // Build list with only 2 items: `handle` + handler_vec (body missing)
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("handle"), handler_vec]),
+            syn_span(),
+        );
+        let (env, mut state) = empty();
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 6 (handle) --
+    #[test]
+    fn synth_handle_op_params_are_bound() {
+        // Handler op body references its own parameter `s` — must not produce
+        // UnboundVariable.  If params were not bound, synth would push an error.
+        let env = Env::new().extend(
+            "print",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: None,
+                },
+            }),
+        );
+        let handler_items = vec![
+            sym_node("Console"),
+            // op body is `s` — references the bound parameter
+            op_handler_node("print", vec!["s"], sym_node("s")),
+        ];
+        let body = app_node(sym_node("print"), vec![atom_node(Atom::Str("hi".into()))]);
+        let handle = handle_node(handler_items, vec![body]);
+        let node = defn_node("f", vec![], handle);
+        let mut state = InferState::new();
+        infer_defn(&node, &env, &mut state).unwrap();
+        assert!(
+            state.errors.is_empty(),
+            "no errors expected; params must be bound in op body"
+        );
+    }
+
+    // -- Test 7 (handle) --
+    #[test]
+    fn synth_handle_continuation_resume_bound() {
+        // Handler with `resume` as first param — resume must be in scope.
+        // (defn f [] (handle [Console (print [resume s] (resume 42))] (print "hi")))
+        let env = Env::new().extend(
+            "print",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: None,
+                },
+            }),
+        );
+        let handler_items = vec![
+            sym_node("Console"),
+            // continuation form: `resume` is first param
+            op_handler_node(
+                "print",
+                vec!["resume", "s"],
+                app_node(sym_node("resume"), vec![int_node(42)]),
+            ),
+        ];
+        let body = app_node(sym_node("print"), vec![atom_node(Atom::Str("hi".into()))]);
+        let handle = handle_node(handler_items, vec![body]);
+        let node = defn_node("f", vec![], handle);
+        let mut state = InferState::new();
+        infer_defn(&node, &env, &mut state).unwrap();
+        assert!(
+            state.errors.is_empty(),
+            "resume must be bound; no errors expected"
         );
     }
 }
