@@ -48,6 +48,10 @@ pub fn standard_env() -> Rc<Env> {
     env.define("vals", native("vals", vals));
     env.define("entries", native("entries", entries));
     env.define("contains?", native("contains?", contains));
+    env.define("add", native("add", set_add));
+    env.define("union", native("union", union));
+    env.define("intersection", native("intersection", intersection));
+    env.define("difference", native("difference", difference));
 
     env
 }
@@ -362,7 +366,8 @@ fn count(args: &[Value]) -> Result<Value, String> {
         Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
         Value::Vec(items) => Ok(Value::Int(items.len() as i64)),
         Value::Map(entries) => Ok(Value::Int(entries.len() as i64)),
-        other => Err(type_mismatch("count", "Str, Vec, or Map", other)),
+        Value::Set(items) => Ok(Value::Int(items.len() as i64)),
+        other => Err(type_mismatch("count", "Str, Vec, Map, or Set", other)),
     }
 }
 
@@ -528,7 +533,15 @@ fn remove(args: &[Value]) -> Result<Value, String> {
                 .collect();
             Ok(Value::Map(Rc::new(next)))
         }
-        other => Err(type_mismatch("remove", "Map", other)),
+        Value::Set(items) => {
+            let next: Vec<Value> = items
+                .iter()
+                .filter(|item| *item != key)
+                .cloned()
+                .collect();
+            Ok(Value::Set(Rc::new(next)))
+        }
+        other => Err(type_mismatch("remove", "Map or Set", other)),
     }
 }
 
@@ -572,8 +585,85 @@ fn entries(args: &[Value]) -> Result<Value, String> {
 fn contains(args: &[Value]) -> Result<Value, String> {
     let (coll, key) = two_args("contains?", args)?;
     match coll {
-        Value::Map(entries) => Ok(Value::Bool(entries.iter().any(|(entry_key, _)| entry_key == key))),
-        other => Err(type_mismatch("contains?", "Map", other)),
+        Value::Map(entries) => Ok(Value::Bool(
+            entries.iter().any(|(entry_key, _)| entry_key == key),
+        )),
+        Value::Set(items) => Ok(Value::Bool(items.iter().any(|item| item == key))),
+        other => Err(type_mismatch("contains?", "Map or Set", other)),
+    }
+}
+
+/// `(add s x)` — add element to a set if missing.
+fn set_add(args: &[Value]) -> Result<Value, String> {
+    let (coll, value) = two_args("add", args)?;
+    match coll {
+        Value::Set(items) => {
+            if items.iter().any(|item| item == value) {
+                return Ok(Value::Set(items.clone()));
+            }
+            let mut next = items.as_ref().clone();
+            next.push(value.clone());
+            Ok(Value::Set(Rc::new(next)))
+        }
+        other => Err(type_mismatch("add", "Set", other)),
+    }
+}
+
+/// `(union a b)` — set union.
+fn union(args: &[Value]) -> Result<Value, String> {
+    let (left, right) = two_args("union", args)?;
+    match (left, right) {
+        (Value::Set(left_items), Value::Set(right_items)) => {
+            let mut out = left_items.as_ref().clone();
+            for item in right_items.iter() {
+                if !out.iter().any(|existing| existing == item) {
+                    out.push(item.clone());
+                }
+            }
+            Ok(Value::Set(Rc::new(out)))
+        }
+        (Value::Set(_), other) => Err(type_mismatch("union", "Set", other)),
+        (other, _) => Err(type_mismatch("union", "Set", other)),
+    }
+}
+
+/// `(intersection a b)` — set intersection.
+fn intersection(args: &[Value]) -> Result<Value, String> {
+    let (left, right) = two_args("intersection", args)?;
+    match (left, right) {
+        (Value::Set(left_items), Value::Set(right_items)) => {
+            let mut out = Vec::new();
+            for item in left_items.iter() {
+                if right_items.iter().any(|other| other == item)
+                    && !out.iter().any(|existing| existing == item)
+                {
+                    out.push(item.clone());
+                }
+            }
+            Ok(Value::Set(Rc::new(out)))
+        }
+        (Value::Set(_), other) => Err(type_mismatch("intersection", "Set", other)),
+        (other, _) => Err(type_mismatch("intersection", "Set", other)),
+    }
+}
+
+/// `(difference a b)` — set difference (elements in `a` not in `b`).
+fn difference(args: &[Value]) -> Result<Value, String> {
+    let (left, right) = two_args("difference", args)?;
+    match (left, right) {
+        (Value::Set(left_items), Value::Set(right_items)) => {
+            let mut out = Vec::new();
+            for item in left_items.iter() {
+                if !right_items.iter().any(|other| other == item)
+                    && !out.iter().any(|existing| existing == item)
+                {
+                    out.push(item.clone());
+                }
+            }
+            Ok(Value::Set(Rc::new(out)))
+        }
+        (Value::Set(_), other) => Err(type_mismatch("difference", "Set", other)),
+        (other, _) => Err(type_mismatch("difference", "Set", other)),
     }
 }
 

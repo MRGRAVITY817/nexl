@@ -2825,6 +2825,57 @@ mod tests {
         );
     }
 
+    // --- collection builtin tests (Set) ---
+
+    #[test]
+    fn set_add_and_remove() {
+        assert_eq!(
+            eval_str(r#"(add #{1 2} 3)"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+        assert_eq!(
+            eval_str(r#"(add #{1 2} 2)"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        );
+        assert_eq!(
+            eval_str(r#"(remove #{1 2 3} 2)"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(1), Value::Int(3)]))
+        );
+        assert_eq!(
+            eval_str(r#"(remove #{1 2 3} 4)"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn set_contains_and_count() {
+        assert_eq!(
+            eval_str(r#"(contains? #{1 2} 1)"#).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str(r#"(contains? #{1 2} 3)"#).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(eval_str(r#"(count #{1 2 3})"#).unwrap(), Value::Int(3));
+    }
+
+    #[test]
+    fn set_union_intersection_difference() {
+        assert_eq!(
+            eval_str(r#"(union #{1 2} #{2 3})"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+        assert_eq!(
+            eval_str(r#"(intersection #{1 2} #{2 3})"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(2)]))
+        );
+        assert_eq!(
+            eval_str(r#"(difference #{1 2} #{2 3})"#).unwrap(),
+            Value::Set(Rc::new(vec![Value::Int(1)]))
+        );
+    }
+
     // --- integration test ---
 
     #[test]
