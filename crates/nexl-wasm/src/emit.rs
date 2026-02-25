@@ -1,12 +1,34 @@
 //! Core WASM emitter — walks the ANF IR and produces a WASM binary module.
+//!
+//! # Memory model (first pass)
+//!
+//! - Linear memory: 1 page (64 KiB).
+//! - `__heap_ptr` (mutable global `i32`, index 0): bump allocator pointer,
+//!   starts at offset 1024.
+//! - Closures are allocated in linear memory as a contiguous array of `i64`
+//!   words: `[func_id, capture_0, capture_1, ...]`.
+//! - Direct function calls use WASM `call`.  Indirect closure calls are
+//!   deferred to a later task.
 
 use std::collections::HashMap;
 
 use nexl_ir::{Atom, Block, FuncDef, Module, Rhs, Tail, VarId};
 use wasm_encoder::{
-    BlockType, CodeSection, ExportKind, ExportSection, Function, FunctionSection, Instruction,
-    TypeSection, ValType,
+    BlockType, CodeSection, ConstExpr, ExportKind, ExportSection, Function, FunctionSection,
+    GlobalSection, GlobalType, Instruction, MemArg, MemorySection, MemoryType, TypeSection,
+    ValType,
 };
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/// WASM value type used for all Nexl values in this first-pass backend.
+const DEFAULT_VAL: ValType = ValType::I64;
+
+/// Index of the `__heap_ptr` mutable global (bump allocator).
+const HEAP_PTR: u32 = 0;
+
+/// Initial heap base (offset 1024 in linear memory).
+const HEAP_BASE: i32 = 1024;
 
 // ── Error type ───────────────────────────────────────────────────────────────
 
@@ -22,21 +44,9 @@ impl std::fmt::Display for EmitError {
 
 impl std::error::Error for EmitError {}
 
-// ── WASM type mapping ────────────────────────────────────────────────────────
-
-/// The WASM value type used for all Nexl values in this first-pass backend.
-///
-/// In M8 we treat every value as `i64` (integers, bools as 0/1, unit as 0).
-/// Float-typed values will use `f64` in a later pass once type info is
-/// threaded into the IR.
-const DEFAULT_VAL: ValType = ValType::I64;
-
 // ── Emitter ──────────────────────────────────────────────────────────────────
 
 /// Stateless WASM emitter.
-///
-/// Create one with [`Emitter::new`] and call [`Emitter::emit`] to convert an
-/// IR [`Module`] into a WASM binary blob.
 pub struct Emitter;
 
 impl Default for Emitter {
@@ -51,9 +61,7 @@ impl Emitter {
         Emitter
     }
 
-    /// Emit a WASM binary module from an IR [`Module`].
-    ///
-    /// Returns the raw bytes of a valid WebAssembly core module.
+    /// Emit a WASM binary core module from an IR [`Module`].
     pub fn emit(&self, module: &Module) -> Result<Vec<u8>, EmitError> {
         let mut wasm = wasm_encoder::Module::new();
 
@@ -62,7 +70,8 @@ impl Emitter {
         }
 
         // ── Type section ────────────────────────────────────────────────────
-        // One type entry per function: all params + result are DEFAULT_VAL.
+        // One type entry per function (duplicates are fine for correctness;
+        // de-duplication is an optimisation deferred to later).
         let mut types = TypeSection::new();
         for func in &module.funcs {
             let params: Vec<ValType> = func.params.iter().map(|_| DEFAULT_VAL).collect();
@@ -76,6 +85,25 @@ impl Emitter {
             funcs_section.function(type_idx as u32);
         }
         wasm.section(&funcs_section);
+
+        // ── Memory section (1 page = 64 KiB) ─────────────────────────────────
+        let mut memory = MemorySection::new();
+        memory.memory(MemoryType {
+            minimum: 1,
+            maximum: None,
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
+        wasm.section(&memory);
+
+        // ── Global section (__heap_ptr at global index 0) ────────────────────
+        let mut globals = GlobalSection::new();
+        globals.global(
+            GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            &ConstExpr::i32_const(HEAP_BASE),
+        );
+        wasm.section(&globals);
 
         // ── Export section (named defns become exports) ──────────────────────
         let named: Vec<(usize, &FuncDef)> = module
@@ -109,8 +137,6 @@ impl Emitter {
 // ── Function emitter ─────────────────────────────────────────────────────────
 
 fn emit_func(func: &FuncDef) -> Result<Function, EmitError> {
-    // Assign WASM local indices to every VarId used in this function.
-    // Parameters occupy indices 0..params.len(); let-binds follow.
     let mut local_map: HashMap<VarId, u32> = HashMap::new();
     let mut next_local = 0u32;
 
@@ -121,11 +147,7 @@ fn emit_func(func: &FuncDef) -> Result<Function, EmitError> {
     collect_bind_vars(&func.body, &mut local_map, &mut next_local);
 
     let num_extra = next_local - func.params.len() as u32;
-    let locals = if num_extra > 0 {
-        vec![(num_extra, DEFAULT_VAL)]
-    } else {
-        vec![]
-    };
+    let locals = if num_extra > 0 { vec![(num_extra, DEFAULT_VAL)] } else { vec![] };
 
     let mut wasm_func = Function::new(locals);
     emit_block(&func.body, &local_map, &mut wasm_func)?;
@@ -134,8 +156,6 @@ fn emit_func(func: &FuncDef) -> Result<Function, EmitError> {
     Ok(wasm_func)
 }
 
-/// Recursively collect all let-bind VarIds so every local has an index
-/// before we start emitting instructions.
 fn collect_bind_vars(block: &Block, local_map: &mut HashMap<VarId, u32>, next: &mut u32) {
     for bind in &block.binds {
         local_map.entry(bind.var).or_insert_with(|| {
@@ -158,7 +178,7 @@ fn collect_bind_vars(block: &Block, local_map: &mut HashMap<VarId, u32>, next: &
     }
 }
 
-// ── Block / tail / atom emission ─────────────────────────────────────────────
+// ── Block / tail / rhs / atom ─────────────────────────────────────────────────
 
 fn emit_block(
     block: &Block,
@@ -182,8 +202,7 @@ fn emit_tail(
         Tail::Return(atom) => emit_atom(atom, local_map, func),
         Tail::If { cond, then_block, else_block } => {
             emit_atom(cond, local_map, func)?;
-            // Condition is Bool (i32 1/0); WASM `if` expects an i32.
-            // Since we store bools as i64(1)/i64(0), we need to convert.
+            // Bool is stored as i64 (1/0); WASM `if` expects i32.
             func.instruction(&Instruction::I32WrapI64);
             func.instruction(&Instruction::If(BlockType::Result(DEFAULT_VAL)));
             emit_block(then_block, local_map, func)?;
@@ -200,7 +219,6 @@ fn emit_tail(
             for arg in args {
                 emit_atom(arg, local_map, func)?;
             }
-            // For now emit as a regular call (TailCall optimisation comes later).
             emit_call_atom(f_atom, local_map, func)
         }
         Tail::Match { .. } => Err(EmitError(
@@ -222,16 +240,68 @@ fn emit_rhs(
             }
             emit_call_atom(f_atom, local_map, func)
         }
-        Rhs::MakeClosure { .. } => Err(EmitError(
-            "closure codegen not yet implemented".to_string(),
-        )),
-        Rhs::MakeTuple { .. } => Err(EmitError(
-            "ADT codegen not yet implemented".to_string(),
-        )),
-        Rhs::Project { .. } => Err(EmitError(
-            "field projection codegen not yet implemented".to_string(),
-        )),
+        Rhs::MakeClosure { func_id, captures } => {
+            emit_make_closure(func_id.0, captures, local_map, func)
+        }
+        Rhs::MakeTuple { .. } => {
+            Err(EmitError("ADT codegen not yet implemented".to_string()))
+        }
+        Rhs::Project { .. } => {
+            Err(EmitError("field projection codegen not yet implemented".to_string()))
+        }
     }
+}
+
+/// Emit instructions that allocate a closure env struct in linear memory and
+/// leave a pointer to it (as `i64`) on the WASM stack.
+///
+/// Layout: `[func_id: i64, capture_0: i64, capture_1: i64, ...]`
+///
+/// Uses a bump allocator: mutable global `__heap_ptr` (index 0).
+fn emit_make_closure(
+    func_id_u32: u32,
+    captures: &[(VarId, Atom)],
+    local_map: &HashMap<VarId, u32>,
+    func: &mut Function,
+) -> Result<(), EmitError> {
+    let num_slots = 1 + captures.len(); // 1 for func_id
+    let size = (num_slots * 8) as i32;
+
+    // ── Bump heap pointer ────────────────────────────────────────────────────
+    // __heap_ptr += size
+    func.instruction(&Instruction::GlobalGet(HEAP_PTR));
+    func.instruction(&Instruction::I32Const(size));
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::GlobalSet(HEAP_PTR));
+
+    // Helper: emit `closure_ptr = __heap_ptr - size` (i32 on stack).
+    let push_closure_ptr = |f: &mut Function| {
+        f.instruction(&Instruction::GlobalGet(HEAP_PTR));
+        f.instruction(&Instruction::I32Const(size));
+        f.instruction(&Instruction::I32Sub);
+    };
+
+    // ── Store func_id at offset 0 ─────────────────────────────────────────
+    push_closure_ptr(func);
+    func.instruction(&Instruction::I64Const(func_id_u32 as i64));
+    func.instruction(&Instruction::I64Store(MemArg { offset: 0, align: 3, memory_index: 0 }));
+
+    // ── Store each capture value at offset 8, 16, … ──────────────────────
+    for (slot, (_, capture_atom)) in captures.iter().enumerate() {
+        push_closure_ptr(func);
+        emit_atom(capture_atom, local_map, func)?;
+        func.instruction(&Instruction::I64Store(MemArg {
+            offset: 8 + (slot as u64) * 8,
+            align: 3,
+            memory_index: 0,
+        }));
+    }
+
+    // ── Result: closure_ptr as i64 ───────────────────────────────────────
+    push_closure_ptr(func);
+    func.instruction(&Instruction::I64ExtendI32U);
+
+    Ok(())
 }
 
 fn emit_atom(
@@ -240,41 +310,25 @@ fn emit_atom(
     func: &mut Function,
 ) -> Result<(), EmitError> {
     match atom {
-        Atom::Int(n) => {
-            func.instruction(&Instruction::I64Const(*n));
-            Ok(())
-        }
-        Atom::Float(f) => {
-            func.instruction(&Instruction::F64Const((*f).into()));
-            Ok(())
-        }
+        Atom::Int(n) => { func.instruction(&Instruction::I64Const(*n)); Ok(()) }
+        Atom::Float(f) => { func.instruction(&Instruction::F64Const((*f).into())); Ok(()) }
         Atom::Bool(b) => {
             func.instruction(&Instruction::I64Const(if *b { 1 } else { 0 }));
             Ok(())
         }
-        Atom::Unit => {
-            func.instruction(&Instruction::I64Const(0));
-            Ok(())
-        }
+        Atom::Unit => { func.instruction(&Instruction::I64Const(0)); Ok(()) }
         Atom::Var(var) => {
             let idx = local_idx(*var, local_map)?;
             func.instruction(&Instruction::LocalGet(idx));
             Ok(())
         }
-        Atom::Str(_) => Err(EmitError(
-            "string literals not yet supported in codegen".to_string(),
-        )),
+        Atom::Str(_) => Err(EmitError("string literals not yet supported in codegen".to_string())),
         Atom::FuncRef(fid) => {
-            // Will be used for direct calls; not a push-to-stack operation in WASM.
             Err(EmitError(format!("bare FuncRef({}) cannot be an atom value", fid.0)))
         }
     }
 }
 
-/// Emit a direct-call instruction for a callee atom.
-///
-/// Only [`Atom::FuncRef`] is supported for now (direct calls); closure
-/// dispatch via `Atom::Var` requires `call_indirect` and is deferred.
 fn emit_call_atom(
     f_atom: &Atom,
     _local_map: &HashMap<VarId, u32>,
@@ -286,15 +340,17 @@ fn emit_call_atom(
             Ok(())
         }
         _ => Err(EmitError(
-            "indirect calls through closures not yet implemented".to_string(),
+            "indirect calls through closures not yet implemented (use FuncRef for direct calls)"
+                .to_string(),
         )),
     }
 }
 
 fn local_idx(var: VarId, local_map: &HashMap<VarId, u32>) -> Result<u32, EmitError> {
-    local_map.get(&var).copied().ok_or_else(|| {
-        EmitError(format!("unresolved local variable VarId({})", var.0))
-    })
+    local_map
+        .get(&var)
+        .copied()
+        .ok_or_else(|| EmitError(format!("unresolved local variable VarId({})", var.0)))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -346,8 +402,7 @@ mod tests {
     fn emit_single_literal_func() {
         let bytes = emit("(defn answer [] 42)");
         assert_eq!(&bytes[..4], &WASM_MAGIC);
-        // Must have at least the header + some sections
-        assert!(bytes.len() > 8, "non-trivial WASM for a function");
+        assert!(bytes.len() > 8);
     }
 
     // ─── 5. Single param function ────────────────────────────────────────────
@@ -377,7 +432,6 @@ mod tests {
     // ─── 8. if branch ────────────────────────────────────────────────────────
     #[test]
     fn emit_if_branch() {
-        // choose(b): if b then 10 else 20 — exercises Tail::If codegen
         let bytes = emit("(defn choose [b] (if b 10 20))");
         assert_eq!(&bytes[..4], &WASM_MAGIC);
         assert!(bytes.len() > 8);
@@ -386,7 +440,6 @@ mod tests {
     // ─── 9. Direct inter-function call ───────────────────────────────────────
     #[test]
     fn emit_direct_call() {
-        // double calls identity — exercises Rhs::Call with Atom::FuncRef
         let bytes = emit("(defn identity [x] x)\n(defn double [x] (identity x))");
         assert_eq!(&bytes[..4], &WASM_MAGIC);
         assert!(bytes.len() > 8);
@@ -396,9 +449,44 @@ mod tests {
     #[test]
     fn emit_exports_named_function() {
         let bytes = emit("(defn my-answer [] 42)");
-        // The function name should appear literally in the export section.
         let name_bytes = b"my-answer";
         let found = bytes.windows(name_bytes.len()).any(|w| w == name_bytes);
         assert!(found, "export name 'my-answer' not found in WASM bytes");
+    }
+
+    // ─── 11. Closure creation (with capture) ─────────────────────────────────
+    #[test]
+    fn emit_closure_creation() {
+        // outer f captures y and wraps it in a fn — tests MakeClosure codegen
+        let bytes = emit("(defn f [y] (fn [x] y))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 12. Closure with no captures ────────────────────────────────────────
+    #[test]
+    fn emit_closure_no_captures() {
+        let bytes = emit("(defn f [] (fn [x] x))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 13. Closure multiple captures ───────────────────────────────────────
+    #[test]
+    fn emit_multi_capture_closure() {
+        // captures both a and b
+        let bytes = emit("(defn f [a b] (fn [x] a))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 14. Module with memory section ──────────────────────────────────────
+    #[test]
+    fn emit_module_has_memory_section() {
+        // Any non-empty module should include a memory section (for closures)
+        // Memory section id = 0x05
+        let bytes = emit("(defn f [] 1)");
+        let has_memory_marker = bytes.windows(2).any(|w| w == [0x05, 0x01]);
+        assert!(has_memory_marker, "expected memory section in WASM bytes");
     }
 }
