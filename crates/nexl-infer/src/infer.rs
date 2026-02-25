@@ -1576,12 +1576,9 @@ fn synth_atom(atom: &Atom, env: &Env, state: &mut InferState) -> Result<Type, Ty
         Atom::Unit => Ok(Type::Unit),
         Atom::Symbol { ns: None, name } => synth_var(name, env, state),
         Atom::Symbol {
-            ns: Some(_),
-            name: _,
-        } => {
-            // Qualified symbols (module-prefixed) are not yet supported.
-            unimplemented!("qualified symbol lookup")
-        }
+            ns: Some(alias),
+            name,
+        } => synth_qualified_var(alias, name, env, state),
     }
 }
 
@@ -1759,6 +1756,21 @@ fn synth_var(name: &str, env: &Env, state: &mut InferState) -> Result<Type, Type
         Some(scheme) => Ok(scheme.instantiate(&mut state.supply)),
         None => Err(TypeError::new(TypeErrorKind::UnboundVariable {
             name: name.to_string(),
+        })),
+    }
+}
+
+/// Synthesize the type of a qualified variable `alias/name`.
+fn synth_qualified_var(
+    alias: &str,
+    name: &str,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    match env.lookup_qualified(alias, name) {
+        Some(scheme) => Ok(scheme.instantiate(&mut state.supply)),
+        None => Err(TypeError::new(TypeErrorKind::UnboundVariable {
+            name: format!("{alias}/{name}"),
         })),
     }
 }
@@ -2932,6 +2944,8 @@ fn parse_type_name_or_adt(name: &str) -> Result<Type, TypeError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use nexl_ast::{Atom, FileId, FloatSuffix, IntSuffix, Node, Pattern, Span};
     use nexl_types::{Constructor, Scheme, Type, TypeDef, TypeErrorKind, TypeVar};
 
@@ -3027,6 +3041,13 @@ mod tests {
     fn sym_node(name: &str) -> Node {
         atom_node(Atom::Symbol {
             ns: None,
+            name: name.to_string(),
+        })
+    }
+
+    fn qualified_sym_node(alias: &str, name: &str) -> Node {
+        atom_node(Atom::Symbol {
+            ns: Some(alias.to_string()),
             name: name.to_string(),
         })
     }
@@ -3655,6 +3676,43 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "y"),
             "expected UnboundVariable(y), got {err:?}"
+        );
+    }
+
+    // -- Test 26 --
+    #[test]
+    fn synth_var_qualified() {
+        let mut exports = HashMap::new();
+        exports.insert(
+            "add".to_string(),
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Int, Type::Int],
+                ret: Box::new(Type::Int),
+            }),
+        );
+        let env = Env::new().extend_module("math", exports);
+        let mut state = InferState::new();
+        let ty = synth(&qualified_sym_node("math", "add"), &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![Type::Int, Type::Int],
+                ret: Box::new(Type::Int),
+            }
+        );
+    }
+
+    // -- Test 27 --
+    #[test]
+    fn synth_var_qualified_unknown() {
+        let mut exports = HashMap::new();
+        exports.insert("add".to_string(), Scheme::mono(Type::Int));
+        let env = Env::new().extend_module("math", exports);
+        let mut state = InferState::new();
+        let err = synth(&qualified_sym_node("math", "sub"), &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "math/sub"),
+            "expected UnboundVariable(math/sub), got {err:?}"
         );
     }
 

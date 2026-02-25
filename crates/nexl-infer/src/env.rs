@@ -35,6 +35,7 @@ pub struct Env {
     type_defs: HashMap<String, TypeDef>,
     record_defs: HashMap<String, RecordDef>,
     constructors: HashMap<String, CtorDef>,
+    module_bindings: HashMap<String, HashMap<String, Scheme>>,
 }
 
 impl Env {
@@ -76,12 +77,37 @@ impl Env {
             type_defs: self.type_defs.clone(),
             record_defs: self.record_defs.clone(),
             constructors: self.constructors.clone(),
+            module_bindings: self.module_bindings.clone(),
         }
     }
 
     /// Look up `name` in the environment.
     pub fn lookup(&self, name: &str) -> Option<&Scheme> {
         self.bindings.get(name)
+    }
+
+    /// Extend the environment with an imported module alias.
+    pub fn extend_module(
+        &self,
+        alias: impl Into<String>,
+        exports: HashMap<String, Scheme>,
+    ) -> Self {
+        let mut module_bindings = self.module_bindings.clone();
+        module_bindings.insert(alias.into(), exports);
+        Self {
+            bindings: self.bindings.clone(),
+            type_defs: self.type_defs.clone(),
+            record_defs: self.record_defs.clone(),
+            constructors: self.constructors.clone(),
+            module_bindings,
+        }
+    }
+
+    /// Look up a qualified name `alias/name` in imported module bindings.
+    pub fn lookup_qualified(&self, alias: &str, name: &str) -> Option<&Scheme> {
+        self.module_bindings
+            .get(alias)
+            .and_then(|exports| exports.get(name))
     }
 
     /// Return a new environment with `typedef` added, and its constructors registered.
@@ -131,6 +157,7 @@ impl Env {
             type_defs,
             record_defs: self.record_defs.clone(),
             constructors,
+            module_bindings: self.module_bindings.clone(),
         }
     }
 
@@ -162,6 +189,7 @@ impl Env {
             type_defs: self.type_defs.clone(),
             record_defs,
             constructors: self.constructors.clone(),
+            module_bindings: self.module_bindings.clone(),
         }
     }
 
@@ -194,6 +222,16 @@ impl Env {
             for tv in applied_body.free_vars() {
                 if !scheme.forall.contains(&tv) {
                     result.insert(tv);
+                }
+            }
+        }
+        for exports in self.module_bindings.values() {
+            for scheme in exports.values() {
+                let applied_body = subst.apply(&scheme.body);
+                for tv in applied_body.free_vars() {
+                    if !scheme.forall.contains(&tv) {
+                        result.insert(tv);
+                    }
                 }
             }
         }
