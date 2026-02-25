@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nexl_types::{Constructor, Scheme, Subst, Type, TypeDef, TypeVar};
+use nexl_types::{Constructor, EffectRow, Scheme, Subst, Type, TypeDef, TypeVar};
 
 /// A record type definition: name, type parameters, and fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +141,7 @@ impl Env {
                         name: type_name.clone(),
                         args: adt_args.clone(),
                     }),
+                    effects: EffectRow::empty(),
                 }
             };
             bindings.insert(
@@ -180,6 +181,7 @@ impl Env {
                 body: Type::Fn {
                     params: vec![record_ty.clone()],
                     ret: Box::new(record_ty),
+                    effects: EffectRow::empty(),
                 },
             },
         );
@@ -241,7 +243,7 @@ impl Env {
 
 #[cfg(test)]
 mod tests {
-    use nexl_types::{Constructor, Scheme, Type, TypeDef, TypeVar};
+    use nexl_types::{Constructor, EffectRow, Scheme, Type, TypeDef, TypeVar};
 
     use super::{Env, RecordDef};
 
@@ -337,6 +339,7 @@ mod tests {
             body: Type::Fn {
                 params: vec![Type::Var(t0)],
                 ret: Box::new(Type::Var(t0)),
+                effects: EffectRow::empty(),
             },
         };
         let env = Env::new().extend("id", scheme);
@@ -439,6 +442,7 @@ mod tests {
                     name: "Option".to_string(),
                     args: vec![Type::Var(t0)],
                 }),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -472,6 +476,7 @@ mod tests {
             Type::Fn {
                 params: vec![record_ty.clone()],
                 ret: Box::new(record_ty),
+                effects: EffectRow::empty(),
             }
         );
     }

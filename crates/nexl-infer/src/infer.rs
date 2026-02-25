@@ -6,7 +6,8 @@ use std::collections::{HashMap, HashSet};
 
 use nexl_ast::{Atom, FloatSuffix, IntSuffix, Node, NodeKind, Pattern, parse_pattern};
 use nexl_types::{
-    Constructor, Scheme, Subst, Type, TypeDef, TypeError, TypeErrorKind, TypeVar, TypeVarSupply,
+    Constructor, EffectRow, Scheme, Subst, Type, TypeDef, TypeError, TypeErrorKind, TypeVar,
+    TypeVarSupply,
 };
 
 use crate::Env;
@@ -502,6 +503,7 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
     let expected_fn = Type::Fn {
         params: arg_types.clone(),
         ret: Box::new(ret_var.clone()),
+        effects: EffectRow::empty(),
     };
     nexl_types::unify(&callee_ty, &expected_fn, &mut state.subst)
         .map_err(|e| arithmetic_help(e, head_sym(items), &arg_types))?;
@@ -914,6 +916,7 @@ fn infer_map_op(fn_ty: &Type, coll_ty: &Type, state: &mut InferState) -> Result<
     let expected_fn = Type::Fn {
         params: vec![elem_var.clone()],
         ret: Box::new(out_var.clone()),
+        effects: EffectRow::empty(),
     };
     nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
 
@@ -954,6 +957,7 @@ fn infer_filter_op(
     let expected_fn = Type::Fn {
         params: vec![elem_var.clone()],
         ret: Box::new(Type::Bool),
+        effects: EffectRow::empty(),
     };
     nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
 
@@ -996,6 +1000,7 @@ fn infer_reduce_op(
     let expected_fn = Type::Fn {
         params: vec![acc_var.clone(), elem_var.clone()],
         ret: Box::new(acc_var.clone()),
+        effects: EffectRow::empty(),
     };
     nexl_types::unify(fn_ty, &expected_fn, &mut state.subst)?;
     nexl_types::unify(init_ty, &acc_var, &mut state.subst)?;
@@ -1120,7 +1125,7 @@ fn synth_record_constructor(
     };
     let ctor_ty = scheme.instantiate(&mut state.supply);
     let (param_ty, ret_ty) = match ctor_ty {
-        Type::Fn { params, ret } if params.len() == 1 => (params[0].clone(), *ret),
+        Type::Fn { params, ret, .. } if params.len() == 1 => (params[0].clone(), *ret),
         other => {
             return Err(TypeError::new(TypeErrorKind::Mismatch {
                 expected: Type::Fn {
@@ -1132,6 +1137,7 @@ fn synth_record_constructor(
                         name: name.to_string(),
                         fields: vec![],
                     }),
+                    effects: EffectRow::empty(),
                 },
                 found: other,
             }));
@@ -1398,6 +1404,7 @@ fn synth_fn(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, T
     Ok(Type::Fn {
         params: param_types,
         ret: Box::new(ret_ty),
+        effects: EffectRow::empty(),
     })
 }
 
@@ -1887,6 +1894,7 @@ pub fn infer_defn(
     let fn_ty = Type::Fn {
         params: param_types,
         ret: Box::new(ret_ty),
+        effects: EffectRow::empty(),
     };
     let new_env = env.extend(name.clone(), Scheme::mono(fn_ty.clone()));
     Ok((name, fn_ty, new_env))
@@ -1984,7 +1992,7 @@ fn parse_fn_type(items: &[Node], node: &Node) -> Result<Type, TypeError> {
         .collect::<Result<_, _>>()?;
     let ret = parse_type_expr(&items[3])?;
 
-    if items.len() == 6 {
+    let effects = if items.len() == 6 {
         let is_bang = matches!(
             &items[4].kind,
             NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "!"
@@ -1992,16 +2000,19 @@ fn parse_fn_type(items: &[Node], node: &Node) -> Result<Type, TypeError> {
         if !is_bang {
             return Err(bad());
         }
-        let _ = parse_effect_row(&items[5])?;
-    }
+        parse_effect_row(&items[5])?
+    } else {
+        EffectRow::empty()
+    };
 
     Ok(Type::Fn {
         params,
         ret: Box::new(ret),
+        effects,
     })
 }
 
-fn parse_effect_row(node: &Node) -> Result<(Vec<String>, Option<String>), TypeError> {
+fn parse_effect_row(node: &Node) -> Result<EffectRow, TypeError> {
     let bad = || {
         TypeError::new(TypeErrorKind::MalformedForm {
             description: "effect row expects [Effect ... | r]".to_string(),
@@ -2015,7 +2026,7 @@ fn parse_effect_row(node: &Node) -> Result<(Vec<String>, Option<String>), TypeEr
     };
 
     if items.is_empty() {
-        return Ok((Vec::new(), None));
+        return Ok(EffectRow::empty());
     }
 
     let mut effects = Vec::new();
@@ -2046,7 +2057,10 @@ fn parse_effect_row(node: &Node) -> Result<(Vec<String>, Option<String>), TypeEr
         idx += 1;
     }
 
-    Ok((effects, row_var))
+    Ok(EffectRow {
+        effects,
+        tail: row_var,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2615,7 +2629,7 @@ fn check_constructor_pattern(
     };
     let ctor_ty = scheme.instantiate(&mut state.supply);
     match ctor_ty {
-        Type::Fn { params, ret } => {
+        Type::Fn { params, ret, .. } => {
             if params.len() != args.len() {
                 return Err(TypeError::new(TypeErrorKind::ArityMismatch {
                     expected: params.len(),
@@ -3013,6 +3027,7 @@ fn parse_fn_type_with_params(
     Ok(Type::Fn {
         params: params_ty,
         ret: Box::new(ret),
+        effects: EffectRow::empty(),
     })
 }
 
@@ -3053,7 +3068,7 @@ mod tests {
     use std::collections::HashMap;
 
     use nexl_ast::{Atom, FileId, FloatSuffix, IntSuffix, Node, Pattern, Span};
-    use nexl_types::{Constructor, Scheme, Type, TypeDef, TypeErrorKind, TypeVar};
+    use nexl_types::{Constructor, EffectRow, Scheme, Type, TypeDef, TypeErrorKind, TypeVar};
 
     use super::{
         DeftypeDecl, InferState, check, infer_def, infer_defn, parse_match, register_deftype, synth,
@@ -3756,13 +3771,14 @@ mod tests {
             body: Type::Fn {
                 params: vec![Type::Var(t0)],
                 ret: Box::new(Type::Var(t0)),
+                effects: EffectRow::empty(),
             },
         };
         let env = Env::new().extend("id", scheme);
         // instantiate will call state.supply.fresh() → TypeVar(1)
         let ty = synth(&sym_node("id"), &env, &mut state).unwrap();
         match ty {
-            Type::Fn { params, ret } => {
+            Type::Fn { params, ret, .. } => {
                 assert_eq!(params.len(), 1);
                 assert_eq!(params[0], *ret, "param and ret must be the same fresh var");
                 assert_ne!(
@@ -3795,6 +3811,7 @@ mod tests {
             Scheme::mono(Type::Fn {
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }),
         );
         let env = Env::new().extend_module("math", exports);
@@ -3805,6 +3822,7 @@ mod tests {
             Type::Fn {
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -3969,7 +3987,8 @@ mod tests {
             ty,
             Type::Fn {
                 params: vec![],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -3982,7 +4001,7 @@ mod tests {
         let node = defn_node("f", vec!["x"], sym_node("x"));
         let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
         match ty {
-            Type::Fn { params, ret } => {
+            Type::Fn { params, ret, .. } => {
                 assert_eq!(params.len(), 1);
                 assert_eq!(
                     params[0], *ret,
@@ -4006,7 +4025,8 @@ mod tests {
             scheme.body,
             Type::Fn {
                 params: vec![],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -4292,6 +4312,7 @@ mod tests {
                     name: "Option".to_string(),
                     args: vec![Type::Var(a)]
                 }),
+                effects: EffectRow::empty(),
             }
         );
 
@@ -4342,6 +4363,7 @@ mod tests {
             Type::Fn {
                 params: vec![record_ty.clone()],
                 ret: Box::new(record_ty),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -4830,7 +4852,8 @@ mod tests {
             ty,
             Type::Fn {
                 params: vec![],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -4843,7 +4866,7 @@ mod tests {
         let node = fn_node(vec!["x"], int_node(42));
         let ty = synth(&node, &env, &mut state).unwrap();
         match ty {
-            Type::Fn { params, ret } => {
+            Type::Fn { params, ret, .. } => {
                 assert_eq!(params.len(), 1);
                 assert!(
                     matches!(params[0], Type::Var(_)),
@@ -4863,7 +4886,7 @@ mod tests {
         let node = fn_node(vec!["x"], sym_node("x"));
         let ty = synth(&node, &env, &mut state).unwrap();
         match ty {
-            Type::Fn { params, ret } => {
+            Type::Fn { params, ret, .. } => {
                 assert_eq!(params.len(), 1);
                 assert_eq!(
                     params[0], *ret,
@@ -4882,7 +4905,7 @@ mod tests {
         let node = fn_node(vec!["x", "y"], sym_node("x"));
         let ty = synth(&node, &env, &mut state).unwrap();
         match ty {
-            Type::Fn { params, ret } => {
+            Type::Fn { params, ret, .. } => {
                 assert_eq!(params.len(), 2);
                 assert_ne!(
                     params[0], params[1],
@@ -5370,7 +5393,8 @@ mod tests {
             ty,
             Type::Fn {
                 params: vec![Type::Int],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -5397,7 +5421,8 @@ mod tests {
             ty,
             Type::Fn {
                 params: vec![],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -5451,7 +5476,8 @@ mod tests {
             ty,
             Type::Fn {
                 params: vec![Type::Int],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -5580,7 +5606,8 @@ mod tests {
             parse_type_expr(&node).unwrap(),
             Type::Fn {
                 params: vec![Type::Int, Type::Str],
-                ret: Box::new(Type::Bool)
+                ret: Box::new(Type::Bool),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -5594,7 +5621,8 @@ mod tests {
             parse_type_expr(&node).unwrap(),
             Type::Fn {
                 params: vec![],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }
         );
     }
@@ -5618,7 +5646,11 @@ mod tests {
             parse_type_expr(&node).unwrap(),
             Type::Fn {
                 params: vec![Type::Str],
-                ret: Box::new(Type::Unit)
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: None,
+                },
             }
         );
     }
@@ -5645,7 +5677,11 @@ mod tests {
             parse_type_expr(&node).unwrap(),
             Type::Fn {
                 params: vec![Type::Str],
-                ret: Box::new(Type::Unit)
+                ret: Box::new(Type::Unit),
+                effects: EffectRow {
+                    effects: vec!["Console".to_string()],
+                    tail: Some("r".to_string()),
+                },
             }
         );
     }
@@ -6007,6 +6043,7 @@ mod tests {
             body: Type::Fn {
                 params: vec![Type::Var(t0)],
                 ret: Box::new(Type::Var(t0)),
+                effects: EffectRow::empty(),
             },
         };
         let env = Env::new().extend("id", scheme);
@@ -6034,6 +6071,7 @@ mod tests {
         let f_ty = Type::Fn {
             params: vec![Type::Int],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
@@ -6058,6 +6096,7 @@ mod tests {
         let f_ty = Type::Fn {
             params: vec![Type::Int],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
@@ -6082,6 +6121,7 @@ mod tests {
         let f_ty = Type::Fn {
             params: vec![Type::Int],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
@@ -6104,6 +6144,7 @@ mod tests {
         let f_ty = Type::Fn {
             params: vec![Type::Int, Type::Str],
             ret: Box::new(Type::Float),
+            effects: EffectRow::empty(),
         };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
@@ -6121,6 +6162,7 @@ mod tests {
         let f_ty = Type::Fn {
             params: vec![Type::Int],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
@@ -6135,6 +6177,7 @@ mod tests {
         let f_ty = Type::Fn {
             params: vec![],
             ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
         };
         let env = Env::new().extend("f", Scheme::mono(f_ty));
         let mut state = InferState::new();
@@ -6257,6 +6300,7 @@ mod tests {
             Scheme::mono(Type::Fn {
                 params: vec![Type::Str],
                 ret: Box::new(Type::Str),
+                effects: EffectRow::empty(),
             }),
         );
         let mut state = InferState::new();
@@ -6282,6 +6326,7 @@ mod tests {
             Scheme::mono(Type::Fn {
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }),
         );
         let mut state = InferState::new();
@@ -6311,6 +6356,7 @@ mod tests {
             Scheme::mono(Type::Fn {
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }),
         );
         let mut state = InferState::new();
@@ -6340,6 +6386,7 @@ mod tests {
             Scheme::mono(Type::Fn {
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }),
         );
         let mut state = InferState::new();
@@ -6407,6 +6454,7 @@ mod tests {
             Scheme::mono(Type::Fn {
                 params: vec![Type::Bool, Type::Bool],
                 ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }),
         );
         let mut state = InferState::new();
@@ -6467,7 +6515,7 @@ mod tests {
 mod integration_tests {
     use nexl_ast::FileId;
     use nexl_reader::read;
-    use nexl_types::{Scheme, Type};
+    use nexl_types::{EffectRow, Scheme, Type};
 
     use super::{InferState, infer_defn, parse_deftype, register_deftype, synth};
     use crate::Env;
@@ -6484,6 +6532,7 @@ mod integration_tests {
         let int_binop = Type::Fn {
             params: vec![Type::Int, Type::Int],
             ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
         };
         Env::new()
             .extend("+", Scheme::mono(int_binop.clone()))
@@ -6506,7 +6555,8 @@ mod integration_tests {
             ty,
             Type::Fn {
                 params: vec![Type::Int, Type::Int],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             },
             "add should have type (Fn [Int Int] -> Int)"
         );
@@ -6525,6 +6575,7 @@ mod integration_tests {
             Scheme::mono(Type::Fn {
                 params: vec![Type::Int, Type::Int],
                 ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             }),
         );
         let mut state = InferState::new();
@@ -6552,6 +6603,7 @@ mod integration_tests {
         let eq_ty = Type::Fn {
             params: vec![Type::Int, Type::Int],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         let env = Env::new().extend("=", Scheme::mono(eq_ty));
         let mut state = InferState::new();
@@ -6560,7 +6612,8 @@ mod integration_tests {
             ty,
             Type::Fn {
                 params: vec![Type::Int],
-                ret: Box::new(Type::Int)
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
             },
             "fib should have type (Fn [Int] -> Int)"
         );

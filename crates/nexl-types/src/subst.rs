@@ -45,9 +45,14 @@ impl Subst {
                     }
                 }
             }
-            Type::Fn { params, ret } => Type::Fn {
+            Type::Fn {
+                params,
+                ret,
+                effects,
+            } => Type::Fn {
                 params: params.iter().map(|p| self.apply(p)).collect(),
                 ret: Box::new(self.apply(ret)),
+                effects: effects.clone(),
             },
             Type::Adt { name, args } => Type::Adt {
                 name: name.clone(),

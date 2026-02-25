@@ -122,7 +122,9 @@ fn normalize(ty: Type) -> Type {
 fn occurs_in(tv: TypeVar, ty: &Type) -> bool {
     match ty {
         Type::Var(v) => *v == tv,
-        Type::Fn { params, ret } => params.iter().any(|p| occurs_in(tv, p)) || occurs_in(tv, ret),
+        Type::Fn { params, ret, .. } => {
+            params.iter().any(|p| occurs_in(tv, p)) || occurs_in(tv, ret)
+        }
         Type::Adt { args, .. } => args.iter().any(|a| occurs_in(tv, a)),
         Type::Record { fields, .. } => fields.iter().any(|(_, field_ty)| occurs_in(tv, field_ty)),
         Type::Tuple(items) => items.iter().any(|item| occurs_in(tv, item)),
@@ -226,12 +228,20 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
             Type::Fn {
                 params: pa,
                 ret: ra,
+                effects: ea,
             },
             Type::Fn {
                 params: pb,
                 ret: rb,
+                effects: eb,
             },
         ) => {
+            if ea != eb {
+                return Err(TypeError::new(TypeErrorKind::Mismatch {
+                    expected: a.clone(),
+                    found: b.clone(),
+                }));
+            }
             if pa.len() != pb.len() {
                 return Err(TypeError::new(TypeErrorKind::ArityMismatch {
                     expected: pa.len(),
@@ -330,7 +340,7 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
 #[cfg(test)]
 mod tests {
     use super::{TypeError, TypeErrorKind, unify};
-    use crate::{Subst, Type, TypeVar};
+    use crate::{EffectRow, Subst, Type, TypeVar};
 
     fn tv(n: u32) -> Type {
         Type::Var(TypeVar(n))
@@ -340,6 +350,7 @@ mod tests {
         Type::Fn {
             params: vec![param],
             ret: Box::new(ret),
+            effects: EffectRow::empty(),
         }
     }
 
@@ -347,6 +358,7 @@ mod tests {
         Type::Fn {
             params: vec![p1, p2],
             ret: Box::new(ret),
+            effects: EffectRow::empty(),
         }
     }
 

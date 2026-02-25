@@ -41,6 +41,7 @@ pub enum Type {
     Fn {
         params: Vec<Type>,
         ret: Box<Type>,
+        effects: EffectRow,
     },
 
     /// Applied algebraic data type: a named type constructor applied to zero
@@ -78,6 +79,30 @@ pub enum Type {
     Set(Box<Type>),
 }
 
+/// A row of effects on a function type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectRow {
+    /// Named effects in the row, e.g. `["Console", "Net"]`.
+    pub effects: Vec<String>,
+    /// Optional row variable name (e.g. `r` in `[Console | r]`).
+    pub tail: Option<String>,
+}
+
+impl EffectRow {
+    /// An empty effect row: `! []`.
+    pub fn empty() -> Self {
+        Self {
+            effects: Vec::new(),
+            tail: None,
+        }
+    }
+
+    /// Returns `true` when this row has no effects and no tail variable.
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty() && self.tail.is_none()
+    }
+}
+
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -102,7 +127,11 @@ impl fmt::Display for Type {
             Type::F32 => write!(f, "F32"),
             Type::F64 => write!(f, "F64"),
             Type::Var(TypeVar(id)) => write!(f, "t{id}"),
-            Type::Fn { params, ret } => {
+            Type::Fn {
+                params,
+                ret,
+                effects,
+            } => {
                 write!(f, "(Fn [")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
@@ -110,7 +139,24 @@ impl fmt::Display for Type {
                     }
                     write!(f, "{p}")?;
                 }
-                write!(f, "] -> {ret})")
+                write!(f, "] -> {ret}")?;
+                if !effects.is_empty() {
+                    write!(f, " ! [")?;
+                    for (i, eff) in effects.effects.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, " ")?;
+                        }
+                        write!(f, "{eff}")?;
+                    }
+                    if let Some(tail) = &effects.tail {
+                        if !effects.effects.is_empty() {
+                            write!(f, " ")?;
+                        }
+                        write!(f, "| {tail}")?;
+                    }
+                    write!(f, "]")?;
+                }
+                write!(f, ")")
             }
             Type::Adt { name, args } => {
                 if args.is_empty() {
@@ -237,7 +283,7 @@ impl Type {
             Type::Var(tv) => {
                 result.insert(*tv);
             }
-            Type::Fn { params, ret } => {
+            Type::Fn { params, ret, .. } => {
                 for p in params {
                     p.collect_free_vars(result);
                 }
@@ -942,6 +988,7 @@ mod tests {
         let ty = Type::Fn {
             params: vec![],
             ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
         };
         assert_eq!(ty.to_string(), "(Fn [] -> Int)");
     }
@@ -952,6 +999,7 @@ mod tests {
         let ty = Type::Fn {
             params: vec![Type::Int, Type::Str],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         assert_eq!(ty.to_string(), "(Fn [Int Str] -> Bool)");
     }
@@ -962,10 +1010,12 @@ mod tests {
         let inner = Type::Fn {
             params: vec![Type::Int],
             ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
         };
         let outer = Type::Fn {
             params: vec![inner],
             ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
         };
         assert_eq!(outer.to_string(), "(Fn [(Fn [Int] -> Int)] -> Int)");
     }
@@ -992,14 +1042,17 @@ mod tests {
         let a = Type::Fn {
             params: vec![Type::Int],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         let b = Type::Fn {
             params: vec![Type::Int],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         let c = Type::Fn {
             params: vec![Type::Str],
             ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
         };
         assert_eq!(a, b);
         assert_ne!(a, c);
@@ -1034,6 +1087,7 @@ mod tests {
         let fn_ty = Type::Fn {
             params: vec![Type::Bool],
             ret: Box::new(Type::Str),
+            effects: EffectRow::empty(),
         };
         assert_eq!(s.apply(&fn_ty), fn_ty);
     }
@@ -1062,10 +1116,12 @@ mod tests {
         let input = Type::Fn {
             params: vec![Type::Var(TypeVar(0))],
             ret: Box::new(Type::Var(TypeVar(0))),
+            effects: EffectRow::empty(),
         };
         let expected = Type::Fn {
             params: vec![Type::Int],
             ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
         };
         assert_eq!(s.apply(&input), expected);
     }
@@ -1106,6 +1162,7 @@ mod tests {
             body: Type::Fn {
                 params: vec![Type::Var(t0)],
                 ret: Box::new(Type::Var(t0)),
+                effects: EffectRow::empty(),
             },
         };
         let instantiated = scheme.instantiate(&mut supply);
@@ -1113,6 +1170,7 @@ mod tests {
         let expected = Type::Fn {
             params: vec![Type::Var(TypeVar(1))],
             ret: Box::new(Type::Var(TypeVar(1))),
+            effects: EffectRow::empty(),
         };
         assert_eq!(instantiated, expected);
     }
@@ -1140,6 +1198,7 @@ mod tests {
         let ty = Type::Fn {
             params: vec![Type::Var(TypeVar(0))],
             ret: Box::new(Type::Var(TypeVar(1))),
+            effects: EffectRow::empty(),
         };
         let vars = ty.free_vars();
         assert_eq!(vars.len(), 2);
@@ -1158,6 +1217,7 @@ mod tests {
             body: Type::Fn {
                 params: vec![Type::Var(t0)],
                 ret: Box::new(Type::Var(t1)),
+                effects: EffectRow::empty(),
             },
         };
         let free = scheme.free_vars();

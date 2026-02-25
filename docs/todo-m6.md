@@ -6,7 +6,7 @@
 - [x] Parse effect rows in type annotations (`! [E | r]`)
 
 ## Types / Inference
-- [ ] Extend type representation with effect rows
+- [x] Extend type representation with effect rows
 - [ ] Row unification and polymorphism (`! [E | r]`)
 - [ ] Effect inference for function bodies
 - [ ] `handle` removes handled effects from rows
