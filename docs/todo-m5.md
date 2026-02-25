@@ -10,7 +10,7 @@
 - [x] Parse qualified symbols `foo/bar` as distinct from bare symbols
 
 ## Module Resolution (`nexl-modules` — new crate)
-- [ ] Module name ↔ file path mapping (§8.11)
+- [x] Module name ↔ file path mapping (§8.11)
 - [ ] Dependency graph construction from import declarations
 - [ ] Topological sort of modules (§8.9 init order)
 - [ ] Circular dependency detection (§8.6)

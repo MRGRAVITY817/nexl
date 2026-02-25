@@ -7,7 +7,7 @@ members = [
     "crates/nexl-runtime",
     "crates/nexl-eval",
     "crates/nexl-types",
-    "crates/nexl-infer",
+    "crates/nexl-infer", "crates/nexl-modules",
 ]
 
 [workspace.package]

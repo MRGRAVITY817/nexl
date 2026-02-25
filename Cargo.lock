@@ -165,6 +165,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexl-modules"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nexl-reader"
 version = "0.1.0"
 dependencies = [
