@@ -3704,4 +3704,90 @@ mod tests {
         let result = eval(&expr, &env);
         assert_eq!(result, Err(EvalError::Arity));
     }
+
+    // --- assert! / assert-unreachable! tests ---
+
+    // Test 1: (assert! true) → Value::Unit  (spec §4.2.1)
+    #[test]
+    fn assert_true_returns_unit() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+            lit(Atom::Bool(true)),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Ok(Value::Unit));
+    }
+
+    // Test 2: (assert! false) → EvalError::Panic  (spec §4.2.1)
+    #[test]
+    fn assert_false_panics() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+            lit(Atom::Bool(false)),
+        ]);
+        let result = eval(&expr, &env);
+        assert!(matches!(result, Err(EvalError::Panic(_))));
+    }
+
+    // Test 3: (assert! false "boom") → EvalError::Panic("boom")  (spec §4.2.1)
+    #[test]
+    fn assert_false_with_message_panics_with_message() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+            lit(Atom::Bool(false)),
+            lit(Atom::Str("boom".into())),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Err(EvalError::Panic("boom".into())));
+    }
+
+    // Test 4: (assert! true "boom") → Value::Unit  (condition passes, message irrelevant)
+    #[test]
+    fn assert_true_with_message_does_not_panic() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+            lit(Atom::Bool(true)),
+            lit(Atom::Str("boom".into())),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Ok(Value::Unit));
+    }
+
+    // Test 5: (assert-unreachable!) → EvalError::Panic  (spec §4.2.1: always panics)
+    #[test]
+    fn assert_unreachable_always_panics() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "assert-unreachable!".into() }),
+        ]);
+        let result = eval(&expr, &env);
+        assert!(matches!(result, Err(EvalError::Panic(_))));
+    }
+
+    // Test 6: (assert-unreachable! "never here") → EvalError::Panic("never here")
+    #[test]
+    fn assert_unreachable_with_message_includes_message() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "assert-unreachable!".into() }),
+            lit(Atom::Str("never here".into())),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Err(EvalError::Panic("never here".into())));
+    }
+
+    // Test 7: (assert!) with no condition → EvalError::Arity
+    #[test]
+    fn assert_wrong_arity_is_error() {
+        let env = Rc::new(Env::new());
+        let expr = list(vec![
+            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+        ]);
+        let result = eval(&expr, &env);
+        assert_eq!(result, Err(EvalError::Arity));
+    }
 }

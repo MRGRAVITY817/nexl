@@ -105,6 +105,12 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "panic" => {
             eval_panic(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "assert!" => {
+            eval_assert(items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "assert-unreachable!" => {
+            eval_assert_unreachable(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -904,6 +910,65 @@ fn eval_panic<'a>(
     let msg = match msg_val {
         Value::Str(s) => s.to_string(),
         other => other.type_name().to_string(),
+    };
+    Err(EvalError::Panic(msg))
+}
+
+/// Evaluate `(assert! cond)` or `(assert! cond msg)`.
+///
+/// If `cond` evaluates to `true`, returns `unit`.
+/// If `cond` evaluates to `false`, panics with the optional message or a default.
+/// (spec §4.2.1)
+fn eval_assert<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() < 2 || items.len() > 3 {
+        return Err(EvalError::Arity);
+    }
+    let cond = match eval_with_loop(&items[1], env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+    };
+    match cond {
+        Value::Bool(true) => Ok(EvalReturn::Value(Value::Unit)),
+        Value::Bool(false) => {
+            let msg = if let Some(msg_node) = items.get(2) {
+                match eval_with_loop(msg_node, env, loop_state)? {
+                    EvalReturn::Value(Value::Str(s)) => s.to_string(),
+                    EvalReturn::Value(other) => other.type_name().to_string(),
+                    EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+                }
+            } else {
+                "assertion failed".to_string()
+            };
+            Err(EvalError::Panic(msg))
+        }
+        _ => Err(EvalError::InvalidConditionType),
+    }
+}
+
+/// Evaluate `(assert-unreachable!)` or `(assert-unreachable! msg)`.
+///
+/// Always panics — used to mark code paths that should never be reached.
+/// Typed as `Never` by the type checker. (spec §4.2.1)
+fn eval_assert_unreachable<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() > 2 {
+        return Err(EvalError::Arity);
+    }
+    let msg = if let Some(msg_node) = items.get(1) {
+        match eval_with_loop(msg_node, env, loop_state)? {
+            EvalReturn::Value(Value::Str(s)) => s.to_string(),
+            EvalReturn::Value(other) => other.type_name().to_string(),
+            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+        }
+    } else {
+        "assert-unreachable! reached".to_string()
     };
     Err(EvalError::Panic(msg))
 }
