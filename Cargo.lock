@@ -168,6 +168,7 @@ dependencies = [
 name = "nexl-modules"
 version = "0.1.0"
 dependencies = [
+ "nexl-ast",
  "thiserror 2.0.18",
 ]
 

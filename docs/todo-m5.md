@@ -11,9 +11,9 @@
 
 ## Module Resolution (`nexl-modules` — new crate)
 - [x] Module name ↔ file path mapping (§8.11)
-- [ ] Dependency graph construction from import declarations
-- [ ] Topological sort of modules (§8.9 init order)
-- [ ] Circular dependency detection (§8.6)
+- [x] Dependency graph construction from import declarations
+- [x] Topological sort of modules (§8.9 init order)
+- [x] Circular dependency detection (§8.6)
 
 ## Name Resolution
 - [ ] Resolve qualified references (`alias/name`) to module exports
