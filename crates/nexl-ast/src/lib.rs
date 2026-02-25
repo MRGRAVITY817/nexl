@@ -1,9 +1,11 @@
+pub mod effect;
 pub mod module;
 pub mod node;
 pub mod pattern;
 pub mod printer;
 pub mod span;
 
+pub use effect::{EffectDecl, EffectOpDecl, EffectParseError, parse_effect_decl};
 pub use module::{ImportDecl, ImportKind, ModuleDecl, ModuleParseError, parse_import_decl, parse_module_decl};
 pub use node::{Atom, Comment, FloatSuffix, IntSuffix, Node, NodeKind};
 pub use pattern::{Pattern, PatternError, parse_pattern};

@@ -1,7 +1,7 @@
 # M6 — Algebraic Effect System
 
 ## AST / Reader
-- [ ] Parse `defeffect` declarations
+- [x] Parse `defeffect` declarations
 - [ ] Parse `handle` forms (simple + continuation)
 - [ ] Parse effect rows in type annotations (`! [E | r]`)
 
