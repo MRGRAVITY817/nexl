@@ -10,14 +10,21 @@
 //! - Direct function calls use WASM `call`.  Indirect closure calls are
 //!   deferred to a later task.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use nexl_ir::{Atom, Block, FuncDef, MatchArm, Module, Rhs, Tail, VarId};
 use wasm_encoder::{
-    BlockType, CodeSection, ConstExpr, ExportKind, ExportSection, Function, FunctionSection,
-    GlobalSection, GlobalType, Instruction, MemArg, MemorySection, MemoryType, TypeSection,
-    ValType,
+    BlockType, CodeSection, ConstExpr, DataSection, ExportKind, ExportSection, Function,
+    FunctionSection, GlobalSection, GlobalType, Instruction, MemArg, MemorySection, MemoryType,
+    TypeSection, ValType,
 };
+
+/// Maps interned string content → `(byte_offset_in_data_segment, byte_length)`.
+///
+/// Built by [`collect_string_literals`] before codegen starts and threaded
+/// through to [`emit_atom`] so that `Atom::Str` emits a packed `i64`.
+type StringMap = HashMap<Rc<str>, (u32, u32)>;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -122,13 +129,35 @@ impl Emitter {
             wasm.section(&exports);
         }
 
+        // ── String pre-pass → data section + string map ──────────────────────
+        let string_order: Vec<Rc<str>> = collect_string_literals(module);
+        let mut string_map: StringMap = StringMap::new();
+        let mut offset: u32 = 0;
+        let mut data_bytes: Vec<u8> = Vec::new();
+        for s in &string_order {
+            let bytes = s.as_bytes();
+            let len = bytes.len() as u32;
+            string_map.insert(Rc::clone(s), (offset, len));
+            data_bytes.extend_from_slice(bytes);
+            offset += len;
+        }
+
         // ── Code section ─────────────────────────────────────────────────────
         let mut code = CodeSection::new();
         for func in &module.funcs {
-            let wasm_func = emit_func(func)?;
+            let wasm_func = emit_func(func, &string_map)?;
             code.function(&wasm_func);
         }
         wasm.section(&code);
+
+        // ── Data section (strings, if any) ───────────────────────────────────
+        // Data section (id=11) must come after code (id=10).
+        if !data_bytes.is_empty() {
+            let mut data = DataSection::new();
+            // Active segment at memory 0, offset 0.
+            data.active(0, &ConstExpr::i32_const(0), data_bytes);
+            wasm.section(&data);
+        }
 
         Ok(wasm.finish())
     }
@@ -136,7 +165,7 @@ impl Emitter {
 
 // ── Function emitter ─────────────────────────────────────────────────────────
 
-fn emit_func(func: &FuncDef) -> Result<Function, EmitError> {
+fn emit_func(func: &FuncDef, so: &StringMap) -> Result<Function, EmitError> {
     let mut local_map: HashMap<VarId, u32> = HashMap::new();
     let mut next_local = 0u32;
 
@@ -150,7 +179,7 @@ fn emit_func(func: &FuncDef) -> Result<Function, EmitError> {
     let locals = if num_extra > 0 { vec![(num_extra, DEFAULT_VAL)] } else { vec![] };
 
     let mut wasm_func = Function::new(locals);
-    emit_block(&func.body, &local_map, &mut wasm_func)?;
+    emit_block(&func.body, &local_map, so, &mut wasm_func)?;
     wasm_func.instruction(&Instruction::End);
 
     Ok(wasm_func)
@@ -191,31 +220,33 @@ fn collect_bind_vars(block: &Block, local_map: &mut HashMap<VarId, u32>, next: &
 fn emit_block(
     block: &Block,
     local_map: &HashMap<VarId, u32>,
+    so: &StringMap,
     func: &mut Function,
 ) -> Result<(), EmitError> {
     for bind in &block.binds {
-        emit_rhs(&bind.rhs, local_map, func)?;
+        emit_rhs(&bind.rhs, local_map, so, func)?;
         let idx = local_idx(bind.var, local_map)?;
         func.instruction(&Instruction::LocalSet(idx));
     }
-    emit_tail(block.tail.as_ref(), local_map, func)
+    emit_tail(block.tail.as_ref(), local_map, so, func)
 }
 
 fn emit_tail(
     tail: &Tail,
     local_map: &HashMap<VarId, u32>,
+    so: &StringMap,
     func: &mut Function,
 ) -> Result<(), EmitError> {
     match tail {
-        Tail::Return(atom) => emit_atom(atom, local_map, func),
+        Tail::Return(atom) => emit_atom(atom, local_map, so, func),
         Tail::If { cond, then_block, else_block } => {
-            emit_atom(cond, local_map, func)?;
+            emit_atom(cond, local_map, so, func)?;
             // Bool is stored as i64 (1/0); WASM `if` expects i32.
             func.instruction(&Instruction::I32WrapI64);
             func.instruction(&Instruction::If(BlockType::Result(DEFAULT_VAL)));
-            emit_block(then_block, local_map, func)?;
+            emit_block(then_block, local_map, so, func)?;
             func.instruction(&Instruction::Else);
-            emit_block(else_block, local_map, func)?;
+            emit_block(else_block, local_map, so, func)?;
             func.instruction(&Instruction::End);
             Ok(())
         }
@@ -225,31 +256,32 @@ fn emit_tail(
         }
         Tail::TailCall { func: f_atom, args } => {
             for arg in args {
-                emit_atom(arg, local_map, func)?;
+                emit_atom(arg, local_map, so, func)?;
             }
             emit_call_atom(f_atom, local_map, func)
         }
-        Tail::Match { scrutinee, arms } => emit_match_arms(scrutinee, arms, local_map, func),
+        Tail::Match { scrutinee, arms } => emit_match_arms(scrutinee, arms, local_map, so, func),
     }
 }
 
 fn emit_rhs(
     rhs: &Rhs,
     local_map: &HashMap<VarId, u32>,
+    so: &StringMap,
     func: &mut Function,
 ) -> Result<(), EmitError> {
     match rhs {
-        Rhs::Atom(atom) => emit_atom(atom, local_map, func),
+        Rhs::Atom(atom) => emit_atom(atom, local_map, so, func),
         Rhs::Call { func: f_atom, args } => {
             for arg in args {
-                emit_atom(arg, local_map, func)?;
+                emit_atom(arg, local_map, so, func)?;
             }
             emit_call_atom(f_atom, local_map, func)
         }
         Rhs::MakeClosure { func_id, captures } => {
-            emit_make_closure(func_id.0, captures, local_map, func)
+            emit_make_closure(func_id.0, captures, local_map, so, func)
         }
-        Rhs::MakeTuple { ctor, fields } => emit_make_tuple(ctor, fields, local_map, func),
+        Rhs::MakeTuple { ctor, fields } => emit_make_tuple(ctor, fields, local_map, so, func),
         Rhs::Project { .. } => {
             Err(EmitError("field projection codegen not yet implemented".to_string()))
         }
@@ -266,6 +298,7 @@ fn emit_make_closure(
     func_id_u32: u32,
     captures: &[(VarId, Atom)],
     local_map: &HashMap<VarId, u32>,
+    so: &StringMap,
     func: &mut Function,
 ) -> Result<(), EmitError> {
     let num_slots = 1 + captures.len(); // 1 for func_id
@@ -293,7 +326,7 @@ fn emit_make_closure(
     // ── Store each capture value at offset 8, 16, … ──────────────────────
     for (slot, (_, capture_atom)) in captures.iter().enumerate() {
         push_closure_ptr(func);
-        emit_atom(capture_atom, local_map, func)?;
+        emit_atom(capture_atom, local_map, so, func)?;
         func.instruction(&Instruction::I64Store(MemArg {
             offset: 8 + (slot as u64) * 8,
             align: 3,
@@ -311,6 +344,7 @@ fn emit_make_closure(
 fn emit_atom(
     atom: &Atom,
     local_map: &HashMap<VarId, u32>,
+    so: &StringMap,
     func: &mut Function,
 ) -> Result<(), EmitError> {
     match atom {
@@ -326,7 +360,15 @@ fn emit_atom(
             func.instruction(&Instruction::LocalGet(idx));
             Ok(())
         }
-        Atom::Str(_) => Err(EmitError("string literals not yet supported in codegen".to_string())),
+        Atom::Str(s) => {
+            let &(ptr, len) = so
+                .get(s)
+                .ok_or_else(|| EmitError(format!("string {s:?} not in string table")))?;
+            // Packed i64: high 32 bits = ptr, low 32 bits = len.
+            let packed = ((ptr as i64) << 32) | (len as i64);
+            func.instruction(&Instruction::I64Const(packed));
+            Ok(())
+        }
         Atom::FuncRef(fid) => {
             Err(EmitError(format!("bare FuncRef({}) cannot be an atom value", fid.0)))
         }
@@ -368,6 +410,7 @@ fn emit_make_tuple(
     ctor: &str,
     fields: &[Atom],
     local_map: &HashMap<VarId, u32>,
+    so: &StringMap,
     func: &mut Function,
 ) -> Result<(), EmitError> {
     let num_slots = 1 + fields.len(); // 1 for tag
@@ -393,7 +436,7 @@ fn emit_make_tuple(
     // Store each field at offset 8, 16, …
     for (i, field) in fields.iter().enumerate() {
         push_ptr(func);
-        emit_atom(field, local_map, func)?;
+        emit_atom(field, local_map, so, func)?;
         func.instruction(&Instruction::I64Store(MemArg {
             offset: 8 + (i as u64) * 8,
             align: 3,
@@ -415,6 +458,7 @@ fn emit_match_arms(
     scrutinee: &Atom,
     arms: &[MatchArm],
     local_map: &HashMap<VarId, u32>,
+    so: &StringMap,
     func: &mut Function,
 ) -> Result<(), EmitError> {
     if arms.is_empty() {
@@ -427,11 +471,11 @@ fn emit_match_arms(
 
     if arm.ctor == "_" {
         // Wildcard arm — unconditionally execute body.
-        return emit_block(&arm.body, local_map, func);
+        return emit_block(&arm.body, local_map, so, func);
     }
 
     // Load tag from scrutinee (ptr as i32, tag is i64 at offset 0).
-    emit_atom(scrutinee, local_map, func)?;
+    emit_atom(scrutinee, local_map, so, func)?;
     func.instruction(&Instruction::I32WrapI64);
     func.instruction(&Instruction::I64Load(MemArg { offset: 0, align: 3, memory_index: 0 }));
     func.instruction(&Instruction::I64Const(ctor_tag(&arm.ctor)));
@@ -442,7 +486,7 @@ fn emit_match_arms(
 
     // Arm taken: bind fields from memory, then run arm body.
     for (field_idx, &bind_var) in arm.binds.iter().enumerate() {
-        emit_atom(scrutinee, local_map, func)?;
+        emit_atom(scrutinee, local_map, so, func)?;
         func.instruction(&Instruction::I32WrapI64);
         func.instruction(&Instruction::I64Load(MemArg {
             offset: 8 + (field_idx as u64) * 8,
@@ -454,10 +498,10 @@ fn emit_match_arms(
             .ok_or_else(|| EmitError(format!("unresolved bind var VarId({})", bind_var.0)))?;
         func.instruction(&Instruction::LocalSet(bind_local));
     }
-    emit_block(&arm.body, local_map, func)?;
+    emit_block(&arm.body, local_map, so, func)?;
 
     func.instruction(&Instruction::Else);
-    emit_match_arms(scrutinee, &arms[1..], local_map, func)?;
+    emit_match_arms(scrutinee, &arms[1..], local_map, so, func)?;
     func.instruction(&Instruction::End);
 
     Ok(())
@@ -468,6 +512,84 @@ fn local_idx(var: VarId, local_map: &HashMap<VarId, u32>) -> Result<u32, EmitErr
         .get(&var)
         .copied()
         .ok_or_else(|| EmitError(format!("unresolved local variable VarId({})", var.0)))
+}
+
+// ── String literal pre-pass ───────────────────────────────────────────────────
+
+/// Walk the module and collect all unique string literals in first-encounter
+/// order.  The resulting [`Vec`] determines the byte layout of the data segment.
+fn collect_string_literals(module: &Module) -> Vec<Rc<str>> {
+    let mut order: Vec<Rc<str>> = vec![];
+    let mut seen: HashSet<Rc<str>> = HashSet::new();
+    for func in &module.funcs {
+        collect_strings_in_block(&func.body, &mut order, &mut seen);
+    }
+    order
+}
+
+fn collect_strings_in_block(
+    block: &Block,
+    order: &mut Vec<Rc<str>>,
+    seen: &mut HashSet<Rc<str>>,
+) {
+    for bind in &block.binds {
+        collect_strings_in_rhs(&bind.rhs, order, seen);
+    }
+    collect_strings_in_tail(block.tail.as_ref(), order, seen);
+}
+
+fn collect_strings_in_rhs(rhs: &Rhs, order: &mut Vec<Rc<str>>, seen: &mut HashSet<Rc<str>>) {
+    match rhs {
+        Rhs::Atom(atom) => collect_strings_in_atom(atom, order, seen),
+        Rhs::Call { func, args } => {
+            collect_strings_in_atom(func, order, seen);
+            for a in args {
+                collect_strings_in_atom(a, order, seen);
+            }
+        }
+        Rhs::MakeClosure { captures, .. } => {
+            for (_, a) in captures {
+                collect_strings_in_atom(a, order, seen);
+            }
+        }
+        Rhs::MakeTuple { fields, .. } => {
+            for a in fields {
+                collect_strings_in_atom(a, order, seen);
+            }
+        }
+        Rhs::Project { base, .. } => collect_strings_in_atom(base, order, seen),
+    }
+}
+
+fn collect_strings_in_tail(tail: &Tail, order: &mut Vec<Rc<str>>, seen: &mut HashSet<Rc<str>>) {
+    match tail {
+        Tail::Return(a) | Tail::Panic(a) => collect_strings_in_atom(a, order, seen),
+        Tail::If { cond, then_block, else_block } => {
+            collect_strings_in_atom(cond, order, seen);
+            collect_strings_in_block(then_block, order, seen);
+            collect_strings_in_block(else_block, order, seen);
+        }
+        Tail::TailCall { func, args } => {
+            collect_strings_in_atom(func, order, seen);
+            for a in args {
+                collect_strings_in_atom(a, order, seen);
+            }
+        }
+        Tail::Match { scrutinee, arms } => {
+            collect_strings_in_atom(scrutinee, order, seen);
+            for arm in arms {
+                collect_strings_in_block(&arm.body, order, seen);
+            }
+        }
+    }
+}
+
+fn collect_strings_in_atom(atom: &Atom, order: &mut Vec<Rc<str>>, seen: &mut HashSet<Rc<str>>) {
+    if let Atom::Str(s) = atom
+        && seen.insert(Rc::clone(s))
+    {
+        order.push(Rc::clone(s));
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -632,6 +754,24 @@ mod tests {
         let bytes = emit("(defn unwrap [v d] (match v (Some x) x None d))");
         assert_eq!(&bytes[..4], &WASM_MAGIC);
         assert!(bytes.len() > 8);
+    }
+
+    // ─── 18. String literal codegen ──────────────────────────────────────────
+    #[test]
+    fn emit_string_literal() {
+        // (defn greeting [] "hello") — Atom::Str must not error
+        let bytes = emit("(defn greeting [] \"hello\")");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 19. String content appears in data section ───────────────────────────
+    #[test]
+    fn emit_string_bytes_in_output() {
+        let bytes = emit("(defn greeting [] \"hello\")");
+        let needle = b"hello";
+        let found = bytes.windows(needle.len()).any(|w| w == needle);
+        assert!(found, "string bytes 'hello' not found in WASM output");
     }
 
 }

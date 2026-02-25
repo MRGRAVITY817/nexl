@@ -9,7 +9,7 @@
 - [x] Codegen: functions → WASM functions
 - [x] Codegen: closures → code pointer + env struct in linear memory
 - [x] Codegen: ADTs → tagged unions in linear memory
-- [ ] Codegen: strings → pointer + length in linear memory
+- [x] Codegen: strings → pointer + length in linear memory
 
 ## Memory Management (nexl-memory crate)
 - [ ] Create nexl-memory crate — Perceus RC data structures (ref-count header, alloc/free)
