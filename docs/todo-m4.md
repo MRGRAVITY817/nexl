@@ -20,7 +20,7 @@
 - [x] Distinguish `(Tuple a b)` from `(Vec a)` based on context
 
 ## Collection Operations — Built-in Functions
-- [ ] Vec: `get`, `put`, `append`, `count`, `first`, `rest`, `last`, `slice`
+- [x] Vec: `get`, `put`, `append`, `count`, `first`, `rest`, `last`, `slice`
 - [ ] Map: `get`, `put`, `remove`, `keys`, `vals`, `entries`, `contains?`, `count`
 - [ ] Set: `add`, `remove`, `contains?`, `count`, `union`, `intersection`, `difference`
 - [ ] Type inference for collection operations

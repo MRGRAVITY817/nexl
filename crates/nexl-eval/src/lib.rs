@@ -2446,6 +2446,22 @@ mod tests {
         eval::eval(&nodes[0], &env)
     }
 
+    fn option_none() -> Value {
+        Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("None"),
+            fields: Rc::new(vec![]),
+        }
+    }
+
+    fn option_some(value: Value) -> Value {
+        Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("Some"),
+            fields: Rc::new(vec![value]),
+        }
+    }
+
     // --- arithmetic builtin tests ---
 
     #[test]
@@ -2654,6 +2670,69 @@ mod tests {
     fn count_str_unicode() {
         // "café" has 4 Unicode scalar values (spec §3.1)
         assert_eq!(eval_str(r#"(count "café")"#).unwrap(), Value::Int(4));
+    }
+
+    // --- collection builtin tests (Vec) ---
+
+    #[test]
+    fn vec_get_in_bounds_returns_some() {
+        assert_eq!(
+            eval_str("(get [1 2 3] 1)").unwrap(),
+            option_some(Value::Int(2))
+        );
+    }
+
+    #[test]
+    fn vec_get_out_of_bounds_returns_none() {
+        assert_eq!(eval_str("(get [1 2 3] 3)").unwrap(), option_none());
+    }
+
+    #[test]
+    fn vec_put_updates_index() {
+        assert_eq!(
+            eval_str("(put [1 2 3] 1 9)").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(9), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn vec_append_and_count() {
+        assert_eq!(
+            eval_str("(append [1 2] 3)").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+        assert_eq!(eval_str("(count [1 2 3])").unwrap(), Value::Int(3));
+    }
+
+    #[test]
+    fn vec_first_rest_last_non_empty() {
+        assert_eq!(
+            eval_str("(first [1 2 3])").unwrap(),
+            option_some(Value::Int(1))
+        );
+        assert_eq!(
+            eval_str("(rest [1 2 3])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(3)]))
+        );
+        assert_eq!(
+            eval_str("(last [1 2 3])").unwrap(),
+            option_some(Value::Int(3))
+        );
+    }
+
+    #[test]
+    fn vec_first_rest_last_empty() {
+        assert_eq!(eval_str("(first [])").unwrap(), option_none());
+        assert_eq!(eval_str("(rest [])").unwrap(), Value::Vec(Rc::new(vec![])));
+        assert_eq!(eval_str("(last [])").unwrap(), option_none());
+    }
+
+    #[test]
+    fn vec_slice_basic() {
+        assert_eq!(
+            eval_str("(slice [1 2 3 4] 1 3)").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(3)]))
+        );
     }
 
     // --- integration test ---

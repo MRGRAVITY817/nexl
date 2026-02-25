@@ -10,6 +10,10 @@ use crate::Env;
 pub fn standard_env() -> Rc<Env> {
     let env = Rc::new(Env::new());
 
+    // Option constructors
+    env.define("None", option_none());
+    env.define("Some", native("Some", some_ctor));
+
     // Arithmetic
     env.define("+", native("+", add));
     env.define("-", native("-", sub));
@@ -32,6 +36,13 @@ pub fn standard_env() -> Rc<Env> {
     // String
     env.define("str", native("str", str_fn));
     env.define("count", native("count", count));
+    env.define("get", native("get", get));
+    env.define("put", native("put", put));
+    env.define("append", native("append", append));
+    env.define("first", native("first", first));
+    env.define("rest", native("rest", rest));
+    env.define("last", native("last", last));
+    env.define("slice", native("slice", slice));
 
     env
 }
@@ -42,6 +53,27 @@ pub fn standard_env() -> Rc<Env> {
 
 fn native(name: &'static str, f: fn(&[Value]) -> Result<Value, String>) -> Value {
     Value::NativeFunction(Rc::new(NativeFn { name, f }))
+}
+
+fn option_none() -> Value {
+    Value::Adt {
+        type_name: Rc::from("Option"),
+        ctor: Rc::from("None"),
+        fields: Rc::new(vec![]),
+    }
+}
+
+fn option_some(value: Value) -> Value {
+    Value::Adt {
+        type_name: Rc::from("Option"),
+        ctor: Rc::from("Some"),
+        fields: Rc::new(vec![value]),
+    }
+}
+
+fn some_ctor(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("Some", args)?;
+    Ok(option_some(v.clone()))
 }
 
 /// Unpack exactly two arguments.
@@ -61,6 +93,20 @@ fn one_arg<'a>(op: &str, args: &'a [Value]) -> Result<&'a Value, String> {
         [a] => Ok(a),
         _ => Err(format!(
             "`{op}` requires exactly 1 argument, got {}",
+            args.len()
+        )),
+    }
+}
+
+/// Unpack exactly three arguments.
+fn three_args<'a>(
+    op: &str,
+    args: &'a [Value],
+) -> Result<(&'a Value, &'a Value, &'a Value), String> {
+    match args {
+        [a, b, c] => Ok((a, b, c)),
+        _ => Err(format!(
+            "`{op}` requires exactly 3 arguments, got {}",
             args.len()
         )),
     }
@@ -309,7 +355,131 @@ fn count(args: &[Value]) -> Result<Value, String> {
     let v = one_arg("count", args)?;
     match v {
         Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
-        other => Err(type_mismatch("count", "Str", other)),
+        Value::Vec(items) => Ok(Value::Int(items.len() as i64)),
+        other => Err(type_mismatch("count", "Str or Vec", other)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Collections (Vec)
+// ---------------------------------------------------------------------------
+
+/// `(get v i)` — return (Some value) if index is in bounds, else None.
+fn get(args: &[Value]) -> Result<Value, String> {
+    let (coll, idx) = two_args("get", args)?;
+    match (coll, idx) {
+        (Value::Vec(items), Value::Int(i)) => {
+            if *i < 0 {
+                return Ok(option_none());
+            }
+            let idx = *i as usize;
+            match items.get(idx) {
+                Some(value) => Ok(option_some(value.clone())),
+                None => Ok(option_none()),
+            }
+        }
+        (Value::Vec(_), other) => Err(type_mismatch("get", "Int", other)),
+        (other, _) => Err(type_mismatch("get", "Vec", other)),
+    }
+}
+
+/// `(put v i x)` — update the value at index `i`.
+fn put(args: &[Value]) -> Result<Value, String> {
+    let (coll, idx, value) = three_args("put", args)?;
+    match (coll, idx) {
+        (Value::Vec(items), Value::Int(i)) => {
+            if *i < 0 {
+                return Err(format!("`put` index out of bounds: {i}"));
+            }
+            let idx = *i as usize;
+            if idx >= items.len() {
+                return Err(format!(
+                    "`put` index out of bounds: {i} for Vec of length {}",
+                    items.len()
+                ));
+            }
+            let mut next = items.as_ref().clone();
+            next[idx] = value.clone();
+            Ok(Value::Vec(Rc::new(next)))
+        }
+        (Value::Vec(_), other) => Err(type_mismatch("put", "Int", other)),
+        (other, _) => Err(type_mismatch("put", "Vec", other)),
+    }
+}
+
+/// `(append v x)` — append to the end of the vector.
+fn append(args: &[Value]) -> Result<Value, String> {
+    let (coll, value) = two_args("append", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut next = items.as_ref().clone();
+            next.push(value.clone());
+            Ok(Value::Vec(Rc::new(next)))
+        }
+        other => Err(type_mismatch("append", "Vec", other)),
+    }
+}
+
+/// `(first v)` — return (Some x) for the first element, or None.
+fn first(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("first", args)?;
+    match coll {
+        Value::Vec(items) => match items.first() {
+            Some(value) => Ok(option_some(value.clone())),
+            None => Ok(option_none()),
+        },
+        other => Err(type_mismatch("first", "Vec", other)),
+    }
+}
+
+/// `(rest v)` — return the tail of the vector (empty if length <= 1).
+fn rest(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("rest", args)?;
+    match coll {
+        Value::Vec(items) => {
+            if items.is_empty() {
+                return Ok(Value::Vec(Rc::new(vec![])));
+            }
+            let mut next = items.as_ref().clone();
+            next.remove(0);
+            Ok(Value::Vec(Rc::new(next)))
+        }
+        other => Err(type_mismatch("rest", "Vec", other)),
+    }
+}
+
+/// `(last v)` — return (Some x) for the last element, or None.
+fn last(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("last", args)?;
+    match coll {
+        Value::Vec(items) => match items.last() {
+            Some(value) => Ok(option_some(value.clone())),
+            None => Ok(option_none()),
+        },
+        other => Err(type_mismatch("last", "Vec", other)),
+    }
+}
+
+/// `(slice v start end)` — return elements in [start, end).
+fn slice(args: &[Value]) -> Result<Value, String> {
+    let (coll, start, end) = three_args("slice", args)?;
+    match (coll, start, end) {
+        (Value::Vec(items), Value::Int(start), Value::Int(end)) => {
+            if *start < 0 || *end < 0 {
+                return Err("`slice` indices must be non-negative".into());
+            }
+            let start = *start as usize;
+            let end = *end as usize;
+            if start > end || end > items.len() {
+                return Err(format!(
+                    "`slice` index out of bounds: {start}..{end} for Vec of length {}",
+                    items.len()
+                ));
+            }
+            Ok(Value::Vec(Rc::new(items[start..end].to_vec())))
+        }
+        (Value::Vec(_), other, _) => Err(type_mismatch("slice", "Int", other)),
+        (other, _, _) => Err(type_mismatch("slice", "Vec", other)),
     }
 }
 

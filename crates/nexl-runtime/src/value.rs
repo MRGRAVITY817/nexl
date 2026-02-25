@@ -71,6 +71,15 @@ pub enum Value {
     Map(Rc<Vec<(Value, Value)>>),
     /// Persistent set value.
     Set(Rc<Vec<Value>>),
+    /// Algebraic data type value (constructor + fields).
+    Adt {
+        /// The parent type name (e.g. "Option").
+        type_name: Rc<str>,
+        /// The constructor name (e.g. "Some", "None").
+        ctor: Rc<str>,
+        /// Constructor fields.
+        fields: Rc<Vec<Value>>,
+    },
 
     /// Function value — captures an environment and callable body.
     Function(Rc<Function>),
@@ -112,6 +121,18 @@ impl PartialEq for Value {
             (Value::Vec(a), Value::Vec(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => multiset_eq(a, b),
             (Value::Set(a), Value::Set(b)) => multiset_eq(a, b),
+            (
+                Value::Adt {
+                    type_name: a_type,
+                    ctor: a_ctor,
+                    fields: a_fields,
+                },
+                Value::Adt {
+                    type_name: b_type,
+                    ctor: b_ctor,
+                    fields: b_fields,
+                },
+            ) => a_type == b_type && a_ctor == b_ctor && a_fields == b_fields,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
             _ => false,
@@ -139,7 +160,7 @@ fn multiset_eq<T: PartialEq>(a: &[T], b: &[T]) -> bool {
 
 impl Value {
     /// Return the name of this value's type, used in error messages.
-    pub fn type_name(&self) -> &'static str {
+    pub fn type_name(&self) -> &str {
         match self {
             Value::Int(_) => "Int",
             Value::Float(_) => "Float",
@@ -153,6 +174,7 @@ impl Value {
             Value::Vec(_) => "Vec",
             Value::Map(_) => "Map",
             Value::Set(_) => "Set",
+            Value::Adt { type_name, .. } => type_name,
             Value::Function(_) => "Function",
             Value::NativeFunction(_) => "Function",
         }
@@ -234,6 +256,17 @@ impl std::fmt::Display for Value {
                     write!(f, "{item}")?;
                 }
                 write!(f, "}}")
+            }
+            Value::Adt { ctor, fields, .. } => {
+                if fields.is_empty() {
+                    write!(f, "{ctor}")
+                } else {
+                    write!(f, "({ctor}")?;
+                    for field in fields.iter() {
+                        write!(f, " {field}")?;
+                    }
+                    write!(f, ")")
+                }
             }
             Value::Function(func) => {
                 let name = func.name.as_deref().unwrap_or("<anon>");
@@ -360,6 +393,23 @@ mod tests {
             "Symbol"
         );
         assert_eq!(Value::Ratio(1, 2).type_name(), "Ratio");
+    }
+
+    #[test]
+    fn value_adt_display_none_some() {
+        let none = Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("None"),
+            fields: Rc::new(vec![]),
+        };
+        let some = Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("Some"),
+            fields: Rc::new(vec![Value::Int(1)]),
+        };
+
+        assert_eq!(none.to_string(), "None");
+        assert_eq!(some.to_string(), "(Some 1)");
     }
 
     #[test]
