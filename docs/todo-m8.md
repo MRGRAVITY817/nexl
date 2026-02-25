@@ -13,7 +13,7 @@
 
 ## Memory Management (nexl-memory crate)
 - [x] Create nexl-memory crate — Perceus RC data structures (ref-count header, alloc/free)
-- [ ] dup/drop insertion pass over IR
+- [x] dup/drop insertion pass over IR
 - [ ] Reuse analysis: uniquely-owned values mutated in-place
 
 ## Effect Runtime

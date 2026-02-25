@@ -54,7 +54,7 @@ impl VarGen {
 ///
 /// Contains all lambda-lifted function definitions (including closures that
 /// have been lifted to top-level functions with explicit environment parameters).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Module {
     /// Module name (matches the Nexl `module` declaration).
     pub name: String,
@@ -66,7 +66,7 @@ pub struct Module {
 ///
 /// Both `defn` forms and lambda-lifted closures become `FuncDef`s.
 /// Closures capture their environment as extra parameters prepended to `params`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FuncDef {
     /// Unique identifier for this function within the module.
     pub id: FuncId,
@@ -84,7 +84,7 @@ pub struct FuncDef {
 ///
 /// Every value computed in the block is explicitly named. The `Tail` determines
 /// what happens at the end (return, branch, tail-call, …).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     /// Ordered list of let-bindings that produce intermediate values.
     pub binds: Vec<LetBind>,
@@ -93,7 +93,7 @@ pub struct Block {
 }
 
 /// A single `let var = rhs` binding inside a [`Block`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LetBind {
     /// The variable being bound.
     pub var: VarId,
@@ -107,7 +107,7 @@ pub struct LetBind {
 ///
 /// In ANF, only let-bindings may contain non-trivial computations.
 /// All arguments to `Call` must be [`Atom`]s — never nested calls.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Rhs {
     /// A trivial atomic value (no computation needed).
     Atom(Atom),
@@ -174,7 +174,7 @@ impl std::fmt::Display for Atom {
 // ── Tail expressions ─────────────────────────────────────────────────────────
 
 /// The final action of a [`Block`]; determines control flow.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Tail {
     /// Return `atom` to the caller.
     Return(Atom),
@@ -202,7 +202,7 @@ pub enum Tail {
 }
 
 /// One arm of a [`Tail::Match`] decision tree.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MatchArm {
     /// The constructor name being matched (e.g. `"Some"`, `"None"`).
     pub ctor: String,
