@@ -21,6 +21,7 @@ pub enum Type {
     Symbol,
     Unit,
     Never,
+    Any,
 
     // -- Fixed-width numeric types (spec §5.2) --
     Int8,
@@ -120,6 +121,7 @@ impl fmt::Display for Type {
             Type::Symbol => write!(f, "Symbol"),
             Type::Unit => write!(f, "Unit"),
             Type::Never => write!(f, "Never"),
+            Type::Any => write!(f, "Any"),
             Type::Int8 => write!(f, "Int8"),
             Type::Int16 => write!(f, "Int16"),
             Type::Int32 => write!(f, "Int32"),

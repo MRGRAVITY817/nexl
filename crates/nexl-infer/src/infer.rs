@@ -182,6 +182,8 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("panic") => synth_panic(items, env, state),
         Some("assert!") => synth_assert(items, env, state),
         Some("assert-unreachable!") => synth_assert_unreachable(items, env, state),
+        Some("as-any") => synth_as_any(items, env, state),
+        Some("assert-type") => synth_assert_type(items, env, state),
         Some("?") => synth_question(items, env, state),
         _ => synth_application(items, env, state),
     }
@@ -1426,6 +1428,32 @@ fn head_sym(items: &[Node]) -> Option<&str> {
     }
 }
 
+fn type_contains_any(ty: &Type) -> bool {
+    match ty {
+        Type::Any => true,
+        Type::Var(_) => false,
+        Type::Fn { params, ret, .. } => {
+            params.iter().any(type_contains_any) || type_contains_any(ret)
+        }
+        Type::Adt { args, .. } => args.iter().any(type_contains_any),
+        Type::Record { fields, .. } => fields.iter().any(|(_, ty)| type_contains_any(ty)),
+        Type::Tuple(items) => items.iter().any(type_contains_any),
+        Type::Vec(elem) => type_contains_any(elem),
+        Type::Map { key, val } => type_contains_any(key) || type_contains_any(val),
+        Type::Set(elem) => type_contains_any(elem),
+        _ => false,
+    }
+}
+
+fn add_dynamic_effect(effects: &mut EffectRow) {
+    if effects.effects.iter().any(|effect| effect == "Dynamic") {
+        return;
+    }
+    effects.effects.push("Dynamic".to_string());
+    effects.effects.sort();
+    effects.effects.dedup();
+}
+
 /// Synthesize the type of a `(fn [params...] body)` form.
 ///
 /// Each parameter receives a fresh type variable.  The body is inferred in
@@ -1481,9 +1509,12 @@ fn synth_fn(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, T
 
     // Apply the accumulated substitution so any param vars that were unified
     // during body inference are resolved in the returned type.
-    let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
+    let param_types: Vec<Type> = param_types.iter().map(|t| state.subst.apply(t)).collect();
     let ret_ty = state.subst.apply(&ret_ty);
-    let effects = state.subst.apply_effect_row(&body_effects);
+    let mut effects = state.subst.apply_effect_row(&body_effects);
+    if param_types.iter().any(type_contains_any) || type_contains_any(&ret_ty) {
+        add_dynamic_effect(&mut effects);
+    }
 
     Ok(Type::Fn {
         params: param_types,
@@ -1572,6 +1603,41 @@ fn synth_assert_unreachable(
         let _ = synth(msg, env, state)?;
     }
     Ok(Type::Never)
+}
+
+/// Synthesize the type of an `(as-any expr)` form.
+fn synth_as_any(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    if items.len() != 2 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "as-any expects (as-any expr), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+    let _ = synth(&items[1], env, state)?;
+    state.add_effects(&EffectRow::new(vec!["Dynamic".to_string()], None));
+    Ok(Type::Any)
+}
+
+/// Synthesize the type of an `(assert-type expr Type)` form.
+fn synth_assert_type(
+    items: &[Node],
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Type, TypeError> {
+    if items.len() != 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "assert-type expects (assert-type expr Type), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+    check(&items[1], &Type::Any, env, state)?;
+    let target = parse_type_expr(&items[2])?;
+    state.add_effects(&EffectRow::new(vec!["Dynamic".to_string()], None));
+    Ok(target)
 }
 
 /// Synthesize the type of a `(? expr)` form — the `?` early-propagation operator.
@@ -2208,9 +2274,12 @@ pub fn infer_defn(
         }
     }
 
-    let param_types = param_types.iter().map(|t| state.subst.apply(t)).collect();
+    let param_types: Vec<Type> = param_types.iter().map(|t| state.subst.apply(t)).collect();
     let ret_ty = state.subst.apply(&body_ty);
-    let effects = state.subst.apply_effect_row(&body_effects);
+    let mut effects = state.subst.apply_effect_row(&body_effects);
+    if param_types.iter().any(type_contains_any) || type_contains_any(&ret_ty) {
+        add_dynamic_effect(&mut effects);
+    }
 
     let fn_ty = Type::Fn {
         params: param_types,
@@ -2462,6 +2531,7 @@ fn parse_type_name(name: &str, node: &Node) -> Result<Type, TypeError> {
         "Symbol" => Ok(Type::Symbol),
         "Unit" => Ok(Type::Unit),
         "Never" => Ok(Type::Never),
+        "Any" => Ok(Type::Any),
         "Int8" => Ok(Type::Int8),
         "Int16" => Ok(Type::Int16),
         "Int32" => Ok(Type::Int32),
@@ -3895,6 +3965,7 @@ fn parse_type_name_or_adt(name: &str) -> Result<Type, TypeError> {
         "Symbol" => Ok(Type::Symbol),
         "Unit" => Ok(Type::Unit),
         "Never" => Ok(Type::Never),
+        "Any" => Ok(Type::Any),
         "Int8" => Ok(Type::Int8),
         "Int16" => Ok(Type::Int16),
         "Int32" => Ok(Type::Int32),
@@ -5152,6 +5223,63 @@ mod tests {
         let node = parse_one("(assert-unreachable!)");
         let ty = synth(&node, &env, &mut state).unwrap();
         assert_eq!(ty, Type::Never);
+    }
+
+    // -- Test 11 (any) --
+    #[test]
+    fn infer_assert_type_adds_dynamic_effect() {
+        let (env, mut state) = empty();
+        let node = parse_one(
+            "(defn parse-unknown [x : Any] -> Str (assert-type x Str))",
+        );
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![Type::Any],
+                ret: Box::new(Type::Str),
+                effects: EffectRow {
+                    effects: vec!["Dynamic".to_string()],
+                    tail: None,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn infer_as_any_adds_dynamic_effect() {
+        let (env, mut state) = empty();
+        let node = parse_one("(defn to-any [x : Int] -> Any (as-any x))");
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![Type::Int],
+                ret: Box::new(Type::Any),
+                effects: EffectRow {
+                    effects: vec!["Dynamic".to_string()],
+                    tail: None,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn infer_any_param_forces_dynamic_effect() {
+        let (env, mut state) = empty();
+        let node = parse_one("(defn id-any [x : Any] x)");
+        let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(
+            ty,
+            Type::Fn {
+                params: vec![Type::Any],
+                ret: Box::new(Type::Any),
+                effects: EffectRow {
+                    effects: vec!["Dynamic".to_string()],
+                    tail: None,
+                },
+            }
+        );
     }
 
     // -- Test 7 (defn effects) --
@@ -7118,6 +7246,7 @@ mod tests {
         assert_eq!(parse_type_expr(&type_sym("Char")).unwrap(), Type::Char);
         assert_eq!(parse_type_expr(&type_sym("Unit")).unwrap(), Type::Unit);
         assert_eq!(parse_type_expr(&type_sym("Never")).unwrap(), Type::Never);
+        assert_eq!(parse_type_expr(&type_sym("Any")).unwrap(), Type::Any);
         assert_eq!(parse_type_expr(&type_sym("Ratio")).unwrap(), Type::Ratio);
         assert_eq!(parse_type_expr(&type_sym("Int8")).unwrap(), Type::Int8);
         assert_eq!(parse_type_expr(&type_sym("Int32")).unwrap(), Type::Int32);

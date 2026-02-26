@@ -183,6 +183,7 @@ pub fn unify(a: &Type, b: &Type, subst: &mut Subst) -> Result<(), TypeError> {
         | (Type::Symbol, Type::Symbol)
         | (Type::Unit, Type::Unit)
         | (Type::Never, Type::Never)
+        | (Type::Any, Type::Any)
         | (Type::Int8, Type::Int8)
         | (Type::Int16, Type::Int16)
         | (Type::Int32, Type::Int32)
