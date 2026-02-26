@@ -2898,7 +2898,7 @@ fn parse_def(node: &Node) -> Result<(String, Option<Type>, &Node), TypeError> {
 // ---------------------------------------------------------------------------
 
 /// A parsed `deftype` declaration (spec §5.7).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DeftypeDecl {
     /// Sum type declaration with named constructors.
     Sum(TypeDef),
@@ -2907,6 +2907,14 @@ pub enum DeftypeDecl {
         name: String,
         params: Vec<TypeVar>,
         fields: Vec<(String, Type)>,
+    },
+    /// Refinement type declaration with a base type and predicate.
+    Refined {
+        name: String,
+        params: Vec<TypeVar>,
+        binder: String,
+        base: Type,
+        predicate: Box<Node>,
     },
 }
 
@@ -3104,6 +3112,64 @@ pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
                 params,
                 constructors,
             }))
+        }
+        NodeKind::List(refine_items) => {
+            if refine_items.len() != 3 {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "refine expects (refine [name : Type] predicate)".to_string(),
+                }));
+            }
+            let is_refine_head = matches!(
+                &refine_items[0].kind,
+                NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "refine"
+            );
+            if !is_refine_head {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description:
+                        "deftype expects a `|`-prefixed constructor list or a map literal"
+                            .to_string(),
+                }));
+            }
+            let binder_vec = match &refine_items[1].kind {
+                NodeKind::Vector(items) => items,
+                _ => {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "refine binder must be a vector".to_string(),
+                    }))
+                }
+            };
+            if binder_vec.len() != 3 {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "refine binder expects [name : Type]".to_string(),
+                }));
+            }
+            let binder = match &binder_vec[0].kind {
+                NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+                _ => {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "refine binder name must be an unqualified symbol"
+                            .to_string(),
+                    }))
+                }
+            };
+            let is_colon = matches!(
+                &binder_vec[1].kind,
+                NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == ":"
+            );
+            if !is_colon {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "refine binder expects [name : Type]".to_string(),
+                }));
+            }
+            let base = parse_type_expr_with_params(&binder_vec[2], &param_map)?;
+            let predicate = Box::new(refine_items[2].clone());
+            Ok(DeftypeDecl::Refined {
+                name,
+                params,
+                binder,
+                base,
+                predicate,
+            })
         }
         _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
             description: "deftype expects a `|`-prefixed constructor list or a map literal"
@@ -3369,6 +3435,7 @@ pub fn register_deftype(env: &Env, decl: DeftypeDecl) -> Env {
             params,
             fields,
         }),
+        DeftypeDecl::Refined { .. } => env.clone(),
     }
 }
 
@@ -5641,6 +5708,52 @@ mod tests {
         assert_eq!(name, "Point");
         assert!(params.is_empty());
         assert_eq!(fields, vec![("x".to_string(), Type::Float)]);
+    }
+
+    // -- Test 11 (deftype refine) --
+    #[test]
+    fn parse_deftype_refine_port() {
+        let node = parse_one(
+            "(deftype Port (refine [n : Int] (and (>= n 0) (<= n 65535))))",
+        );
+        let (name, params, binder, base, predicate) =
+            match super::parse_deftype(&node).unwrap() {
+                DeftypeDecl::Refined {
+                    name,
+                    params,
+                    binder,
+                    base,
+                    predicate,
+                } => (name, params, binder, base, predicate),
+                other => panic!("expected Refined deftype, got {other:?}"),
+            };
+        assert_eq!(name, "Port");
+        assert!(params.is_empty());
+        assert_eq!(binder, "n");
+        assert_eq!(base, Type::Int);
+        assert!(matches!(predicate.kind, NodeKind::List(_)));
+    }
+
+    // -- Test 12 (deftype refine) --
+    #[test]
+    fn parse_deftype_refine_nonempty() {
+        let node = parse_one(
+            "(deftype NonEmpty (refine [s : Str] (> (count s) 0)))",
+        );
+        let (name, params, binder, base) = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Refined {
+                name,
+                params,
+                binder,
+                base,
+                predicate: _,
+            } => (name, params, binder, base),
+            other => panic!("expected Refined deftype, got {other:?}"),
+        };
+        assert_eq!(name, "NonEmpty");
+        assert!(params.is_empty());
+        assert_eq!(binder, "s");
+        assert_eq!(base, Type::Str);
     }
 
     // -- Opaque Test 1 --

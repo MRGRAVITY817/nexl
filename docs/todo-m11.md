@@ -7,7 +7,7 @@
 - [x] Opaque types (`deftype-opaque`)
 - [x] `deftype-alias`
 - [x] Any escape hatch (`as-any`, `assert-type`)
-- [ ] Refinement types (`Refined`, `refine`)
+- [x] Refinement types (`Refined`, `refine`)
 - [ ] Named patterns (`defpattern`)
 
 ## Blocked
