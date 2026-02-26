@@ -5,7 +5,7 @@
 - [x] `impl`
 - [x] Compiler-dispatched ops (`map`, `filter`, `reduce`)
 - [x] Opaque types (`deftype-opaque`)
-- [ ] `deftype-alias`
+- [x] `deftype-alias`
 - [ ] Any escape hatch (`as-any`, `assert-type`)
 - [ ] Refinement types (`Refined`, `refine`)
 - [ ] Named patterns (`defpattern`)

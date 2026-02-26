@@ -2850,6 +2850,13 @@ pub struct OpaqueTypeDef {
     pub drop: Option<String>,
 }
 
+/// A parsed `deftype-alias` declaration (spec §5.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeAliasDef {
+    pub name: String,
+    pub target: Type,
+}
+
 /// Parse a `deftype` declaration.
 #[allow(dead_code)]
 pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
@@ -3192,6 +3199,52 @@ pub fn parse_deftype_opaque(node: &Node) -> Result<OpaqueTypeDef, TypeError> {
         derives,
         drop,
     })
+}
+
+/// Parse a `deftype-alias` declaration.
+#[allow(dead_code)]
+pub fn parse_deftype_alias(node: &Node) -> Result<TypeAliasDef, TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "deftype-alias must be a list".to_string(),
+            }));
+        }
+    };
+
+    if items.len() != 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "deftype-alias expects (deftype-alias Name Type), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let is_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "deftype-alias"
+    );
+    if !is_head {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "first element of deftype-alias form must be `deftype-alias`".to_string(),
+        }));
+    }
+
+    let name = match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "deftype-alias name must be an unqualified symbol".to_string(),
+            }));
+        }
+    };
+
+    let param_map = HashMap::new();
+    let target = parse_type_expr_with_params(&items[2], &param_map)?;
+
+    Ok(TypeAliasDef { name, target })
 }
 
 fn parse_deftype_derive_clause(
@@ -3779,7 +3832,7 @@ fn parse_fn_type_with_params(
         .with_span(node.span)
     };
 
-    if items.len() != 4 {
+    if items.len() != 4 && items.len() != 6 {
         return Err(bad());
     }
 
@@ -3810,10 +3863,23 @@ fn parse_fn_type_with_params(
         .collect::<Result<_, _>>()?;
     let ret = parse_type_expr_with_params(&items[3], params)?;
 
+    let effects = if items.len() == 6 {
+        let is_bang = matches!(
+            &items[4].kind,
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "!"
+        );
+        if !is_bang {
+            return Err(bad());
+        }
+        parse_effect_row(&items[5])?
+    } else {
+        EffectRow::empty()
+    };
+
     Ok(Type::Fn {
         params: params_ty,
         ret: Box::new(ret),
-        effects: EffectRow::empty(),
+        effects,
     })
 }
 
@@ -5484,11 +5550,57 @@ mod tests {
         let node = parse_one("(deftype-opaque CHandle Ptr :drop free-handle)");
         let decl = super::parse_deftype_opaque(&node).unwrap();
         assert_eq!(decl.name, "CHandle");
-        assert_eq!(decl.underlying, Type::Adt {
-            name: "Ptr".to_string(),
-            args: vec![],
-        });
+        assert_eq!(
+            decl.underlying,
+            Type::Adt {
+                name: "Ptr".to_string(),
+                args: vec![],
+            }
+        );
         assert_eq!(decl.drop, Some("free-handle".to_string()));
+    }
+
+    // -- Alias Test 1 --
+    #[test]
+    fn parse_deftype_alias_basic() {
+        let node = parse_one("(deftype-alias UserId Str)");
+        let decl = super::parse_deftype_alias(&node).unwrap();
+        assert_eq!(decl.name, "UserId");
+        assert_eq!(decl.target, Type::Str);
+    }
+
+    // -- Alias Test 2 --
+    #[test]
+    fn parse_deftype_alias_vec() {
+        let node = parse_one("(deftype-alias Bytes (Vec U8))");
+        let decl = super::parse_deftype_alias(&node).unwrap();
+        assert_eq!(decl.name, "Bytes");
+        assert_eq!(
+            decl.target,
+            Type::Adt {
+                name: "Vec".to_string(),
+                args: vec![Type::U8],
+            }
+        );
+    }
+
+    // -- Alias Test 3 --
+    #[test]
+    fn parse_deftype_alias_fn_with_effects() {
+        let node = parse_one("(deftype-alias Callback (Fn [Event] -> Unit ! [IO]))");
+        let decl = super::parse_deftype_alias(&node).unwrap();
+        assert_eq!(decl.name, "Callback");
+        assert_eq!(
+            decl.target,
+            Type::Fn {
+                params: vec![Type::Adt {
+                    name: "Event".to_string(),
+                    args: vec![],
+                }],
+                ret: Box::new(Type::Unit),
+                effects: EffectRow::new(vec!["IO".to_string()], None),
+            }
+        );
     }
 
     // -----------------------------------------------------------------------
