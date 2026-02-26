@@ -6,6 +6,7 @@
 //! by replacing the extension with `.wasm`.
 
 use clap::{Parser, Subcommand};
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
 
@@ -51,8 +52,10 @@ fn main() {
             }
         }
         Command::Repl => {
-            eprintln!("nexl: repl is not implemented yet");
-            process::exit(1);
+            if let Err(message) = command_repl() {
+                eprintln!("nexl: {message}");
+                process::exit(1);
+            }
         }
         Command::Check { .. } => {
             eprintln!("nexl: check is not implemented yet");
@@ -106,10 +109,42 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()> {
+    let env = nexl_eval::stdlib::standard_env();
+
+    loop {
+        output.write_all(b"nexl> ")?;
+        output.flush()?;
+
+        let mut line = String::new();
+        let bytes = input.read_line(&mut line)?;
+        if bytes == 0 {
+            writeln!(output)?;
+            break;
+        }
+
+        for result in nexl_eval::repl::eval_line(line.trim_end_matches('\n'), &env) {
+            match result {
+                Ok(value) => writeln!(output, "{value}")?,
+                Err(message) => writeln!(output, "error: {message}")?,
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn command_repl() -> Result<(), String> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    repl_loop(stdin.lock(), stdout.lock()).map_err(|e| format!("repl error: {e}"))
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn write_temp_file(contents: &str, label: &str) -> PathBuf {
@@ -182,5 +217,15 @@ mod tests {
         let result = command_run(path.clone());
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "run should succeed, got: {result:?}");
+    }
+
+    #[test]
+    fn repl_loop_evaluates_line() {
+        let input = Cursor::new(b"(+ 1 2)\n");
+        let mut output = Vec::new();
+        repl_loop(input, &mut output).expect("repl loop");
+        let output = String::from_utf8(output).expect("utf8");
+        assert!(output.contains("nexl> "));
+        assert!(output.contains('3'));
     }
 }

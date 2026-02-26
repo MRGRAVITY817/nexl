@@ -4,7 +4,7 @@
 - [x] Add clap dependency — subcommand parsing (build, run, repl, check)
 - [x] `nexl build <file>` — compile to WASM (refactor existing main into subcommand)
 - [x] `nexl run <file>` — parse + evaluate via nexl-eval (tree-walk for now)
-- [ ] `nexl repl` — interactive REPL (move existing repl from nexl-eval bin)
+- [x] `nexl repl` — interactive REPL (move existing repl from nexl-eval bin)
 - [ ] `nexl check <file>` — parse + type-check via nexl-infer, report errors
 
 ## REPL improvements
