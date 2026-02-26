@@ -1,34 +1,67 @@
 //! `nexl` — compile a Nexl source file to a WebAssembly binary.
 //!
-//! Usage: `nexl <input.nexl> [output.wasm]`
+//! Usage: `nexl build <input.nexl> [output.wasm]`
 //!
 //! If no output path is given, the output file is derived from the input
 //! by replacing the extension with `.wasm`.
 
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process;
 
+#[derive(Debug, Parser, PartialEq, Eq)]
+#[command(name = "nexl")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+enum Command {
+    Build {
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+    },
+    Run {
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+    },
+    Repl,
+    Check {
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+    },
+}
+
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: nexl <input.nexl> [output.wasm]");
-        process::exit(1);
-    }
-
-    let input_path = PathBuf::from(&args[1]);
-    let output_path = if args.len() >= 3 {
-        PathBuf::from(&args[2])
-    } else {
-        input_path.with_extension("wasm")
-    };
-
-    let source = match std::fs::read_to_string(&input_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("nexl: cannot read {:?}: {e}", input_path);
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Build { input } => {
+            if let Err(message) = command_build(input) {
+                eprintln!("nexl: {message}");
+                process::exit(1);
+            }
+        }
+        Command::Run { .. } => {
+            eprintln!("nexl: run is not implemented yet");
             process::exit(1);
         }
-    };
+        Command::Repl => {
+            eprintln!("nexl: repl is not implemented yet");
+            process::exit(1);
+        }
+        Command::Check { .. } => {
+            eprintln!("nexl: check is not implemented yet");
+            process::exit(1);
+        }
+    }
+}
+
+fn command_build(input_path: PathBuf) -> Result<(), String> {
+    let output_path = input_path.with_extension("wasm");
+
+    let source = std::fs::read_to_string(&input_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
 
     let module_name = input_path
         .file_stem()
@@ -36,38 +69,65 @@ fn main() {
         .unwrap_or("module")
         .to_string();
 
-    // Parse
-    let nodes = match nexl_reader::read(&source, meta::FileId::SYNTHETIC) {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("nexl: parse error: {e}");
-            process::exit(1);
-        }
-    };
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|e| format!("parse error: {e}"))?;
 
-    // Lower to ANF IR
-    let ir_module = match nexl_ir::Lowerer::new(&module_name).lower_module(&nodes) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("nexl: lowering error: {e}");
-            process::exit(1);
-        }
-    };
+    let ir_module = nexl_ir::Lowerer::new(&module_name)
+        .lower_module(&nodes)
+        .map_err(|e| format!("lowering error: {e}"))?;
 
-    // Emit WASM
-    let wasm_bytes = match nexl_wasm::Emitter::new().emit(&ir_module) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("nexl: codegen error: {e}");
-            process::exit(1);
-        }
-    };
+    let wasm_bytes = nexl_wasm::Emitter::new()
+        .emit(&ir_module)
+        .map_err(|e| format!("codegen error: {e}"))?;
 
-    // Write output
-    if let Err(e) = std::fs::write(&output_path, &wasm_bytes) {
-        eprintln!("nexl: cannot write {:?}: {e}", output_path);
-        process::exit(1);
-    }
+    std::fs::write(&output_path, &wasm_bytes)
+        .map_err(|e| format!("cannot write {:?}: {e}", output_path))?;
 
     println!("nexl: wrote {} bytes to {:?}", wasm_bytes.len(), output_path);
+    Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_build_with_input() {
+        let cli = Cli::try_parse_from(["nexl", "build", "main.nexl"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Build {
+                input: PathBuf::from("main.nexl"),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_run_with_input() {
+        let cli = Cli::try_parse_from(["nexl", "run", "main.nexl"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Run {
+                input: PathBuf::from("main.nexl"),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_repl_without_args() {
+        let cli = Cli::try_parse_from(["nexl", "repl"]).expect("parse");
+        assert_eq!(cli.command, Command::Repl);
+    }
+
+    #[test]
+    fn parse_check_with_input() {
+        let cli = Cli::try_parse_from(["nexl", "check", "main.nexl"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Check {
+                input: PathBuf::from("main.nexl"),
+            }
+        );
+    }
 }
