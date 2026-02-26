@@ -6,7 +6,7 @@
 - [x] `defmacro-syntax` (pattern-based macros)
 - [x] `defmacro-elab` (elaboration macros)
 - [x] `defreader-text` (reader macros)
-- [ ] Built-in macros: `->`, `->>`, `cond`, `when`, `unless`, `and`, `or`
+- [x] Built-in macros: `->`, `->>`, `cond`, `when`, `unless`, `and`, `or`
 - [ ] `:derive` on ADTs (Show, Eq, Hash)
 
 ## Blocked

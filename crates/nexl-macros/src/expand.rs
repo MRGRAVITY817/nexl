@@ -26,6 +26,7 @@ pub fn expand_forms(nodes: &[Node]) -> Result<Vec<Node>, MacroError> {
 enum MacroKind {
     Proc(ProcMacro),
     Syntax(SyntaxMacro),
+    Builtin(BuiltinMacro),
 }
 
 #[derive(Debug, Clone)]
@@ -47,15 +48,38 @@ struct SyntaxClause {
     template: Node,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum BuiltinMacro {
+    When,
+    Unless,
+    Cond,
+    ThreadFirst,
+    ThreadLast,
+    And,
+    Or,
+}
+
 struct Expander {
     macros: HashMap<String, MacroKind>,
 }
 
 impl Expander {
     fn new() -> Self {
-        Self {
-            macros: HashMap::new(),
-        }
+        let mut macros = HashMap::new();
+        macros.insert("when".to_string(), MacroKind::Builtin(BuiltinMacro::When));
+        macros.insert(
+            "unless".to_string(),
+            MacroKind::Builtin(BuiltinMacro::Unless),
+        );
+        macros.insert("cond".to_string(), MacroKind::Builtin(BuiltinMacro::Cond));
+        macros.insert("->".to_string(), MacroKind::Builtin(BuiltinMacro::ThreadFirst));
+        macros.insert(
+            "->>".to_string(),
+            MacroKind::Builtin(BuiltinMacro::ThreadLast),
+        );
+        macros.insert("and".to_string(), MacroKind::Builtin(BuiltinMacro::And));
+        macros.insert("or".to_string(), MacroKind::Builtin(BuiltinMacro::Or));
+        Self { macros }
     }
 
     fn expand_forms(&mut self, nodes: &[Node]) -> Result<Vec<Node>, MacroError> {
@@ -98,6 +122,7 @@ impl Expander {
                     let call = match def {
                         MacroKind::Proc(def) => expand_macro_call(&def, node)?,
                         MacroKind::Syntax(def) => expand_syntax_macro(&def, node)?,
+                        MacroKind::Builtin(def) => expand_builtin_macro(def, node)?,
                     };
                     if let Some(out) = self.expand_node(&call)? {
                         return Ok(Some(out));
@@ -558,6 +583,32 @@ fn expand_syntax_macro(def: &SyntaxMacro, call: &Node) -> Result<Node, MacroErro
     ))
 }
 
+fn expand_builtin_macro(def: BuiltinMacro, call: &Node) -> Result<Node, MacroError> {
+    let NodeKind::List(items) = &call.kind else {
+        return Err(MacroError::Message("macro call must be a list".to_string()));
+    };
+    let args = &items[1..];
+    let intro_scope = Scope::fresh();
+    let args = args
+        .iter()
+        .cloned()
+        .map(|arg| SyntaxObj::new(arg, ScopeSet::new()).add_scope_deep(intro_scope))
+        .collect::<Vec<_>>();
+    let mut gensym = Gensym::new();
+    let node = match def {
+        BuiltinMacro::When => expand_when(&args)?,
+        BuiltinMacro::Unless => expand_unless(&args)?,
+        BuiltinMacro::Cond => expand_cond(&args)?,
+        BuiltinMacro::ThreadFirst => expand_thread(&args, ThreadPosition::First)?,
+        BuiltinMacro::ThreadLast => expand_thread(&args, ThreadPosition::Last)?,
+        BuiltinMacro::And => expand_and(&args, &mut gensym),
+        BuiltinMacro::Or => expand_or(&args, &mut gensym),
+    };
+    let result = SyntaxObj::new(node, ScopeSet::new());
+    let flipped = result.flip_scope_deep(intro_scope);
+    Ok(flipped.node)
+}
+
 fn parse_syntax_pattern(name: &str, pattern: &Node) -> Result<(Vec<String>, Option<String>), MacroError> {
     let NodeKind::List(items) = &pattern.kind else {
         return Err(MacroError::Message(
@@ -885,6 +936,239 @@ fn make_do(forms: &[Node]) -> Node {
     Node::new(NodeKind::List(items), Span::synthetic())
 }
 
+struct Gensym {
+    counter: u64,
+}
+
+impl Gensym {
+    fn new() -> Self {
+        Self { counter: 0 }
+    }
+
+    fn fresh(&mut self, base: &str) -> String {
+        self.counter += 1;
+        format!("{base}__{}__auto__", self.counter)
+    }
+}
+
+fn expand_when(args: &[SyntaxObj]) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Err(MacroError::Message(
+            "when requires a condition".to_string(),
+        ));
+    }
+    let cond = args[0].node.clone();
+    let body = &args[1..];
+    let then_branch = if body.is_empty() {
+        unit_node()
+    } else {
+        make_do(
+            &body
+                .iter()
+                .map(|stx| stx.node.clone())
+                .collect::<Vec<_>>(),
+        )
+    };
+    Ok(list_node(vec![
+        symbol_node("if"),
+        cond,
+        then_branch,
+        unit_node(),
+    ]))
+}
+
+fn expand_unless(args: &[SyntaxObj]) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Err(MacroError::Message(
+            "unless requires a condition".to_string(),
+        ));
+    }
+    let cond = args[0].node.clone();
+    let body = &args[1..];
+    let then_branch = if body.is_empty() {
+        unit_node()
+    } else {
+        make_do(
+            &body
+                .iter()
+                .map(|stx| stx.node.clone())
+                .collect::<Vec<_>>(),
+        )
+    };
+    let not_cond = list_node(vec![symbol_node("not"), cond]);
+    Ok(list_node(vec![
+        symbol_node("if"),
+        not_cond,
+        then_branch,
+        unit_node(),
+    ]))
+}
+
+fn expand_cond(args: &[SyntaxObj]) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Ok(panic_node("cond requires at least one clause"));
+    }
+    if !args.len().is_multiple_of(2) {
+        return Err(MacroError::Message(
+            "cond requires an even number of forms".to_string(),
+        ));
+    }
+
+    expand_cond_pairs(args)
+}
+
+fn expand_cond_pairs(args: &[SyntaxObj]) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Ok(panic_node("cond fell through"));
+    }
+    let test = &args[0];
+    let expr = &args[1];
+
+    if is_else_keyword(&test.node) {
+        if args.len() > 2 {
+            return Err(MacroError::Message(
+                "cond :else must be the final clause".to_string(),
+            ));
+        }
+        return Ok(expr.node.clone());
+    }
+
+    let else_branch = expand_cond_pairs(&args[2..])?;
+    Ok(list_node(vec![
+        symbol_node("if"),
+        test.node.clone(),
+        expr.node.clone(),
+        else_branch,
+    ]))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ThreadPosition {
+    First,
+    Last,
+}
+
+fn expand_thread(args: &[SyntaxObj], position: ThreadPosition) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Err(MacroError::Message(
+            "threading macro requires an initial value".to_string(),
+        ));
+    }
+    let mut acc = args[0].node.clone();
+    for step in &args[1..] {
+        acc = thread_step(&acc, &step.node, position)?;
+    }
+    Ok(acc)
+}
+
+fn thread_step(
+    acc: &Node,
+    step: &Node,
+    position: ThreadPosition,
+) -> Result<Node, MacroError> {
+    match &step.kind {
+        NodeKind::List(items) if items.is_empty() => Err(MacroError::Message(
+            "threading macro step cannot be empty list".to_string(),
+        )),
+        NodeKind::List(items) => {
+            let mut out = Vec::with_capacity(items.len() + 1);
+            out.push(items[0].clone());
+            match position {
+                ThreadPosition::First => {
+                    out.push(acc.clone());
+                    out.extend(items[1..].iter().cloned());
+                }
+                ThreadPosition::Last => {
+                    out.extend(items[1..].iter().cloned());
+                    out.push(acc.clone());
+                }
+            }
+            Ok(list_node(out))
+        }
+        _ => Ok(list_node(vec![step.clone(), acc.clone()])),
+    }
+}
+
+fn expand_and(args: &[SyntaxObj], gensym: &mut Gensym) -> Node {
+    match args.len() {
+        0 => bool_node(true),
+        1 => args[0].node.clone(),
+        _ => {
+            let name = gensym.fresh("tmp");
+            let tmp = symbol_node(&name);
+            let binding = vector_node(vec![tmp.clone(), args[0].node.clone()]);
+            let rest = expand_and(&args[1..], gensym);
+            let if_expr = list_node(vec![
+                symbol_node("if"),
+                tmp.clone(),
+                rest,
+                bool_node(false),
+            ]);
+            list_node(vec![symbol_node("let"), binding, if_expr])
+        }
+    }
+}
+
+fn expand_or(args: &[SyntaxObj], gensym: &mut Gensym) -> Node {
+    match args.len() {
+        0 => bool_node(false),
+        1 => args[0].node.clone(),
+        _ => {
+            let name = gensym.fresh("tmp");
+            let tmp = symbol_node(&name);
+            let binding = vector_node(vec![tmp.clone(), args[0].node.clone()]);
+            let rest = expand_or(&args[1..], gensym);
+            let if_expr = list_node(vec![
+                symbol_node("if"),
+                tmp.clone(),
+                tmp.clone(),
+                rest,
+            ]);
+            list_node(vec![symbol_node("let"), binding, if_expr])
+        }
+    }
+}
+
+fn is_else_keyword(node: &Node) -> bool {
+    matches!(
+        node.kind,
+        NodeKind::Atom(Atom::Keyword { ns: None, ref name }) if name == "else"
+    )
+}
+
+fn unit_node() -> Node {
+    Node::atom(Atom::Unit, Span::synthetic())
+}
+
+fn bool_node(value: bool) -> Node {
+    Node::atom(Atom::Bool(value), Span::synthetic())
+}
+
+fn panic_node(msg: &str) -> Node {
+    list_node(vec![
+        symbol_node("panic"),
+        Node::atom(Atom::Str(msg.to_string()), Span::synthetic()),
+    ])
+}
+
+fn symbol_node(name: &str) -> Node {
+    Node::atom(
+        Atom::Symbol {
+            ns: None,
+            name: name.to_string(),
+        },
+        Span::synthetic(),
+    )
+}
+
+fn list_node(items: Vec<Node>) -> Node {
+    Node::new(NodeKind::List(items), Span::synthetic())
+}
+
+fn vector_node(items: Vec<Node>) -> Node {
+    Node::new(NodeKind::Vector(items), Span::synthetic())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1032,6 +1316,98 @@ mod tests {
         let nodes = read(src, FileId::SYNTHETIC).expect("parse");
         let expanded = expand_forms(&nodes).expect("expand");
         let expected = read("\"SELECT 1\"", FileId::SYNTHETIC).expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_when_basic() {
+        let src = r#"
+        (when ok (println "hi") (println "bye"))
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read(
+            "(if ok (do (println \"hi\") (println \"bye\")) unit)",
+            FileId::SYNTHETIC,
+        )
+        .expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_unless_basic() {
+        let src = r#"
+        (unless ok (println "no"))
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected =
+            read("(if (not ok) (do (println \"no\")) unit)", FileId::SYNTHETIC)
+                .expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_cond_with_else() {
+        let src = r#"
+        (cond (< x 0) :neg :else :pos)
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read("(if (< x 0) :neg :pos)", FileId::SYNTHETIC)
+            .expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_thread_first() {
+        let src = r#"
+        (-> x (f a) g)
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read("(g (f x a))", FileId::SYNTHETIC).expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_thread_last() {
+        let src = r#"
+        (->> x (f a) g)
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read("(g (f a x))", FileId::SYNTHETIC).expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_and_short_circuit() {
+        let src = r#"
+        (and a b c)
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read(
+            "(let [tmp__1__auto__ a]\n  (if tmp__1__auto__\n      (let [tmp__2__auto__ b]\n        (if tmp__2__auto__ c false))\n      false))",
+            FileId::SYNTHETIC,
+        )
+        .expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_or_short_circuit() {
+        let src = r#"
+        (or a b c)
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read(
+            "(let [tmp__1__auto__ a]\n  (if tmp__1__auto__\n      tmp__1__auto__\n      (let [tmp__2__auto__ b]\n        (if tmp__2__auto__ tmp__2__auto__ c))))",
+            FileId::SYNTHETIC,
+        )
+        .expect("parse expected");
         assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
     }
 
