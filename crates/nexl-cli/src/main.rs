@@ -114,6 +114,8 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
 
 fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()> {
     let env = nexl_eval::stdlib::standard_env();
+    let mut type_env = nexl_infer::Env::new();
+    let mut type_state = nexl_infer::InferState::new();
     let mut buffer = String::new();
 
     loop {
@@ -128,14 +130,38 @@ fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()
             break;
         }
 
+        if buffer.is_empty() {
+            let trimmed = line.trim_end_matches('\n');
+            if let Some(command) = trimmed.strip_prefix(':') {
+                match handle_repl_command(command, &type_env, &mut output)? {
+                    ReplControl::Continue => continue,
+                    ReplControl::Quit => break,
+                }
+            }
+        }
+
         buffer.push_str(&line);
         if !delimiters_balanced(&buffer) {
             continue;
         }
 
         let source = buffer.trim_end_matches('\n');
-        for result in nexl_eval::repl::eval_line(source, &env) {
-            match result {
+        let nodes = match nexl_reader::read(source, meta::FileId::SYNTHETIC) {
+            Ok(nodes) => nodes,
+            Err(diag) => {
+                writeln!(output, "error: {diag}")?;
+                buffer.clear();
+                continue;
+            }
+        };
+
+        let type_errors = update_repl_type_env(&nodes, &mut type_env, &mut type_state);
+        for error in type_errors {
+            writeln!(output, "type error: {error}")?;
+        }
+
+        for node in &nodes {
+            match nexl_eval::eval::eval(node, &env) {
                 Ok(value) => writeln!(output, "{value}")?,
                 Err(message) => writeln!(output, "error: {message}")?,
             }
@@ -145,6 +171,99 @@ fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()
     }
 
     Ok(())
+}
+
+enum ReplControl {
+    Continue,
+    Quit,
+}
+
+fn handle_repl_command<W: Write>(
+    command_line: &str,
+    type_env: &nexl_infer::Env,
+    output: &mut W,
+) -> io::Result<ReplControl> {
+    let command_line = command_line.trim();
+    if command_line == "help" {
+        write_repl_help(output)?;
+        return Ok(ReplControl::Continue);
+    }
+    if command_line == "quit" {
+        return Ok(ReplControl::Quit);
+    }
+    if let Some(rest) = command_line.strip_prefix("type") {
+        let expr = rest.trim();
+        if expr.is_empty() {
+            writeln!(output, "error: :type requires an expression")?;
+            return Ok(ReplControl::Continue);
+        }
+        match infer_repl_type(expr, type_env) {
+            Ok(ty) => writeln!(output, "{ty}")?,
+            Err(message) => writeln!(output, "error: {message}")?,
+        }
+        return Ok(ReplControl::Continue);
+    }
+
+    writeln!(output, "error: unknown command :{command_line}")?;
+    Ok(ReplControl::Continue)
+}
+
+fn write_repl_help<W: Write>(output: &mut W) -> io::Result<()> {
+    writeln!(output, "Commands:")?;
+    writeln!(output, "  :help         Show this help")?;
+    writeln!(output, "  :quit         Exit the REPL")?;
+    writeln!(output, "  :type <expr>  Show inferred type")?;
+    Ok(())
+}
+
+fn infer_repl_type(expr: &str, env: &nexl_infer::Env) -> Result<String, String> {
+    let nodes =
+        nexl_reader::read(expr, meta::FileId::SYNTHETIC).map_err(|e| format!("{e}"))?;
+    if nodes.len() != 1 {
+        return Err("expected a single form".to_string());
+    }
+    let mut state = nexl_infer::InferState::new();
+    let ty =
+        nexl_infer::synth(&nodes[0], env, &mut state).map_err(|e| format!("{e}"))?;
+    if !state.errors.is_empty() {
+        let message = state
+            .errors
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(message);
+    }
+    Ok(state.subst.apply(&ty).to_string())
+}
+
+fn update_repl_type_env(
+    nodes: &[Node],
+    env: &mut nexl_infer::Env,
+    state: &mut nexl_infer::InferState,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for node in nodes {
+        if list_head_is(node, "def") {
+            match nexl_infer::infer_def(node, env, state) {
+                Ok((_name, _ty, new_env)) => *env = new_env,
+                Err(err) => errors.push(err.to_string()),
+            }
+            continue;
+        }
+        if list_head_is(node, "defn") {
+            match nexl_infer::infer_defn(node, env, state) {
+                Ok((_name, _ty, new_env)) => *env = new_env,
+                Err(err) => errors.push(err.to_string()),
+            }
+        }
+    }
+
+    if !state.errors.is_empty() {
+        errors.extend(state.errors.drain(..).map(|error| error.to_string()));
+    }
+
+    errors
 }
 
 fn delimiters_balanced(source: &str) -> bool {
@@ -370,6 +489,35 @@ mod tests {
         assert!(output.contains("...> "));
         assert!(output.contains('3'));
         assert!(!output.contains("error:"));
+    }
+
+    #[test]
+    fn repl_help_command_prints_usage() {
+        let input = Cursor::new(b":help\n");
+        let mut output = Vec::new();
+        repl_loop(input, &mut output).expect("repl loop");
+        let output = String::from_utf8(output).expect("utf8");
+        assert!(output.contains(":help"));
+        assert!(output.contains(":quit"));
+        assert!(output.contains(":type"));
+    }
+
+    #[test]
+    fn repl_quit_exits_immediately() {
+        let input = Cursor::new(b":quit\n(+ 1 2)\n");
+        let mut output = Vec::new();
+        repl_loop(input, &mut output).expect("repl loop");
+        let output = String::from_utf8(output).expect("utf8");
+        assert!(!output.contains('3'));
+    }
+
+    #[test]
+    fn repl_type_command_prints_type() {
+        let input = Cursor::new(b":type 1\n");
+        let mut output = Vec::new();
+        repl_loop(input, &mut output).expect("repl loop");
+        let output = String::from_utf8(output).expect("utf8");
+        assert!(output.contains("Int"));
     }
 
     #[test]
