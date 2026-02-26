@@ -23,14 +23,32 @@ pub fn expand_forms(nodes: &[Node]) -> Result<Vec<Node>, MacroError> {
 }
 
 #[derive(Debug, Clone)]
-struct MacroDef {
+enum MacroKind {
+    Proc(ProcMacro),
+    Syntax(SyntaxMacro),
+}
+
+#[derive(Debug, Clone)]
+struct ProcMacro {
     params: Vec<String>,
     rest: Option<String>,
     body: Node,
 }
 
+#[derive(Debug, Clone)]
+struct SyntaxMacro {
+    clauses: Vec<SyntaxClause>,
+}
+
+#[derive(Debug, Clone)]
+struct SyntaxClause {
+    params: Vec<String>,
+    rest: Option<String>,
+    template: Node,
+}
+
 struct Expander {
-    macros: HashMap<String, MacroDef>,
+    macros: HashMap<String, MacroKind>,
 }
 
 impl Expander {
@@ -55,6 +73,10 @@ impl Expander {
             self.macros.insert(def.0, def.1);
             return Ok(None);
         }
+        if let Some(def) = parse_defmacro_syntax(node)? {
+            self.macros.insert(def.0, def.1);
+            return Ok(None);
+        }
 
         let expanded = match &node.kind {
             NodeKind::List(items) => {
@@ -65,7 +87,10 @@ impl Expander {
                     && let Some(name) = symbol_name(head)
                     && let Some(def) = self.macros.get(name).cloned()
                 {
-                    let call = expand_macro_call(&def, node)?;
+                    let call = match def {
+                        MacroKind::Proc(def) => expand_macro_call(&def, node)?,
+                        MacroKind::Syntax(def) => expand_syntax_macro(&def, node)?,
+                    };
                     if let Some(out) = self.expand_node(&call)? {
                         return Ok(Some(out));
                     }
@@ -121,7 +146,7 @@ impl Expander {
     }
 }
 
-fn parse_defmacro(node: &Node) -> Result<Option<(String, MacroDef)>, MacroError> {
+fn parse_defmacro(node: &Node) -> Result<Option<(String, MacroKind)>, MacroError> {
     let NodeKind::List(items) = &node.kind else {
         return Ok(None);
     };
@@ -168,11 +193,60 @@ fn parse_defmacro(node: &Node) -> Result<Option<(String, MacroDef)>, MacroError>
     };
     Ok(Some((
         name.clone(),
-        MacroDef {
+        MacroKind::Proc(ProcMacro {
             params: args,
             rest,
             body,
-        },
+        }),
+    )))
+}
+
+fn parse_defmacro_syntax(node: &Node) -> Result<Option<(String, MacroKind)>, MacroError> {
+    let NodeKind::List(items) = &node.kind else {
+        return Ok(None);
+    };
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let head = &items[0];
+    let Some(head_name) = symbol_name(head) else {
+        return Ok(None);
+    };
+    if head_name != "defmacro-syntax" {
+        return Ok(None);
+    }
+    if items.len() < 3 {
+        return Err(MacroError::Message(
+            "defmacro-syntax requires name and clauses".to_string(),
+        ));
+    }
+    let name = symbol_name(&items[1])
+        .ok_or_else(|| MacroError::Message("defmacro-syntax name must be a symbol".to_string()))?
+        .to_string();
+
+    let mut clauses = Vec::new();
+    for clause in &items[2..] {
+        let NodeKind::Vector(parts) = &clause.kind else {
+            return Err(MacroError::Message(
+                "defmacro-syntax clauses must be vectors".to_string(),
+            ));
+        };
+        if parts.len() != 2 {
+            return Err(MacroError::Message(
+                "defmacro-syntax clause must have pattern and template".to_string(),
+            ));
+        }
+        let (params, rest) = parse_syntax_pattern(&name, &parts[0])?;
+        clauses.push(SyntaxClause {
+            params,
+            rest,
+            template: parts[1].clone(),
+        });
+    }
+
+    Ok(Some((
+        name.clone(),
+        MacroKind::Syntax(SyntaxMacro { clauses }),
     )))
 }
 
@@ -207,7 +281,7 @@ fn parse_params(params: &[Node]) -> Result<(Vec<String>, Option<String>), MacroE
     Ok((args, rest))
 }
 
-fn expand_macro_call(def: &MacroDef, call: &Node) -> Result<Node, MacroError> {
+fn expand_macro_call(def: &ProcMacro, call: &Node) -> Result<Node, MacroError> {
     let NodeKind::List(items) = &call.kind else {
         return Err(MacroError::Message("macro call must be a list".to_string()));
     };
@@ -242,6 +316,120 @@ fn expand_macro_call(def: &MacroDef, call: &Node) -> Result<Node, MacroError> {
     let result = eval_macro_body(&def.body, &mut ctx)?;
     let flipped = result.flip_scope_deep(intro_scope);
     Ok(flipped.node)
+}
+
+fn expand_syntax_macro(def: &SyntaxMacro, call: &Node) -> Result<Node, MacroError> {
+    let NodeKind::List(items) = &call.kind else {
+        return Err(MacroError::Message("macro call must be a list".to_string()));
+    };
+    let args = &items[1..];
+    for clause in &def.clauses {
+        if !pattern_arity_matches(clause, args.len()) {
+            continue;
+        }
+        let mut bindings: HashMap<String, MacroBinding> = HashMap::new();
+        let intro_scope = Scope::fresh();
+        for (param, arg) in clause.params.iter().zip(args.iter()) {
+            let stx = SyntaxObj::new(arg.clone(), ScopeSet::new()).add_scope_deep(intro_scope);
+            bindings.insert(param.clone(), MacroBinding::One(stx));
+        }
+        if let Some(rest_name) = &clause.rest {
+            let rest_args = args[clause.params.len()..]
+                .iter()
+                .cloned()
+                .map(|arg| SyntaxObj::new(arg, ScopeSet::new()).add_scope_deep(intro_scope))
+                .collect::<Vec<_>>();
+            bindings.insert(rest_name.clone(), MacroBinding::Many(rest_args));
+        }
+        bindings.insert(
+            "&form".to_string(),
+            MacroBinding::One(
+                SyntaxObj::new(call.clone(), ScopeSet::new()).add_scope_deep(intro_scope),
+            ),
+        );
+        let mut ctx = ExpansionCtx::new(bindings);
+        let result = eval_macro_body(&clause.template, &mut ctx)?;
+        let flipped = result.flip_scope_deep(intro_scope);
+        return Ok(flipped.node);
+    }
+
+    Err(MacroError::Message(
+        "no matching defmacro-syntax clause".to_string(),
+    ))
+}
+
+fn parse_syntax_pattern(name: &str, pattern: &Node) -> Result<(Vec<String>, Option<String>), MacroError> {
+    let NodeKind::List(items) = &pattern.kind else {
+        return Err(MacroError::Message(
+            "defmacro-syntax pattern must be a list".to_string(),
+        ));
+    };
+    let Some(head) = items.first() else {
+        return Err(MacroError::Message(
+            "defmacro-syntax pattern cannot be empty".to_string(),
+        ));
+    };
+    let head_name = symbol_name(head)
+        .ok_or_else(|| MacroError::Message("defmacro-syntax pattern head must be symbol".to_string()))?;
+    if head_name != name {
+        return Err(MacroError::Message(
+            "defmacro-syntax pattern head must match macro name".to_string(),
+        ));
+    }
+    let mut params = Vec::new();
+    let mut rest = None;
+    let tail = &items[1..];
+    if tail.len() >= 2 {
+        let ellipsis_len = if symbol_name(&tail[tail.len() - 1]) == Some("...") {
+            Some(1)
+        } else if tail.len() >= 4
+            && symbol_name(&tail[tail.len() - 1]) == Some(".")
+            && symbol_name(&tail[tail.len() - 2]) == Some(".")
+            && symbol_name(&tail[tail.len() - 3]) == Some(".")
+        {
+            Some(3)
+        } else {
+            None
+        };
+
+        if let Some(ellipsis_len) = ellipsis_len {
+            let rest_index = tail.len() - 1 - ellipsis_len;
+            let rest_name = symbol_name(&tail[rest_index]).ok_or_else(|| {
+                MacroError::Message("ellipsis must follow a symbol pattern".to_string())
+            })?;
+            params.extend(
+                tail[..rest_index]
+                    .iter()
+                    .map(|node| {
+                        symbol_name(node)
+                            .ok_or_else(|| {
+                                MacroError::Message(
+                                    "defmacro-syntax params must be symbols".to_string(),
+                                )
+                            })
+                            .map(|s| s.to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            rest = Some(rest_name.to_string());
+            return Ok((params, rest));
+        }
+    }
+    for node in tail {
+        let name = symbol_name(node).ok_or_else(|| {
+            MacroError::Message("defmacro-syntax params must be symbols".to_string())
+        })?;
+        params.push(name.to_string());
+    }
+    Ok((params, rest))
+}
+
+fn pattern_arity_matches(clause: &SyntaxClause, arg_len: usize) -> bool {
+    if clause.rest.is_some() {
+        arg_len >= clause.params.len()
+    } else {
+        arg_len == clause.params.len()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -594,6 +782,33 @@ mod tests {
             assert_eq!(name, first);
             assert_ne!(name, "tmp#");
         }
+    }
+
+    #[test]
+    fn expand_defmacro_syntax_selects_clause() {
+        let src = r#"
+        (defmacro-syntax my-or
+          [(my-or) false]
+          [(my-or e) e])
+        (my-or true)
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read("true", FileId::SYNTHETIC).expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_defmacro_syntax_rest_pattern() {
+        let src = r#"
+        (defmacro-syntax collect
+          [(collect x xs ...) `(list ~x ~@xs)])
+        (collect 1 2 3)
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read("(list 1 2 3)", FileId::SYNTHETIC).expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
     }
 
     fn collect_symbols(node: &Node, out: &mut Vec<String>) {

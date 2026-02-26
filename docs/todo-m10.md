@@ -3,7 +3,7 @@
 ## Core
 - [x] Scope sets for hygienic expansion (ADR-009)
 - [x] `defmacro` (AST in → AST out)
-- [ ] `defmacro-syntax` (pattern-based macros)
+- [x] `defmacro-syntax` (pattern-based macros)
 - [ ] `defmacro-elab` (elaboration macros)
 - [ ] `defreader-text` (reader macros)
 - [ ] Built-in macros: `->`, `->>`, `cond`, `when`, `unless`, `and`, `or`
