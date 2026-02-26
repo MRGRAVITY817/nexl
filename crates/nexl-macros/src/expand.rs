@@ -73,6 +73,10 @@ impl Expander {
             self.macros.insert(def.0, def.1);
             return Ok(None);
         }
+        if let Some(def) = parse_defmacro_elab(node)? {
+            self.macros.insert(def.0, def.1);
+            return Ok(None);
+        }
         if let Some(def) = parse_defmacro_syntax(node)? {
             self.macros.insert(def.0, def.1);
             return Ok(None);
@@ -201,6 +205,75 @@ fn parse_defmacro(node: &Node) -> Result<Option<(String, MacroKind)>, MacroError
     )))
 }
 
+fn parse_defmacro_elab(node: &Node) -> Result<Option<(String, MacroKind)>, MacroError> {
+    let NodeKind::List(items) = &node.kind else {
+        return Ok(None);
+    };
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let head = &items[0];
+    let Some(head_name) = symbol_name(head) else {
+        return Ok(None);
+    };
+    if head_name != "defmacro-elab" {
+        return Ok(None);
+    }
+    if items.len() < 4 {
+        return Err(MacroError::Message(
+            "defmacro-elab requires name, params, body".to_string(),
+        ));
+    }
+    let name = symbol_name(&items[1])
+        .ok_or_else(|| MacroError::Message("defmacro-elab name must be a symbol".to_string()))?
+        .to_string();
+    let params = match &items[2].kind {
+        NodeKind::Vector(items) => items,
+        _ => {
+            return Err(MacroError::Message(
+                "defmacro-elab params must be a vector".to_string(),
+            ))
+        }
+    };
+    let (args, rest) = parse_params_typed(params)?;
+
+    let mut body_start = 3;
+    if items.len() >= 6 && symbol_name(&items[3]) == Some("->") {
+        body_start = 5;
+    }
+    if items.len() <= body_start {
+        return Err(MacroError::Message(
+            "defmacro-elab requires a body expression".to_string(),
+        ));
+    }
+
+    let body = if items.len() == body_start + 1 {
+        items[body_start].clone()
+    } else if items.len() == body_start + 2
+        && symbol_name(&items[body_start]) == Some("&")
+        && symbol_name(&items[body_start + 1]) == Some("form")
+    {
+        Node::atom(
+            Atom::Symbol {
+                ns: None,
+                name: "&form".to_string(),
+            },
+            items[body_start].span,
+        )
+    } else {
+        make_do(&items[body_start..])
+    };
+
+    Ok(Some((
+        name.clone(),
+        MacroKind::Proc(ProcMacro {
+            params: args,
+            rest,
+            body,
+        }),
+    )))
+}
+
 fn parse_defmacro_syntax(node: &Node) -> Result<Option<(String, MacroKind)>, MacroError> {
     let NodeKind::List(items) = &node.kind else {
         return Ok(None);
@@ -271,6 +344,61 @@ fn parse_params(params: &[Node]) -> Result<(Vec<String>, Option<String>), MacroE
                 rest = Some(rest_name);
             }
             NodeKind::Atom(Atom::Symbol { ns: None, name }) => args.push(name.clone()),
+            _ => {
+                return Err(MacroError::Message(
+                    "macro params must be symbols".to_string(),
+                ))
+            }
+        }
+    }
+    Ok((args, rest))
+}
+
+fn parse_params_typed(params: &[Node]) -> Result<(Vec<String>, Option<String>), MacroError> {
+    let mut args = Vec::new();
+    let mut rest = None;
+    let mut i = 0;
+    while i < params.len() {
+        let param = &params[i];
+        match &param.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "&" => {
+                i += 1;
+                let rest_node = params.get(i).ok_or_else(|| {
+                    MacroError::Message("expected rest param after &".to_string())
+                })?;
+                let rest_name = symbol_name(rest_node).ok_or_else(|| {
+                    MacroError::Message("rest param must be a symbol".to_string())
+                })?;
+                i += 1;
+                if i < params.len() && symbol_name(&params[i]) == Some(":") {
+                    i += 1;
+                    if i >= params.len() {
+                        return Err(MacroError::Message(
+                            "expected type annotation after :".to_string(),
+                        ));
+                    }
+                    i += 1;
+                }
+                if i < params.len() {
+                    return Err(MacroError::Message(
+                        "rest param must be last in parameter list".to_string(),
+                    ));
+                }
+                rest = Some(rest_name.to_string());
+            }
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+                args.push(name.clone());
+                i += 1;
+                if i < params.len() && symbol_name(&params[i]) == Some(":") {
+                    i += 1;
+                    if i >= params.len() {
+                        return Err(MacroError::Message(
+                            "expected type annotation after :".to_string(),
+                        ));
+                    }
+                    i += 1;
+                }
+            }
             _ => {
                 return Err(MacroError::Message(
                     "macro params must be symbols".to_string(),
@@ -808,6 +936,18 @@ mod tests {
         let nodes = read(src, FileId::SYNTHETIC).expect("parse");
         let expanded = expand_forms(&nodes).expect("expand");
         let expected = read("(list 1 2 3)", FileId::SYNTHETIC).expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_defmacro_elab_like_defmacro() {
+        let src = r#"
+        (defmacro-elab id [x] x)
+        (id 1)
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read("1", FileId::SYNTHETIC).expect("parse expected");
         assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
     }
 
