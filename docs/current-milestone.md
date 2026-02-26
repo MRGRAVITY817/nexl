@@ -1,22 +1,29 @@
-# Current Milestone: M14 — Standard Library
+# Current Milestone: M15 — Advanced Toolchain
 
-**Goal:** Implement all §11.1 core modules.
+**Goal:** LSP, package manager, documentation, sandbox mode.
 
-**Crates:** existing crates + new stdlib modules
+**Crates:** `nexl-lsp`, `nexl-pkg`, `nexl-doc`, plus CLI subcommands
 
 **Spec sections to reference:**
-- §11 Standard Library (lines ~2600+)
+- §14.1 CLI commands (lines ~3227–3255)
+- §14.7 Documentation (lines ~3465–3473)
+- §8.4 Content-addressed definitions (lines ~2521–2560)
+- §8.11 Package vs module (lines ~2667–2684)
+- LSP section (lines ~3443–3463)
 
-**Key ADRs:**
-- ADR-008: No HKT, compiler-dispatched map/filter
-- ADR-011: Naming conventions (append/put/remove/each/etc.)
+**Key design points:**
+- LSP and compiler share the same analysis engine (incremental queries)
+- Effects ARE the capability system → sandbox is a thin layer
+- Content-addressed definitions for packages
+- Semver enforcement via API diffing
 
 **Acceptance criteria:**
-- core, str, math, conv, io, json, time, crypto, log, test, net, async modules
-- All §11.1 functions implemented and tested
-- `nexl` binary can compile real programs using the stdlib
+- `nexl lsp` provides diagnostics, hover, go-to-def, completions
+- `nexl pkg add/remove/lock` manages dependencies
+- `nexl doc` generates HTML documentation
+- `nexl sandbox` restricts effects via CLI flags
 
-**When done:** Update this file to point to M15.
+**When done:** Update this file to point to M16.
 
-See `docs/todo-m14.md` for the task checklist.
+See `docs/todo-m15.md` for the task checklist.
 See `milestones.md` for the full plan.

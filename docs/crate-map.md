@@ -83,6 +83,20 @@ nexl-eval (updated)
 └── nexl-stdlib (M14)
 ```
 
+## M15 Crates
+
+```
+nexl-lsp
+├── nexl-reader (M0)
+├── nexl-ast (M0)
+├── tower-lsp (external)
+├── tokio (external)
+└── dashmap (external)
+
+nexl-cli (updated)
+└── nexl-lsp (M15)
+```
+
 ## Planned (future milestones)
 
 ```

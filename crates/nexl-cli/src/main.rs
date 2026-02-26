@@ -38,6 +38,7 @@ enum Command {
         #[arg(value_name = "FILE")]
         input: PathBuf,
     },
+    Lsp,
 }
 
 fn main() {
@@ -66,6 +67,11 @@ fn main() {
                 print_error(&message);
                 process::exit(1);
             }
+        }
+        Command::Lsp => {
+            let rt = tokio::runtime::Runtime::new()
+                .expect("failed to create tokio runtime");
+            rt.block_on(nexl_lsp::run_server());
         }
     }
 }
@@ -637,5 +643,11 @@ mod tests {
         let result = command_check(path.clone());
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "check should succeed, got: {result:?}");
+    }
+
+    #[test]
+    fn parse_lsp_without_args() {
+        let cli = Cli::try_parse_from(["nexl", "lsp"]).expect("parse");
+        assert_eq!(cli.command, Command::Lsp);
     }
 }

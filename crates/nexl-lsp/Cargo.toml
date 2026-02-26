@@ -1,0 +1,15 @@
+[package]
+name = "nexl-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+dashmap = "6"
+nexl-reader = { path = "../nexl-reader" }
+nexl-ast = { path = "../nexl-ast" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

@@ -14,4 +14,6 @@ nexl-infer = { path = "../nexl-infer" }
 nexl-ir = { path = "../nexl-ir" }
 nexl-wasm = { path = "../nexl-wasm" }
 nexl-native = { path = "../nexl-native" }
+nexl-lsp = { path = "../nexl-lsp" }
+tokio = { version = "1", features = ["full"] }
 meta = { package = "nexl-ast", path = "../nexl-ast" }
