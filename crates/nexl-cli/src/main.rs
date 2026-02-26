@@ -118,6 +118,12 @@ fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()
     let mut type_state = nexl_infer::InferState::new();
     let mut buffer = String::new();
 
+    writeln!(
+        output,
+        "nexl {} | :help for commands",
+        env!("CARGO_PKG_VERSION")
+    )?;
+
     loop {
         let prompt = if buffer.is_empty() { "nexl> " } else { "...> " };
         output.write_all(prompt.as_bytes())?;
@@ -518,6 +524,16 @@ mod tests {
         repl_loop(input, &mut output).expect("repl loop");
         let output = String::from_utf8(output).expect("utf8");
         assert!(output.contains("Int"));
+    }
+
+    #[test]
+    fn repl_banner_printed_on_start() {
+        let input = Cursor::new(b":quit\n");
+        let mut output = Vec::new();
+        repl_loop(input, &mut output).expect("repl loop");
+        let output = String::from_utf8(output).expect("utf8");
+        let banner = format!("nexl {} | :help for commands", env!("CARGO_PKG_VERSION"));
+        assert!(output.contains(&banner));
     }
 
     #[test]

@@ -10,7 +10,7 @@
 ## REPL improvements
 - [x] Multi-line input — detect unbalanced delimiters, prompt for continuation
 - [x] REPL commands: `:help`, `:quit`, `:type <expr>`
-- [ ] Banner on startup (`nexl 0.1.0 | :help for commands`)
+- [x] Banner on startup (`nexl 0.1.0 | :help for commands`)
 
 ## Error rendering
 - [ ] Source-annotated errors with line/column (miette integration for CLI output)
