@@ -93,6 +93,9 @@ nexl-lsp
 ├── tokio (external)
 └── dashmap (external)
 
+nexl-pkg
+└── serde (external)
+
 nexl-cli (updated)
 └── nexl-lsp (M15)
 ```

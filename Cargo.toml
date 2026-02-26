@@ -8,7 +8,7 @@ members = [
     "crates/nexl-eval",
     "crates/nexl-types",
     "crates/nexl-infer", "crates/nexl-modules",
-    "crates/nexl-effects", "crates/nexl-ir", "crates/nexl-wasm", "crates/nexl-memory", "crates/nexl-cli", "crates/nexl-macros", "crates/nexl-native", "crates/nexl-stdlib", "crates/nexl-lsp",
+    "crates/nexl-effects", "crates/nexl-ir", "crates/nexl-wasm", "crates/nexl-memory", "crates/nexl-cli", "crates/nexl-macros", "crates/nexl-native", "crates/nexl-stdlib", "crates/nexl-lsp", "crates/nexl-pkg",
 ]
 
 [workspace.package]
