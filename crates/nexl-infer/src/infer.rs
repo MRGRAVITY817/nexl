@@ -2595,6 +2595,7 @@ pub fn parse_type_expr(node: &Node) -> Result<Type, TypeError> {
                 "Fn" => parse_fn_type(items, node),
                 "Option" => parse_adt_type("Option", 1, items, node),
                 "Result" => parse_adt_type("Result", 2, items, node),
+                "Task" => parse_adt_type("Task", 1, items, node),
                 _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
                     description: format!("unknown type constructor `{head_name}`"),
                 })
@@ -8871,6 +8872,21 @@ mod tests {
         let node = parse_one("(Option Int)");
         let ty = parse_type_expr(&node).unwrap();
         assert_eq!(ty, option_ty(Type::Int));
+    }
+
+    // -- Test 2 (parse_type_expr: Task) --
+    #[test]
+    fn parse_type_task() {
+        // parse_type_expr on "(Task Int)" → Adt { "Task", [Int] }  (spec §5.3)
+        let node = parse_one("(Task Int)");
+        let ty = parse_type_expr(&node).unwrap();
+        assert_eq!(
+            ty,
+            Type::Adt {
+                name: "Task".to_string(),
+                args: vec![Type::Int],
+            }
+        );
     }
 
     // -- Test 3 (? unwraps Ok from Result) --
