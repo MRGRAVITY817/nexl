@@ -1036,7 +1036,27 @@ mod tests {
         assert!(found, "WASM return_call opcode (0x12) not found for inter-func tail call");
     }
 
-    // ─── 28. loop without recur emits valid WASM ──────────────────────────────
+    // ─── 28. end-to-end: trivial program validates with wasmparser ───────────
+    #[test]
+    fn e2e_trivial_program_validates() {
+        // (defn main [] 42) — compile and validate the WASM bytes
+        let bytes = emit("(defn main [] 42)");
+        wasmparser::validate(&bytes).expect("emitted WASM should be structurally valid");
+    }
+
+    // ─── 29. end-to-end: wasm bytes can be written to a file ─────────────────
+    #[test]
+    fn e2e_wasm_file_written() {
+        use std::io::Write;
+        let bytes = emit("(defn main [] 42)");
+        let mut tmp = tempfile::NamedTempFile::new().expect("create temp file");
+        tmp.write_all(&bytes).expect("write wasm bytes");
+        // Verify the file starts with the WASM magic
+        let on_disk = std::fs::read(tmp.path()).expect("read back temp file");
+        assert_eq!(&on_disk[..4], &WASM_MAGIC, "file should start with WASM magic");
+    }
+
+    // ─── 30. loop without recur emits valid WASM ──────────────────────────────
     #[test]
     fn emit_loop_simple() {
         // (defn f [n] (loop [i n] i)) — loop that immediately returns its var

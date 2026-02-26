@@ -1,15 +1,11 @@
 [package]
-name = "nexl-wasm"
+name = "nexl-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-nexl-ir = { version = "0.1.0", path = "../nexl-ir" }
-wasm-encoder = "0.245.1"
-
-[dev-dependencies]
 nexl-reader = { path = "../nexl-reader" }
+nexl-ir = { path = "../nexl-ir" }
+nexl-wasm = { path = "../nexl-wasm" }
 meta = { package = "nexl-ast", path = "../nexl-ast" }
-wasmparser = "0.245.1"
-tempfile = "3"

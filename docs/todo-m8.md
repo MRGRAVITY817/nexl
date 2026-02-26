@@ -25,7 +25,7 @@
 - [x] General tail calls → WASM `return_call`
 
 ## Output
-- [ ] End-to-end: compile a trivial Nexl program to a runnable .wasm file (Wasmtime)
+- [x] End-to-end: compile a trivial Nexl program to a runnable .wasm file (Wasmtime)
 
 ## Blocked
 - [ ] (none yet)

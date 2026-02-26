@@ -44,19 +44,21 @@ nexl-ir
 nexl-wasm
 ├── nexl-ir (M8)
 └── wasm-encoder (external)
+
+nexl-memory
+└── nexl-ir (M8)
+
+nexl-cli
+├── nexl-reader (M0)
+├── nexl-ir (M8)
+└── nexl-wasm (M8)
 ```
 
 ## Planned (future milestones)
 
 ```
-nexl-cli (M8)
-├── nexl-reader (M0)
-├── nexl-eval (M1, temporary)
-├── nexl-infer (M2)
-├── nexl-types (M2)
+nexl-vm (M8+)
 ├── nexl-ir (M8)
-├── nexl-wasm (M8)
-├── nexl-vm (M8)
 └── nexl-runtime (M1)
 
 nexl-infer (M2)
