@@ -151,6 +151,7 @@ pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, Typ
         NodeKind::Vector(items) => synth_vec_literal(items, env, state),
         NodeKind::Map(entries) => synth_map_literal(entries, env, state),
         NodeKind::Set(items) => synth_set_literal(items, env, state),
+        NodeKind::Deref(inner) => synth_deref(inner, env, state),
         _ => unimplemented!("synth: {:?}", node.kind),
     };
     // Attach this node's span to any error that doesn't already carry one.
@@ -187,6 +188,22 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("?") => synth_question(items, env, state),
         _ => synth_application(items, env, state),
     }
+}
+
+fn synth_deref(inner: &Node, env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    let target_ty = synth(inner, env, state)?;
+    let value_var = state.fresh_var();
+    let expected = Type::Adt {
+        name: "Atom".to_string(),
+        args: vec![value_var.clone()],
+    };
+    nexl_types::unify(&target_ty, &expected, &mut state.subst).map_err(|e| {
+        e.with_help(format!(
+            "@ expects an Atom value, but got {}",
+            target_ty
+        ))
+    })?;
+    Ok(state.subst.apply(&value_var))
 }
 
 /// Synthesize the type of a `(loop [x0 v0 x1 v1 ...] body)` form.
@@ -2597,6 +2614,7 @@ pub fn parse_type_expr(node: &Node) -> Result<Type, TypeError> {
                 "Result" => parse_adt_type("Result", 2, items, node),
                 "Task" => parse_adt_type("Task", 1, items, node),
                 "Channel" => parse_adt_type("Channel", 1, items, node),
+                "Atom" => parse_adt_type("Atom", 1, items, node),
                 _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
                     description: format!("unknown type constructor `{head_name}`"),
                 })
@@ -4540,6 +4558,19 @@ mod tests {
             synth(&atom_node(Atom::Unit), &env, &mut state).unwrap(),
             Type::Unit
         );
+    }
+
+    // -- Test 13 --
+    #[test]
+    fn synth_deref_operator() {
+        let atom_int = Type::Adt {
+            name: "Atom".to_string(),
+            args: vec![Type::Int],
+        };
+        let env = Env::new().extend("counter", Scheme::mono(atom_int));
+        let mut state = InferState::new();
+        let node = parse_one("@counter");
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
     }
 
     // --- vector literal tests ---
@@ -8905,7 +8936,22 @@ mod tests {
         );
     }
 
-    // -- Test 4 (? unwraps Ok from Result) --
+    // -- Test 4 (parse_type_expr: Atom) --
+    #[test]
+    fn parse_type_atom() {
+        // parse_type_expr on "(Atom Int)" → Adt { "Atom", [Int] }  (spec §3.4 / §5.3)
+        let node = parse_one("(Atom Int)");
+        let ty = parse_type_expr(&node).unwrap();
+        assert_eq!(
+            ty,
+            Type::Adt {
+                name: "Atom".to_string(),
+                args: vec![Type::Int],
+            }
+        );
+    }
+
+    // -- Test 5 (? unwraps Ok from Result) --
     #[test]
     fn question_unwraps_ok_from_result() {
         // (defn f [x : (Result Int Str)] -> (Result Int Str)  (let [n (id x)?] x))

@@ -81,6 +81,7 @@ impl Env {
         self.extend_type_def(option)
             .extend_type_def(result)
             .with_builtin_effects()
+            .with_builtin_atoms()
     }
 
     fn with_builtin_effects(self) -> Self {
@@ -90,6 +91,14 @@ impl Env {
             .extend_effect_ops("Random", random_effect_ops())
             .extend_effect_schemes("Chan", chan_effect_ops())
             .extend_effect_schemes("Concurrent", concurrent_effect_ops())
+    }
+
+    fn with_builtin_atoms(self) -> Self {
+        let mut env = self;
+        for (name, scheme) in atom_ops() {
+            env = env.extend_builtin(name, scheme);
+        }
+        env
     }
 
     fn extend_effect_ops(mut self, effect: &str, ops: Vec<(&'static str, Type)>) -> Self {
@@ -474,6 +483,49 @@ fn concurrent_effect_ops() -> Vec<(&'static str, Scheme)> {
     ]
 }
 
+fn atom_ops() -> Vec<(&'static str, Scheme)> {
+    let t0 = TypeVar(0);
+    let atom_t0 = Type::Adt {
+        name: "Atom".to_string(),
+        args: vec![Type::Var(t0)],
+    };
+    let atom_ty = Type::Fn {
+        params: vec![Type::Var(t0)],
+        ret: Box::new(atom_t0.clone()),
+        effects: EffectRow::empty(),
+    };
+    let deref_ty = Type::Fn {
+        params: vec![atom_t0.clone()],
+        ret: Box::new(Type::Var(t0)),
+        effects: EffectRow::empty(),
+    };
+    let swap_inner = Type::Fn {
+        params: vec![Type::Var(t0)],
+        ret: Box::new(Type::Var(t0)),
+        effects: EffectRow::new(Vec::new(), Some("e".to_string())),
+    };
+    let swap_ty = Type::Fn {
+        params: vec![atom_t0.clone(), swap_inner],
+        ret: Box::new(Type::Var(t0)),
+        effects: EffectRow::empty(),
+    };
+    let reset_ty = Type::Fn {
+        params: vec![atom_t0, Type::Var(t0)],
+        ret: Box::new(Type::Var(t0)),
+        effects: EffectRow::empty(),
+    };
+    let scheme = |body| Scheme {
+        forall: [t0].into_iter().collect(),
+        body,
+    };
+    vec![
+        ("atom", scheme(atom_ty)),
+        ("deref", scheme(deref_ty)),
+        ("swap!", scheme(swap_ty)),
+        ("reset!", scheme(reset_ty)),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use nexl_types::{Constructor, EffectRow, Scheme, Type, TypeDef, TypeVar};
@@ -525,6 +577,13 @@ mod tests {
             qualified, &expected,
             "qualified `{effect}/{name}` scheme mismatch"
         );
+    }
+
+    fn assert_builtin_scheme(env: &Env, name: &str, expected: Scheme) {
+        let scheme = env
+            .lookup(name)
+            .unwrap_or_else(|| panic!("missing builtin `{name}`"));
+        assert_eq!(scheme, &expected, "builtin `{name}` scheme mismatch");
     }
 
     fn scheme_forall(t0: TypeVar, body: Type) -> Scheme {
@@ -921,6 +980,51 @@ mod tests {
         ];
         for (name, ty) in expected {
             assert_effect_scheme(&env, "Chan", name, scheme_forall(t0, ty));
+        }
+    }
+
+    // -- Test 20 --
+    #[test]
+    fn env_new_includes_atom_ops() {
+        let env = Env::new();
+        let t0 = TypeVar(0);
+        let atom_t0 = Type::Adt {
+            name: "Atom".to_string(),
+            args: vec![Type::Var(t0)],
+        };
+        let atom_ty = Type::Fn {
+            params: vec![Type::Var(t0)],
+            ret: Box::new(atom_t0.clone()),
+            effects: EffectRow::empty(),
+        };
+        let deref_ty = Type::Fn {
+            params: vec![atom_t0.clone()],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::empty(),
+        };
+        let swap_inner = Type::Fn {
+            params: vec![Type::Var(t0)],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::new(Vec::new(), Some("e".to_string())),
+        };
+        let swap_ty = Type::Fn {
+            params: vec![atom_t0.clone(), swap_inner],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::empty(),
+        };
+        let reset_ty = Type::Fn {
+            params: vec![atom_t0, Type::Var(t0)],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::empty(),
+        };
+        let expected = vec![
+            ("atom", atom_ty),
+            ("deref", deref_ty),
+            ("swap!", swap_ty),
+            ("reset!", reset_ty),
+        ];
+        for (name, ty) in expected {
+            assert_builtin_scheme(&env, name, scheme_forall(t0, ty));
         }
     }
 }

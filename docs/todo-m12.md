@@ -4,7 +4,7 @@
 - [x] `Concurrent` effect declaration (fork/join/race)
 - [x] `Task` type in type system
 - [x] `Channel` type and `Chan` effect declaration
-- [ ] Atoms (`atom`, `deref`/`@`, `swap!`, `reset!`) (ADR-007)
+- [x] Atoms (`atom`, `deref`/`@`, `swap!`, `reset!`) (ADR-007)
 - [ ] `par-let` parsing and desugaring
 - [ ] `go` shorthand sugar
 - [ ] `sleep` operation
