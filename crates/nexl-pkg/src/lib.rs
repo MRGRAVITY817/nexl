@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use thiserror::Error;
 
 /// A parsed `nexl.toml` manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -61,6 +62,19 @@ pub struct RegistrySpec {
     pub token_env: Option<String>,
 }
 
+/// Errors returned when parsing a `nexl.toml` manifest.
+#[derive(Debug, Error)]
+pub enum ManifestError {
+    /// The manifest is not valid TOML or does not match the schema.
+    #[error("invalid manifest: {0}")]
+    Toml(#[from] toml::de::Error),
+}
+
+/// Parse a `nexl.toml` manifest into its schema representation.
+pub fn parse_manifest(source: &str) -> Result<PackageManifest, ManifestError> {
+    Ok(toml::from_str(source)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,7 +97,7 @@ test-utils = "^1.0.0"
 bench-tools = "^0.5.0"
 "#;
 
-        let manifest: PackageManifest = toml::from_str(input).expect("manifest parse");
+        let manifest = parse_manifest(input).expect("manifest parse");
         assert_eq!(manifest.package.name, "my-app");
         assert_eq!(manifest.package.version, "1.0.0");
         assert_eq!(manifest.package.prefix, "my-app");
@@ -112,7 +126,7 @@ internal = { url = "https://registry.corp.example.com", token-env = "NEXL_CORP_T
 internal-lib = { version = "^1.0.0", registry = "internal" }
 "#;
 
-        let manifest: PackageManifest = toml::from_str(input).expect("manifest parse");
+        let manifest = parse_manifest(input).expect("manifest parse");
         let registry = manifest
             .registries
             .get("internal")
@@ -137,9 +151,21 @@ version = "0.1.0"
 prefix = "solo"
 "#;
 
-        let manifest: PackageManifest = toml::from_str(input).expect("manifest parse");
+        let manifest = parse_manifest(input).expect("manifest parse");
         assert!(manifest.dependencies.is_empty());
         assert!(manifest.dev_dependencies.is_empty());
         assert!(manifest.registries.is_empty());
+    }
+
+    #[test]
+    fn parse_manifest_missing_package_is_error() {
+        let input = r#"
+[dependencies]
+json = "~1.0.0"
+"#;
+
+        let err = parse_manifest(input).expect_err("missing package should error");
+        let message = err.to_string();
+        assert!(message.contains("package"), "unexpected error: {message}");
     }
 }

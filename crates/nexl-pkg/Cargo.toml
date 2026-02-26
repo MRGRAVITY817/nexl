@@ -6,6 +6,5 @@ license.workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-
-[dev-dependencies]
 toml = "0.8"
+thiserror = "2"

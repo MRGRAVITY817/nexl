@@ -1,7 +1,6 @@
 # M15 — Advanced Toolchain
 
 ## Package Manager Foundation
-- [ ] Implement `nexl.toml` parser (package name, version, deps, prefix)
 - [ ] Implement dependency resolution (flat, no version conflicts for Stage 0)
 - [ ] Wire `nexl pkg add/remove/lock` subcommands in CLI
 - [ ] Content-addressed definition store (SQLite-backed hash→artifact)
@@ -32,3 +31,4 @@
 - [x] Implement `textDocument/completion` (symbols in scope)
 - [x] Wire `nexl lsp` subcommand in CLI
 - [x] Create `nexl-pkg` crate with `nexl.toml` schema
+- [x] Implement `nexl.toml` parser (package name, version, deps, prefix)
