@@ -5,7 +5,7 @@
 - [x] `Task` type in type system
 - [x] `Channel` type and `Chan` effect declaration
 - [x] Atoms (`atom`, `deref`/`@`, `swap!`, `reset!`) (ADR-007)
-- [ ] `par-let` parsing and desugaring
+- [x] `par-let` parsing and desugaring
 - [ ] `go` shorthand sugar
 - [ ] `sleep` operation
 - [ ] `timeout` and `race`

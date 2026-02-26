@@ -170,6 +170,7 @@ pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, Typ
 fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     match head_sym(items) {
         Some("let") => synth_let(items, env, state),
+        Some("par-let") => synth_par_let(items, env, state),
         Some("do") => synth_do(items, env, state),
         Some("if") => synth_if(items, env, state),
         Some("fn") => synth_fn(items, env, state),
@@ -187,6 +188,130 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
         Some("assert-type") => synth_assert_type(items, env, state),
         Some("?") => synth_question(items, env, state),
         _ => synth_application(items, env, state),
+    }
+}
+
+fn synth_par_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // Structure: (par-let [bindings...] body)
+    if items.len() != 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "par-let expects (par-let [bindings...] body), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let bvec = match &items[1].kind {
+        NodeKind::Vector(elems) => elems,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "par-let bindings must be a vector".to_string(),
+            }));
+        }
+    };
+
+    if !bvec.len().is_multiple_of(2) {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "par-let binding vector must have an even number of forms, got {}",
+                bvec.len()
+            ),
+        }));
+    }
+
+    let mut bindings: Vec<(String, Node)> = Vec::new();
+    let mut i = 0;
+    while i < bvec.len() {
+        let name_node = &bvec[i];
+        let expr_node = bvec.get(i + 1).ok_or_else(|| {
+            TypeError::new(TypeErrorKind::MalformedForm {
+                description: "par-let binding is missing its init expression".to_string(),
+            })
+        })?;
+        let name = match &name_node.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "par-let binding name must be an unqualified symbol".to_string(),
+                }));
+            }
+        };
+        if is_colon_node(expr_node) {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "par-let bindings do not support type annotations".to_string(),
+            }));
+        }
+        bindings.push((name, expr_node.clone()));
+        i += 2;
+    }
+
+    let mut names: HashSet<String> = HashSet::new();
+    for (name, _) in &bindings {
+        names.insert(name.clone());
+    }
+
+    for (name, expr) in &bindings {
+        if par_let_references_any(expr, &names) {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!(
+                    "par-let bindings must be independent; `{name}` references another binding"
+                ),
+            }));
+        }
+    }
+
+    let sym = |name: &str| {
+        Node::atom(
+            Atom::Symbol {
+                ns: None,
+                name: name.to_string(),
+            },
+            Span::synthetic(),
+        )
+    };
+    let list = |items: Vec<Node>| Node::new(NodeKind::List(items), Span::synthetic());
+    let vector = |items: Vec<Node>| Node::new(NodeKind::Vector(items), Span::synthetic());
+
+    let mut let_bindings: Vec<Node> = Vec::new();
+    let mut task_names: Vec<(String, String)> = Vec::new();
+
+    for (idx, (name, expr)) in bindings.iter().enumerate() {
+        let task_name = format!("__par_task{idx}");
+        let fork_call = list(vec![
+            sym("fork"),
+            list(vec![sym("fn"), vector(Vec::new()), expr.clone()]),
+        ]);
+        let_bindings.push(sym(&task_name));
+        let_bindings.push(fork_call);
+        task_names.push((name.clone(), task_name));
+    }
+
+    for (name, task_name) in task_names {
+        let join_call = list(vec![sym("join"), sym(&task_name)]);
+        let_bindings.push(sym(&name));
+        let_bindings.push(join_call);
+    }
+
+    let let_node = list(vec![sym("let"), vector(let_bindings), items[2].clone()]);
+    synth(&let_node, env, state)
+}
+
+fn par_let_references_any(node: &Node, names: &HashSet<String>) -> bool {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => names.contains(name),
+        NodeKind::Atom(_) => false,
+        NodeKind::List(items) | NodeKind::Vector(items) | NodeKind::Set(items) => items
+            .iter()
+            .any(|item| par_let_references_any(item, names)),
+        NodeKind::Map(entries) => entries.iter().any(|(k, v)| {
+            par_let_references_any(k, names) || par_let_references_any(v, names)
+        }),
+        NodeKind::Quote(_) | NodeKind::Discard(_) => false,
+        NodeKind::Deref(inner)
+        | NodeKind::Quasiquote(inner)
+        | NodeKind::Unquote(inner)
+        | NodeKind::UnquoteSplice(inner) => par_let_references_any(inner, names),
     }
 }
 
@@ -7339,6 +7464,45 @@ mod tests {
             NodeKind::List(vec![sym_node("let"), bvec, int_node(42)]),
             syn_span(),
         );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // par-let form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (par-let) --
+    #[test]
+    fn infer_par_let_basic() {
+        // (par-let [a 1 b 2] a) → Int
+        let (env, mut state) = empty();
+        let node = parse_one("(par-let [a 1 b 2] a)");
+        assert_eq!(synth(&node, &env, &mut state).unwrap(), Type::Int);
+    }
+
+    // -- Test 2 (par-let) --
+    #[test]
+    fn infer_par_let_rejects_dependent_binding() {
+        // (par-let [a 1 b a] b) — b depends on a → error
+        let (env, mut state) = empty();
+        let node = parse_one("(par-let [a 1 b a] b)");
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 3 (par-let) --
+    #[test]
+    fn infer_par_let_rejects_non_symbol_binding() {
+        // (par-let [[a b] [1 2]] a) — binding name must be symbol → error
+        let (env, mut state) = empty();
+        let node = parse_one("(par-let [[a b] [1 2]] a)");
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
