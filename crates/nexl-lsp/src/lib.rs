@@ -5,6 +5,7 @@
 
 use dashmap::DashMap;
 use std::borrow::Cow;
+use std::collections::HashSet;
 use nexl_ast::{Atom, FileId, Node, NodeKind, Span};
 use nexl_errors::{Diagnostic as NexlDiagnostic, Severity as NexlSeverity};
 use nexl_infer::{Env, InferState};
@@ -463,6 +464,39 @@ fn find_definition_range(nodes: &[Node], name: &str, source: &str) -> Option<Ran
     None
 }
 
+fn completion_items(nodes: &[Node]) -> Vec<CompletionItem> {
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for node in nodes {
+        match defn_name_and_docstring(node)
+            .and_then(|(name_node, _)| symbol_name(name_node))
+        {
+            Some(name) if seen.insert(name.clone()) => {
+                items.push(CompletionItem {
+                    label: name,
+                    kind: Some(CompletionItemKind::FUNCTION),
+                    detail: Some("defn".to_string()),
+                    ..CompletionItem::default()
+                });
+            }
+            _ => {}
+        }
+
+        match def_name_node(node).and_then(symbol_name) {
+            Some(name) if seen.insert(name.clone()) => {
+                items.push(CompletionItem {
+                    label: name,
+                    kind: Some(CompletionItemKind::VARIABLE),
+                    detail: Some("def".to_string()),
+                    ..CompletionItem::default()
+                });
+            }
+            _ => {}
+        }
+    }
+    items
+}
+
 fn list_head_is(node: &Node, name: &str) -> bool {
     match &node.kind {
         NodeKind::List(items) => match items.first() {
@@ -593,6 +627,20 @@ impl LanguageServer for Backend {
             range,
         };
         Ok(Some(GotoDefinitionResponse::Scalar(location)))
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let text_document = params.text_document_position.text_document;
+        let source = match self.get_document_text(&text_document.uri) {
+            Some(source) => source,
+            None => return Ok(None),
+        };
+        let nodes = match nexl_reader::read(&source, FileId(0)) {
+            Ok(nodes) => nodes,
+            Err(_) => return Ok(None),
+        };
+        let items = completion_items(&nodes);
+        Ok(Some(CompletionResponse::Array(items)))
     }
 }
 
@@ -1039,5 +1087,56 @@ mod tests {
             .expect("definition request");
 
         assert!(response.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_completion_includes_defs() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("completion.nexl");
+        let source = "(defn one [] 1)\n(def answer 42)\n";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let position = offset_to_position(source, source.len());
+        let response = backend
+            .completion(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            })
+            .await
+            .expect("completion request")
+            .expect("completion result");
+
+        let items = match response {
+            CompletionResponse::Array(items) => items,
+            CompletionResponse::List(list) => list.items,
+        };
+
+        let one = items.iter().find(|item| item.label == "one");
+        assert!(matches!(
+            one.and_then(|item| item.kind),
+            Some(CompletionItemKind::FUNCTION)
+        ));
+
+        let answer = items.iter().find(|item| item.label == "answer");
+        assert!(matches!(
+            answer.and_then(|item| item.kind),
+            Some(CompletionItemKind::VARIABLE)
+        ));
     }
 }

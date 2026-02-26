@@ -1,8 +1,5 @@
 # M15 — Advanced Toolchain
 
-## LSP Foundation
-- [ ] Implement `textDocument/completion` (symbols in scope)
-
 ## Package Manager Foundation
 - [ ] Create `nexl-pkg` crate with `nexl.toml` schema
 - [ ] Implement `nexl.toml` parser (package name, version, deps, prefix)
@@ -33,4 +30,5 @@
 - [x] Implement `textDocument/publishDiagnostics` (parse errors + type errors)
 - [x] Implement `textDocument/hover` (type signature + docstring)
 - [x] Implement `textDocument/definition` (go-to-definition)
+- [x] Implement `textDocument/completion` (symbols in scope)
 - [x] Wire `nexl lsp` subcommand in CLI
