@@ -4,6 +4,7 @@
 //! go-to-definition, and completion support for Nexl source files.
 
 use dashmap::DashMap;
+use std::borrow::Cow;
 use nexl_ast::{Atom, FileId, Node, NodeKind, Span};
 use nexl_errors::{Diagnostic as NexlDiagnostic, Severity as NexlSeverity};
 use nexl_infer::{Env, InferState};
@@ -63,7 +64,8 @@ fn type_check_diagnostics(nodes: &[Node], source: &str) -> Vec<Diagnostic> {
                 Err(err) => Err(err),
             }
         } else if list_head_is(node, "defn") {
-            match nexl_infer::infer_defn(node, &env, &mut state) {
+            let node_for_infer = defn_node_for_infer(node);
+            match nexl_infer::infer_defn(node_for_infer.as_ref(), &env, &mut state) {
                 Ok((_name, _ty, new_env)) => {
                     env = new_env;
                     Ok(())
@@ -216,6 +218,182 @@ fn offset_to_position(source: &str, offset: usize) -> Position {
     Position::new(line, col)
 }
 
+fn position_to_offset(source: &str, position: Position) -> usize {
+    let target_line = position.line;
+    let target_col = position.character;
+    let mut line: u32 = 0;
+    let mut col: u32 = 0;
+    let mut idx: usize = 0;
+    for ch in source.chars() {
+        if line > target_line {
+            break;
+        }
+        if line == target_line {
+            if col >= target_col {
+                break;
+            }
+            if ch == '\n' {
+                break;
+            }
+            let next_col = col + ch.len_utf16() as u32;
+            if next_col > target_col {
+                break;
+            }
+            col = next_col;
+            idx += ch.len_utf8();
+            continue;
+        }
+
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        }
+        idx += ch.len_utf8();
+    }
+    idx.min(source.len())
+}
+
+fn span_contains(span: Span, offset: usize) -> bool {
+    if span.is_synthetic() {
+        return false;
+    }
+    let start = span.start as usize;
+    let end = span.end() as usize;
+    offset >= start && offset < end
+}
+
+fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover> {
+    let mut env = Env::new();
+    let mut state = InferState::new();
+    for node in nodes {
+        if let Some((name_node, docstring)) = defn_name_and_docstring(node) {
+            let is_target = span_contains(name_node.span, offset);
+            let node_for_infer = defn_node_for_infer(node);
+            match nexl_infer::infer_defn(node_for_infer.as_ref(), &env, &mut state) {
+                Ok((name, ty, new_env)) => {
+                    env = new_env;
+                    if is_target {
+                        return Some(build_hover(
+                            &name,
+                            &ty,
+                            docstring.as_deref(),
+                            name_node.span,
+                            source,
+                        ));
+                    }
+                }
+                Err(err) => {
+                    state.push_error(err);
+                }
+            }
+            continue;
+        }
+
+        if let Some(name_node) = def_name_node(node) {
+            let is_target = span_contains(name_node.span, offset);
+            match nexl_infer::infer_def(node, &env, &mut state) {
+                Ok((name, ty, new_env)) => {
+                    env = new_env;
+                    if is_target {
+                        return Some(build_hover(&name, &ty, None, name_node.span, source));
+                    }
+                }
+                Err(err) => {
+                    state.push_error(err);
+                }
+            }
+            continue;
+        }
+
+        let _ = nexl_infer::synth(node, &env, &mut state);
+    }
+    None
+}
+
+fn build_hover(
+    name: &str,
+    ty: &Type,
+    docstring: Option<&str>,
+    span: Span,
+    source: &str,
+) -> Hover {
+    let mut value = format!("```nexl\n{name} : {ty}\n```");
+    match docstring {
+        Some(doc) if !doc.is_empty() => {
+            value.push_str("\n\n");
+            value.push_str(doc);
+        }
+        _ => {}
+    }
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value,
+        }),
+        range: Some(span_to_range(source, span)),
+    }
+}
+
+fn defn_name_and_docstring(node: &Node) -> Option<(&Node, Option<String>)> {
+    if !list_head_is(node, "defn") {
+        return None;
+    }
+    let NodeKind::List(items) = &node.kind else {
+        return None;
+    };
+    let name_node = items.get(1)?;
+    match &name_node.kind {
+        NodeKind::Atom(Atom::Symbol { .. }) => {}
+        _ => return None,
+    }
+    let docstring = match items.get(2) {
+        Some(Node {
+            kind: NodeKind::Atom(Atom::Str(text)),
+            ..
+        }) => Some(text.clone()),
+        _ => None,
+    };
+    Some((name_node, docstring))
+}
+
+fn defn_node_for_infer(node: &Node) -> Cow<'_, Node> {
+    let NodeKind::List(items) = &node.kind else {
+        return Cow::Borrowed(node);
+    };
+    let has_docstring = matches!(
+        items.get(2),
+        Some(Node {
+            kind: NodeKind::Atom(Atom::Str(_)),
+            ..
+        })
+    );
+    if !has_docstring {
+        return Cow::Borrowed(node);
+    }
+    let mut stripped = items.clone();
+    stripped.remove(2);
+    Cow::Owned(Node {
+        kind: NodeKind::List(stripped),
+        span: node.span,
+        leading_comments: node.leading_comments.clone(),
+        trailing_comment: node.trailing_comment.clone(),
+    })
+}
+
+fn def_name_node(node: &Node) -> Option<&Node> {
+    if !list_head_is(node, "def") {
+        return None;
+    }
+    let NodeKind::List(items) = &node.kind else {
+        return None;
+    };
+    let name_node = items.get(1)?;
+    match &name_node.kind {
+        NodeKind::Atom(Atom::Symbol { .. }) => Some(name_node),
+        _ => None,
+    }
+}
+
 fn list_head_is(node: &Node, name: &str) -> bool {
     match &node.kind {
         NodeKind::List(items) => match items.first() {
@@ -297,6 +475,21 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         self.documents.remove(&uri);
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let text_document = params.text_document_position_params.text_document;
+        let position = params.text_document_position_params.position;
+        let source = match self.get_document_text(&text_document.uri) {
+            Some(source) => source,
+            None => return Ok(None),
+        };
+        let offset = position_to_offset(&source, position);
+        let nodes = match nexl_reader::read(&source, FileId(0)) {
+            Ok(nodes) => nodes,
+            Err(_) => return Ok(None),
+        };
+        Ok(hover_for_offset(&nodes, offset, &source))
     }
 }
 
@@ -574,5 +767,90 @@ mod tests {
         let params = next_publish_diagnostics(&mut socket).await;
         assert_eq!(params.uri, uri);
         assert!(params.diagnostics.is_empty());
+    }
+
+    fn hover_value(hover: &Hover) -> &str {
+        match &hover.contents {
+            HoverContents::Markup(content) => content.value.as_str(),
+            other => panic!("expected markup hover, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hover_defn_includes_type_and_docstring() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-defn.nexl");
+        let source = "(defn one \"One.\" [] 1)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let offset = source.find("one").expect("one in source");
+        let position = offset_to_position(source, offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("one : (Fn [] -> Int)"));
+        assert!(value.contains("One."));
+        let end = offset_to_position(source, offset + "one".len());
+        assert_eq!(
+            hover.range,
+            Some(Range::new(position, end))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hover_def_includes_type() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-def.nexl");
+        let source = "(def answer 42)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let offset = source.find("answer").expect("answer in source");
+        let position = offset_to_position(source, offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("answer : Int"));
     }
 }
