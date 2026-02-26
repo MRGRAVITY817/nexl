@@ -21,6 +21,8 @@ enum Command {
     Build {
         #[arg(value_name = "FILE")]
         input: PathBuf,
+        #[arg(value_name = "OUT")]
+        output: Option<PathBuf>,
     },
     Run {
         #[arg(value_name = "FILE")]
@@ -36,8 +38,8 @@ enum Command {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::Build { input } => {
-            if let Err(message) = command_build(input) {
+        Command::Build { input, output } => {
+            if let Err(message) = command_build(input, output) {
                 eprintln!("nexl: {message}");
                 process::exit(1);
             }
@@ -57,8 +59,8 @@ fn main() {
     }
 }
 
-fn command_build(input_path: PathBuf) -> Result<(), String> {
-    let output_path = input_path.with_extension("wasm");
+fn command_build(input_path: PathBuf, output_override: Option<PathBuf>) -> Result<(), String> {
+    let output_path = output_override.unwrap_or_else(|| input_path.with_extension("wasm"));
 
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
@@ -99,6 +101,20 @@ mod tests {
             cli.command,
             Command::Build {
                 input: PathBuf::from("main.nexl"),
+                output: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_build_with_output() {
+        let cli = Cli::try_parse_from(["nexl", "build", "main.nexl", "out.wasm"])
+            .expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Build {
+                input: PathBuf::from("main.nexl"),
+                output: Some(PathBuf::from("out.wasm")),
             }
         );
     }
