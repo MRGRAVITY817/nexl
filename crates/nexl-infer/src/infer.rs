@@ -2744,6 +2744,8 @@ pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
         body_index += 1;
     }
 
+    parse_deftype_derive_clause(items, &mut body_index)?;
+
     if body_index >= items.len() {
         return Err(TypeError::new(TypeErrorKind::MalformedForm {
             description: "deftype missing body".to_string(),
@@ -2858,6 +2860,44 @@ pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
                 .to_string(),
         })),
     }
+}
+
+fn parse_deftype_derive_clause(
+    items: &[Node],
+    body_index: &mut usize,
+) -> Result<(), TypeError> {
+    let Some(node) = items.get(*body_index) else {
+        return Ok(());
+    };
+    let is_derive = matches!(
+        &node.kind,
+        NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "derive"
+    );
+    if !is_derive {
+        return Ok(());
+    }
+    let Some(derive_node) = items.get(*body_index + 1) else {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "deftype :derive expects a vector of symbols".to_string(),
+        }));
+    };
+    let NodeKind::Vector(derive_items) = &derive_node.kind else {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "deftype :derive expects a vector of symbols".to_string(),
+        }));
+    };
+    for item in derive_items {
+        match &item.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, .. }) => {}
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "deftype :derive entries must be symbols".to_string(),
+                }))
+            }
+        }
+    }
+    *body_index += 2;
+    Ok(())
 }
 
 /// Register a parsed `deftype` declaration in the environment.
@@ -5041,11 +5081,47 @@ mod tests {
         );
     }
 
+    // -- Test 9 (deftype derive) --
+    #[test]
+    fn parse_deftype_sum_with_derive_clause() {
+        let node = parse_one("(deftype Color :derive [Show Eq Hash] | Red | Green)");
+        let td = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Sum(td) => td,
+            other => panic!("expected Sum deftype, got {other:?}"),
+        };
+        assert_eq!(td.name, "Color");
+        assert!(td.params.is_empty());
+        assert_eq!(
+            td.constructors,
+            vec![
+                Constructor::nullary("Red"),
+                Constructor::nullary("Green"),
+            ]
+        );
+    }
+
+    // -- Test 10 (deftype derive) --
+    #[test]
+    fn parse_deftype_record_with_derive_clause() {
+        let node = parse_one("(deftype Point :derive [Show Eq] {:x Float})");
+        let (name, params, fields) = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Record {
+                name,
+                params,
+                fields,
+            } => (name, params, fields),
+            other => panic!("expected Record deftype, got {other:?}"),
+        };
+        assert_eq!(name, "Point");
+        assert!(params.is_empty());
+        assert_eq!(fields, vec![("x".to_string(), Type::Float)]);
+    }
+
     // -----------------------------------------------------------------------
     // deftype registration tests
     // -----------------------------------------------------------------------
 
-    // -- Test 9 (deftype register) --
+    // -- Test 11 (deftype register) --
     #[test]
     fn register_deftype_sum_adds_type_def_and_ctors() {
         let t0 = TypeVar(0);
