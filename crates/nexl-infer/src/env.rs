@@ -91,11 +91,15 @@ impl Env {
             .extend_effect_ops("Random", random_effect_ops())
             .extend_effect_schemes("Chan", chan_effect_ops())
             .extend_effect_schemes("Concurrent", concurrent_effect_ops())
+            .extend_effect_schemes("async", async_module_ops())
     }
 
     fn with_builtin_atoms(self) -> Self {
         let mut env = self;
         for (name, scheme) in atom_ops() {
+            env = env.extend_builtin(name, scheme);
+        }
+        for (name, scheme) in concurrent_utils() {
             env = env.extend_builtin(name, scheme);
         }
         env
@@ -481,6 +485,53 @@ fn concurrent_effect_ops() -> Vec<(&'static str, Scheme)> {
         ("join", scheme(join_ty)),
         ("race", scheme(race_ty)),
     ]
+}
+
+/// Concrete concurrency utilities registered as plain builtins (spec §10.5, §11.1).
+///
+/// - `sequential-executor` — returns a `SequentialExecutor` value for
+///   deterministic testing of concurrent code.
+fn concurrent_utils() -> Vec<(&'static str, Scheme)> {
+    // sequential-executor : (Fn [] -> SequentialExecutor)
+    let executor_ty = Type::Fn {
+        params: vec![],
+        ret: Box::new(Type::Adt {
+            name: "SequentialExecutor".to_string(),
+            args: vec![],
+        }),
+        effects: EffectRow::empty(),
+    };
+    vec![("sequential-executor", Scheme::mono(executor_ty))]
+}
+
+/// Library-level operations in the `async` module (spec §11.1).
+///
+/// Includes `timeout` which wraps a Concurrent thunk with a deadline,
+/// returning `(Option a)`.
+fn async_module_ops() -> Vec<(&'static str, Scheme)> {
+    let t0 = TypeVar(0);
+    // (Fn [] -> a ! [Concurrent])
+    let thunk = Type::Fn {
+        params: vec![],
+        ret: Box::new(Type::Var(t0)),
+        effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+    };
+    // (Option a)
+    let option_a = Type::Adt {
+        name: "Option".to_string(),
+        args: vec![Type::Var(t0)],
+    };
+    // timeout : (Fn [Int (Fn [] -> a ! [Concurrent])] -> (Option a) ! [Concurrent])
+    let timeout_ty = Type::Fn {
+        params: vec![Type::Int, thunk],
+        ret: Box::new(option_a),
+        effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+    };
+    let scheme = Scheme {
+        forall: [t0].into_iter().collect(),
+        body: timeout_ty,
+    };
+    vec![("timeout", scheme)]
 }
 
 fn atom_ops() -> Vec<(&'static str, Scheme)> {
@@ -1026,5 +1077,97 @@ mod tests {
         for (name, ty) in expected {
             assert_builtin_scheme(&env, name, scheme_forall(t0, ty));
         }
+    }
+
+    // -- Test 21 --
+    #[test]
+    fn env_has_timeout() {
+        let env = Env::new();
+        // accessible unqualified
+        assert!(env.lookup("timeout").is_some(), "timeout must be a builtin");
+        // accessible as async/timeout
+        assert!(
+            env.lookup_qualified("async", "timeout").is_some(),
+            "timeout must be accessible as async/timeout"
+        );
+    }
+
+    // -- Test 22 --
+    #[test]
+    fn env_timeout_signature() {
+        let env = Env::new();
+        let t0 = TypeVar(0);
+        // (Fn [] -> a ! [Concurrent])
+        let thunk = Type::Fn {
+            params: vec![],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+        };
+        // (Option a)
+        let option_a = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Var(t0)],
+        };
+        // (Fn [Int (Fn [] -> a ! [Concurrent])] -> (Option a) ! [Concurrent])
+        let expected_ty = Type::Fn {
+            params: vec![Type::Int, thunk],
+            ret: Box::new(option_a),
+            effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+        };
+        let expected = scheme_forall(t0, expected_ty);
+        assert_builtin_scheme(&env, "timeout", expected);
+    }
+
+    // -- Test 24 --
+    #[test]
+    fn env_has_sequential_executor() {
+        let env = Env::new();
+        assert!(
+            env.lookup("sequential-executor").is_some(),
+            "sequential-executor must be a builtin"
+        );
+    }
+
+    // -- Test 25 --
+    #[test]
+    fn env_sequential_executor_type() {
+        let env = Env::new();
+        // sequential-executor : (Fn [] -> SequentialExecutor)
+        let expected_ty = Type::Fn {
+            params: vec![],
+            ret: Box::new(Type::Adt {
+                name: "SequentialExecutor".to_string(),
+                args: vec![],
+            }),
+            effects: EffectRow::empty(),
+        };
+        let expected = Scheme::mono(expected_ty);
+        assert_builtin_scheme(&env, "sequential-executor", expected);
+    }
+
+    // -- Test 23 --
+    #[test]
+    fn env_timeout_accessible_as_async_timeout() {
+        let env = Env::new();
+        let t0 = TypeVar(0);
+        let thunk = Type::Fn {
+            params: vec![],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+        };
+        let option_a = Type::Adt {
+            name: "Option".to_string(),
+            args: vec![Type::Var(t0)],
+        };
+        let expected_ty = Type::Fn {
+            params: vec![Type::Int, thunk],
+            ret: Box::new(option_a),
+            effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+        };
+        let expected = scheme_forall(t0, expected_ty);
+        let qualified = env
+            .lookup_qualified("async", "timeout")
+            .expect("async/timeout must be registered");
+        assert_eq!(qualified, &expected, "async/timeout scheme mismatch");
     }
 }

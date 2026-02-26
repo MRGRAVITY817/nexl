@@ -1,23 +1,25 @@
-# Current Milestone: M12 — Concurrency
+# Current Milestone: M13 — Native Backend (Cranelift)
 
-**Goal:** Structured concurrency with `fork`/`join`, channels, and `par-let`.
+**Goal:** Compile to native binaries (ELF/Mach-O) via Cranelift.
 
-**Crates:** `nexl-effects`, `nexl-runtime`, `nexl-infer`
+**Crates:** `nexl-ir`, `nexl-wasm` (extended), new `nexl-native` crate
 
 **Spec sections to reference:**
-- §10.3–§10.6 (channels, atoms, par-let)
+- §12 Compilation Model (lines 2984+)
+- §13 Value Representation (lines ~3100+)
 
 **Key ADRs:**
-- ADR-007: Atoms outside effect system
+- (none yet — native backend decisions TBD)
 
 **Acceptance criteria:**
-- `Concurrent` effect with `fork`/`join`/`yield`
-- `fork`, `join`, `race`, `timeout`
-- Channels and atoms
-- `par-let` and `go` sugar
-- `sleep` and a deterministic test handler
+- IR → Cranelift IR → machine code (x86-64, aarch64)
+- Native value representation (tagged pointers, unboxed numerics)
+- Native memory management (Perceus RC)
+- Native effect runtime (evidence vectors as native arrays)
+- Tail calls via Cranelift
+- `nexl build --target native` CLI
 
-**When done:** Update this file to point to M13.
+**When done:** Update this file to point to M14.
 
-See `docs/todo-m12.md` for the task checklist.
+See `docs/todo-m13.md` for the task checklist.
 See `milestones.md` for the full plan.

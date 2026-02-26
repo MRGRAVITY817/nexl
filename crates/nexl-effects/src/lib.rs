@@ -10,6 +10,7 @@
 //! `F = Rc<dyn Fn(&[Value]) -> Value>`) and by future compilation backends.
 
 pub mod builtin;
+pub mod sequential_executor;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

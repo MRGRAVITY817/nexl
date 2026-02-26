@@ -8,8 +8,8 @@
 - [x] `par-let` parsing and desugaring
 - [x] `go` shorthand sugar
 - [x] `sleep` operation
-- [ ] `timeout` and `race`
-- [ ] Deterministic test handler (`sequential-executor`)
+- [x] `timeout` and `race`
+- [x] Deterministic test handler (`sequential-executor`)
 
 ## Blocked
 - [ ] (none)
