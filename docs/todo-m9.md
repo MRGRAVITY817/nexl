@@ -3,7 +3,7 @@
 ## CLI subcommands (nexl-cli crate)
 - [x] Add clap dependency — subcommand parsing (build, run, repl, check)
 - [x] `nexl build <file>` — compile to WASM (refactor existing main into subcommand)
-- [ ] `nexl run <file>` — parse + evaluate via nexl-eval (tree-walk for now)
+- [x] `nexl run <file>` — parse + evaluate via nexl-eval (tree-walk for now)
 - [ ] `nexl repl` — interactive REPL (move existing repl from nexl-eval bin)
 - [ ] `nexl check <file>` — parse + type-check via nexl-infer, report errors
 

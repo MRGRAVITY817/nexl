@@ -44,9 +44,11 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Run { .. } => {
-            eprintln!("nexl: run is not implemented yet");
-            process::exit(1);
+        Command::Run { input } => {
+            if let Err(message) = command_run(input) {
+                eprintln!("nexl: {message}");
+                process::exit(1);
+            }
         }
         Command::Repl => {
             eprintln!("nexl: repl is not implemented yet");
@@ -89,10 +91,37 @@ fn command_build(input_path: PathBuf, output_override: Option<PathBuf>) -> Resul
     Ok(())
 }
 
+fn command_run(input_path: PathBuf) -> Result<(), String> {
+    let source = std::fs::read_to_string(&input_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
+
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|e| format!("parse error: {e}"))?;
+
+    let env = nexl_eval::stdlib::standard_env();
+    for node in &nodes {
+        nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
+    }
+
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn write_temp_file(contents: &str, label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be available")
+            .as_nanos();
+        let mut path = std::env::temp_dir();
+        path.push(format!("nexl_cli_{label}_{nanos}.nexl"));
+        std::fs::write(&path, contents).expect("write temp file");
+        path
+    }
 
     #[test]
     fn parse_build_with_input() {
@@ -145,5 +174,13 @@ mod tests {
                 input: PathBuf::from("main.nexl"),
             }
         );
+    }
+
+    #[test]
+    fn run_executes_file() {
+        let path = write_temp_file("(+ 1 2)", "run_ok");
+        let result = command_run(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "run should succeed, got: {result:?}");
     }
 }
