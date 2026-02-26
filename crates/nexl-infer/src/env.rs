@@ -88,6 +88,7 @@ impl Env {
             .extend_effect_ops("FileSystem", filesystem_effect_ops())
             .extend_effect_ops("Time", time_effect_ops())
             .extend_effect_ops("Random", random_effect_ops())
+            .extend_effect_schemes("Chan", chan_effect_ops())
             .extend_effect_schemes("Concurrent", concurrent_effect_ops())
     }
 
@@ -419,6 +420,28 @@ fn random_effect_ops() -> Vec<(&'static str, Type)> {
         ("random-bytes", effect_fn(vec![Type::Int], bytes.clone(), "Random")),
         ("random-u8", effect_fn(vec![], Type::U8, "Random")),
         ("random-f32", effect_fn(vec![], Type::F32, "Random")),
+    ]
+}
+
+fn chan_effect_ops() -> Vec<(&'static str, Scheme)> {
+    let t0 = TypeVar(0);
+    let chan_t0 = Type::Adt {
+        name: "Channel".to_string(),
+        args: vec![Type::Var(t0)],
+    };
+    let make_channel_ty = effect_fn(vec![Type::Int], chan_t0.clone(), "Chan");
+    let send_ty = effect_fn(vec![chan_t0.clone(), Type::Var(t0)], Type::Unit, "Chan");
+    let recv_ty = effect_fn(vec![chan_t0.clone()], Type::Var(t0), "Chan");
+    let close_ty = effect_fn(vec![chan_t0], Type::Unit, "Chan");
+    let scheme = |body| Scheme {
+        forall: [t0].into_iter().collect(),
+        body,
+    };
+    vec![
+        ("make-channel", scheme(make_channel_ty)),
+        ("send!", scheme(send_ty)),
+        ("recv!", scheme(recv_ty)),
+        ("close!", scheme(close_ty)),
     ]
 }
 
@@ -869,6 +892,35 @@ mod tests {
         ];
         for (name, ty) in expected {
             assert_effect_scheme(&env, "Concurrent", name, scheme_forall(t0, ty));
+        }
+    }
+
+    // -- Test 19 --
+    #[test]
+    fn env_new_includes_chan_effect_ops() {
+        let env = Env::new();
+        let t0 = TypeVar(0);
+        let chan_t0 = Type::Adt {
+            name: "Channel".to_string(),
+            args: vec![Type::Var(t0)],
+        };
+        let make_channel_ty =
+            effect_fn(vec![Type::Int], chan_t0.clone(), "Chan");
+        let send_ty = effect_fn(
+            vec![chan_t0.clone(), Type::Var(t0)],
+            Type::Unit,
+            "Chan",
+        );
+        let recv_ty = effect_fn(vec![chan_t0.clone()], Type::Var(t0), "Chan");
+        let close_ty = effect_fn(vec![chan_t0], Type::Unit, "Chan");
+        let expected = vec![
+            ("make-channel", make_channel_ty),
+            ("send!", send_ty),
+            ("recv!", recv_ty),
+            ("close!", close_ty),
+        ];
+        for (name, ty) in expected {
+            assert_effect_scheme(&env, "Chan", name, scheme_forall(t0, ty));
         }
     }
 }

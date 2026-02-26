@@ -2596,6 +2596,7 @@ pub fn parse_type_expr(node: &Node) -> Result<Type, TypeError> {
                 "Option" => parse_adt_type("Option", 1, items, node),
                 "Result" => parse_adt_type("Result", 2, items, node),
                 "Task" => parse_adt_type("Task", 1, items, node),
+                "Channel" => parse_adt_type("Channel", 1, items, node),
                 _ => Err(TypeError::new(TypeErrorKind::MalformedForm {
                     description: format!("unknown type constructor `{head_name}`"),
                 })
@@ -8889,7 +8890,22 @@ mod tests {
         );
     }
 
-    // -- Test 3 (? unwraps Ok from Result) --
+    // -- Test 3 (parse_type_expr: Channel) --
+    #[test]
+    fn parse_type_channel() {
+        // parse_type_expr on "(Channel Int)" → Adt { "Channel", [Int] }  (spec §10.3)
+        let node = parse_one("(Channel Int)");
+        let ty = parse_type_expr(&node).unwrap();
+        assert_eq!(
+            ty,
+            Type::Adt {
+                name: "Channel".to_string(),
+                args: vec![Type::Int],
+            }
+        );
+    }
+
+    // -- Test 4 (? unwraps Ok from Result) --
     #[test]
     fn question_unwraps_ok_from_result() {
         // (defn f [x : (Result Int Str)] -> (Result Int Str)  (let [n (id x)?] x))
