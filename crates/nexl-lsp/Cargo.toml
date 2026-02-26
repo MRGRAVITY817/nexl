@@ -10,6 +10,12 @@ tokio = { version = "1", features = ["full"] }
 dashmap = "6"
 nexl-reader = { path = "../nexl-reader" }
 nexl-ast = { path = "../nexl-ast" }
+nexl-errors = { path = "../nexl-errors" }
+nexl-infer = { path = "../nexl-infer" }
+nexl-types = { path = "../nexl-types" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+futures = "0.3"
+serde_json = "1"
+tower = "0.4"
