@@ -1,23 +1,22 @@
-# Current Milestone: M8 — WASM Backend
+# Current Milestone: M9 — CLI + REPL
 
-**Goal:** Compile Nexl programs to `.wasm` files that run in Wasmtime/browser.
+**Goal:** A complete `nexl` CLI with REPL, `run`, `check`, and `build` subcommands.
 
-**Crates:** `nexl-ir`, `nexl-wasm`, `nexl-memory`, `nexl-vm`, `nexl-cli`
+**Crates:** `nexl-cli` (extend), `nexl-repl` (new)
 
 **Spec sections to reference:**
-- §12 Compilation Model (lines 2833–2926)
+- §14 Toolchain (lines 3203–end)
 
 **Key ADRs:**
-- (none specific to M8)
+- (none specific to M9)
 
 **Acceptance criteria:**
-- IR design: lowered representation (closures → env structs, match → decision trees, `?` → jumps)
-- WASM core module codegen (functions, closures, ADTs, strings, collections)
-- Memory management — Perceus RC (dup/drop insertion, reuse analysis)
-- Effect runtime in WASM (evidence vectors, tail-resumptive handlers)
+- `nexl run <file>` compiles and runs a Nexl program
+- `nexl check <file>` type-checks without emitting
+- `nexl repl` provides an interactive REPL
 - `cargo test` passes across all crates
 
-**When done:** Update this file to point to M9.
+**When done:** Update this file to point to M10.
 
-See `docs/todo-m8.md` for the task checklist.
+See `docs/todo-m9.md` for the task checklist.
 See `milestones.md` for the full plan.
