@@ -238,6 +238,69 @@ pub struct TypeDef {
     pub constructors: Vec<Constructor>,
 }
 
+/// A protocol definition: name, type parameters, super-protocols, and operations.
+///
+/// Represents the result of processing a `defprotocol` form (spec §5.11):
+/// - `(defprotocol Show (show : (Fn [Self] -> Str)))` — one operation, no params.
+/// - `(defprotocol Ord :extends [Eq] (compare : (Fn [Self Self] -> ...)))` — extends Eq.
+/// - `(defprotocol Foldable [a] (fold : ...))` — parameterized protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtocolDef {
+    /// The protocol name (e.g. `"Show"`, `"Eq"`, `"Foldable"`).
+    pub name: String,
+    /// Type parameters (e.g. `[a]` in `Foldable [a]`).
+    pub params: Vec<TypeVar>,
+    /// Protocols this one extends (e.g. `["Eq"]` for `Ord`).
+    pub extends: Vec<String>,
+    /// The operations, in declaration order.
+    pub operations: Vec<ProtocolOpDef>,
+}
+
+/// A single operation within a protocol definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtocolOpDef {
+    /// Operation name (e.g. `"show"`, `"eq?"`, `"fold"`).
+    pub name: String,
+    /// The function type signature. `Self` is represented as a placeholder
+    /// type variable that is substituted with the implementing type.
+    pub signature: Type,
+    /// Whether this operation has a default implementation.
+    pub has_default: bool,
+}
+
+impl fmt::Display for ProtocolDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(defprotocol {}", self.name)?;
+        if !self.params.is_empty() {
+            write!(f, " [")?;
+            for (i, tv) in self.params.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " ")?;
+                }
+                write!(f, "t{}", tv.0)?;
+            }
+            write!(f, "]")?;
+        }
+        if !self.extends.is_empty() {
+            write!(f, " :extends [")?;
+            for (i, ext) in self.extends.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " ")?;
+                }
+                write!(f, "{ext}")?;
+            }
+            write!(f, "]")?;
+        }
+        for op in &self.operations {
+            write!(f, " ({} : {})", op.name, op.signature)?;
+            if op.has_default {
+                write!(f, " :default")?;
+            }
+        }
+        write!(f, ")")
+    }
+}
+
 /// Monotonically increasing source of fresh [`TypeVar`]s.
 #[derive(Debug)]
 pub struct TypeVarSupply {
@@ -1237,5 +1300,184 @@ mod tests {
         assert_eq!(scheme.instantiate(&mut supply), Type::Int);
         // supply should not have been consumed
         assert_eq!(supply.fresh(), TypeVar(0));
+    }
+
+    // -----------------------------------------------------------------------
+    // Protocol definition tests
+    // -----------------------------------------------------------------------
+
+    // -- Protocol Test 1 --
+    #[test]
+    fn test_protocol_def_simple() {
+        // (defprotocol Show (show : (Fn [Self] -> Str)))
+        let show_sig = Type::Fn {
+            params: vec![Type::Var(TypeVar(0))], // Self placeholder
+            ret: Box::new(Type::Str),
+            effects: EffectRow::empty(),
+        };
+        let pd = ProtocolDef {
+            name: "Show".to_string(),
+            params: vec![],
+            extends: vec![],
+            operations: vec![ProtocolOpDef {
+                name: "show".to_string(),
+                signature: show_sig.clone(),
+                has_default: false,
+            }],
+        };
+        assert_eq!(pd.name, "Show");
+        assert!(pd.params.is_empty());
+        assert!(pd.extends.is_empty());
+        assert_eq!(pd.operations.len(), 1);
+        assert_eq!(pd.operations[0].name, "show");
+        assert_eq!(pd.operations[0].signature, show_sig);
+        assert!(!pd.operations[0].has_default);
+    }
+
+    // -- Protocol Test 2 --
+    #[test]
+    fn test_protocol_def_multiple_ops() {
+        // (defprotocol Eq (eq? : (Fn [Self Self] -> Bool)))
+        let self_tv = TypeVar(0);
+        let eq_sig = Type::Fn {
+            params: vec![Type::Var(self_tv), Type::Var(self_tv)],
+            ret: Box::new(Type::Bool),
+            effects: EffectRow::empty(),
+        };
+        let pd = ProtocolDef {
+            name: "Eq".to_string(),
+            params: vec![],
+            extends: vec![],
+            operations: vec![
+                ProtocolOpDef {
+                    name: "eq?".to_string(),
+                    signature: eq_sig,
+                    has_default: false,
+                },
+                ProtocolOpDef {
+                    name: "ne?".to_string(),
+                    signature: Type::Fn {
+                        params: vec![Type::Var(self_tv), Type::Var(self_tv)],
+                        ret: Box::new(Type::Bool),
+                        effects: EffectRow::empty(),
+                    },
+                    has_default: true,
+                },
+            ],
+        };
+        assert_eq!(pd.operations.len(), 2);
+        assert_eq!(pd.operations[0].name, "eq?");
+        assert!(!pd.operations[0].has_default);
+        assert_eq!(pd.operations[1].name, "ne?");
+        assert!(pd.operations[1].has_default);
+    }
+
+    // -- Protocol Test 3 --
+    #[test]
+    fn test_protocol_def_with_extends() {
+        // (defprotocol Ord :extends [Eq] (compare : (Fn [Self Self] -> ...)))
+        let self_tv = TypeVar(0);
+        let pd = ProtocolDef {
+            name: "Ord".to_string(),
+            params: vec![],
+            extends: vec!["Eq".to_string()],
+            operations: vec![ProtocolOpDef {
+                name: "compare".to_string(),
+                signature: Type::Fn {
+                    params: vec![Type::Var(self_tv), Type::Var(self_tv)],
+                    ret: Box::new(Type::Keyword), // placeholder for (| :lt :eq :gt)
+                    effects: EffectRow::empty(),
+                },
+                has_default: false,
+            }],
+        };
+        assert_eq!(pd.name, "Ord");
+        assert_eq!(pd.extends, vec!["Eq".to_string()]);
+        assert_eq!(pd.operations.len(), 1);
+    }
+
+    // -- Protocol Test 4 --
+    #[test]
+    fn test_protocol_def_with_params() {
+        // (defprotocol Foldable [a] (fold : (Fn [(Fn [b a] -> b) b Self] -> b)))
+        let self_tv = TypeVar(0);
+        let a_tv = TypeVar(1);
+        let b_tv = TypeVar(2);
+        let fold_sig = Type::Fn {
+            params: vec![
+                Type::Fn {
+                    params: vec![Type::Var(b_tv), Type::Var(a_tv)],
+                    ret: Box::new(Type::Var(b_tv)),
+                    effects: EffectRow::empty(),
+                },
+                Type::Var(b_tv),
+                Type::Var(self_tv),
+            ],
+            ret: Box::new(Type::Var(b_tv)),
+            effects: EffectRow::empty(),
+        };
+        let pd = ProtocolDef {
+            name: "Foldable".to_string(),
+            params: vec![a_tv],
+            extends: vec![],
+            operations: vec![ProtocolOpDef {
+                name: "fold".to_string(),
+                signature: fold_sig,
+                has_default: false,
+            }],
+        };
+        assert_eq!(pd.name, "Foldable");
+        assert_eq!(pd.params, vec![a_tv]);
+        assert_eq!(pd.operations[0].name, "fold");
+    }
+
+    // -- Protocol Test 5 --
+    #[test]
+    fn test_protocol_op_with_default() {
+        // count has :default, fold does not
+        let self_tv = TypeVar(0);
+        let fold_op = ProtocolOpDef {
+            name: "fold".to_string(),
+            signature: Type::Fn {
+                params: vec![Type::Var(self_tv)],
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
+            },
+            has_default: false,
+        };
+        let count_op = ProtocolOpDef {
+            name: "count".to_string(),
+            signature: Type::Fn {
+                params: vec![Type::Var(self_tv)],
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
+            },
+            has_default: true,
+        };
+        assert!(!fold_op.has_default);
+        assert!(count_op.has_default);
+    }
+
+    // -- Protocol Test 6 --
+    #[test]
+    fn test_protocol_def_display() {
+        let self_tv = TypeVar(0);
+        let pd = ProtocolDef {
+            name: "Show".to_string(),
+            params: vec![],
+            extends: vec![],
+            operations: vec![ProtocolOpDef {
+                name: "show".to_string(),
+                signature: Type::Fn {
+                    params: vec![Type::Var(self_tv)],
+                    ret: Box::new(Type::Str),
+                    effects: EffectRow::empty(),
+                },
+                has_default: false,
+            }],
+        };
+        let s = pd.to_string();
+        assert!(s.contains("Show"), "display should include protocol name");
+        assert!(s.contains("show"), "display should include operation name");
     }
 }

@@ -1,7 +1,7 @@
 # M11 — Protocols + Advanced Types
 
 ## Core
-- [ ] `defprotocol`
+- [x] `defprotocol`
 - [ ] `impl`
 - [ ] Compiler-dispatched ops (`map`, `filter`, `reduce`)
 - [ ] Opaque types (`deftype-opaque`)

@@ -5,6 +5,7 @@ pub mod module;
 pub mod node;
 pub mod pattern;
 pub mod printer;
+pub mod protocol;
 pub mod span;
 pub mod try_catch;
 
@@ -15,5 +16,6 @@ pub use module::{ImportDecl, ImportKind, ModuleDecl, ModuleParseError, parse_imp
 pub use node::{Atom, Comment, FloatSuffix, IntSuffix, Node, NodeKind};
 pub use pattern::{Pattern, PatternError, parse_pattern};
 pub use printer::{PrettyPrinter, PrintConfig};
+pub use protocol::{ProtocolDecl, ProtocolOpDecl, ProtocolParseError, parse_protocol_decl};
 pub use span::{FileId, SourceLocation, Span};
 pub use try_catch::{TryCatchForm, TryParseError, parse_try_form};
