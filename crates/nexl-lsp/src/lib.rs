@@ -394,6 +394,75 @@ fn def_name_node(node: &Node) -> Option<&Node> {
     }
 }
 
+fn symbol_name(node: &Node) -> Option<String> {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+fn find_symbol_at_offset(nodes: &[Node], offset: usize) -> Option<&Node> {
+    for node in nodes {
+        if let Some(found) = find_symbol_in_node(node, offset) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_symbol_in_node(node: &Node, offset: usize) -> Option<&Node> {
+    if !span_contains(node.span, offset) {
+        return None;
+    }
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { .. }) => Some(node),
+        NodeKind::List(items) | NodeKind::Vector(items) | NodeKind::Set(items) => {
+            for item in items {
+                if let Some(found) = find_symbol_in_node(item, offset) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        NodeKind::Map(entries) => {
+            for (key, value) in entries {
+                if let Some(found) = find_symbol_in_node(key, offset) {
+                    return Some(found);
+                }
+                if let Some(found) = find_symbol_in_node(value, offset) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        NodeKind::Quote(inner)
+        | NodeKind::Deref(inner)
+        | NodeKind::Discard(inner)
+        | NodeKind::Quasiquote(inner)
+        | NodeKind::Unquote(inner)
+        | NodeKind::UnquoteSplice(inner) => find_symbol_in_node(inner, offset),
+        _ => None,
+    }
+}
+
+fn find_definition_range(nodes: &[Node], name: &str, source: &str) -> Option<Range> {
+    for node in nodes {
+        match defn_name_and_docstring(node) {
+            Some((name_node, _)) if symbol_name(name_node).as_deref() == Some(name) => {
+                return Some(span_to_range(source, name_node.span));
+            }
+            _ => {}
+        }
+        match def_name_node(node) {
+            Some(name_node) if symbol_name(name_node).as_deref() == Some(name) => {
+                return Some(span_to_range(source, name_node.span));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn list_head_is(node: &Node, name: &str) -> bool {
     match &node.kind {
         NodeKind::List(items) => match items.first() {
@@ -490,6 +559,40 @@ impl LanguageServer for Backend {
             Err(_) => return Ok(None),
         };
         Ok(hover_for_offset(&nodes, offset, &source))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let text_document = params.text_document_position_params.text_document;
+        let position = params.text_document_position_params.position;
+        let source = match self.get_document_text(&text_document.uri) {
+            Some(source) => source,
+            None => return Ok(None),
+        };
+        let offset = position_to_offset(&source, position);
+        let nodes = match nexl_reader::read(&source, FileId(0)) {
+            Ok(nodes) => nodes,
+            Err(_) => return Ok(None),
+        };
+        let symbol_node = match find_symbol_at_offset(&nodes, offset) {
+            Some(node) => node,
+            None => return Ok(None),
+        };
+        let name = match symbol_name(symbol_node) {
+            Some(name) => name,
+            None => return Ok(None),
+        };
+        let range = match find_definition_range(&nodes, &name, &source) {
+            Some(range) => range,
+            None => return Ok(None),
+        };
+        let location = Location {
+            uri: text_document.uri,
+            range,
+        };
+        Ok(Some(GotoDefinitionResponse::Scalar(location)))
     }
 }
 
@@ -852,5 +955,89 @@ mod tests {
 
         let value = hover_value(&hover);
         assert!(value.contains("answer : Int"));
+    }
+
+    #[tokio::test]
+    async fn test_definition_returns_defn_location() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("definition-defn.nexl");
+        let source = "(defn one [] 1)\n(one)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let usage_offset = source.rfind("one").expect("one usage");
+        let usage_position = offset_to_position(source, usage_offset);
+        let response = backend
+            .goto_definition(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position: usage_position,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            })
+            .await
+            .expect("definition request")
+            .expect("definition result");
+
+        let expected_start = offset_to_position(source, source.find("one").expect("one def"));
+        let expected_end = offset_to_position(source, source.find("one").expect("one def") + "one".len());
+        let expected = Location {
+            uri: uri.clone(),
+            range: Range::new(expected_start, expected_end),
+        };
+
+        match response {
+            GotoDefinitionResponse::Scalar(location) => assert_eq!(location, expected),
+            GotoDefinitionResponse::Array(locations) => {
+                assert_eq!(locations.len(), 1);
+                assert_eq!(locations[0], expected);
+            }
+            GotoDefinitionResponse::Link(_) => panic!("unexpected link response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_definition_none_for_unknown_symbol() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("definition-none.nexl");
+        let source = "unknown";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let position = offset_to_position(source, 0);
+        let response = backend
+            .goto_definition(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            })
+            .await
+            .expect("definition request");
+
+        assert!(response.is_none());
     }
 }

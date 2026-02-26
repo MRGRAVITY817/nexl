@@ -1,7 +1,6 @@
 # M15 — Advanced Toolchain
 
 ## LSP Foundation
-- [ ] Implement `textDocument/definition` (go-to-definition)
 - [ ] Implement `textDocument/completion` (symbols in scope)
 
 ## Package Manager Foundation
@@ -33,4 +32,5 @@
 - [x] Create `nexl-lsp` crate with tower-lsp scaffold
 - [x] Implement `textDocument/publishDiagnostics` (parse errors + type errors)
 - [x] Implement `textDocument/hover` (type signature + docstring)
+- [x] Implement `textDocument/definition` (go-to-definition)
 - [x] Wire `nexl lsp` subcommand in CLI
