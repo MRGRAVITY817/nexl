@@ -6,7 +6,9 @@ license.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+miette = { version = "7", features = ["fancy"] }
 nexl-reader = { path = "../nexl-reader" }
+nexl-errors = { path = "../nexl-errors" }
 nexl-eval = { path = "../nexl-eval" }
 nexl-infer = { path = "../nexl-infer" }
 nexl-ir = { path = "../nexl-ir" }

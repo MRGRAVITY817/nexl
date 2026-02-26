@@ -348,7 +348,9 @@ name = "nexl-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "miette",
  "nexl-ast",
+ "nexl-errors",
  "nexl-eval",
  "nexl-infer",
  "nexl-ir",

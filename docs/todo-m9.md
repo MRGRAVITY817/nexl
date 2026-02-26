@@ -13,7 +13,7 @@
 - [x] Banner on startup (`nexl 0.1.0 | :help for commands`)
 
 ## Error rendering
-- [ ] Source-annotated errors with line/column (miette integration for CLI output)
+- [x] Source-annotated errors with line/column (miette integration for CLI output)
 
 ## Blocked
 - [ ] Bytecode VM (`nexl-vm`) — deferred; tree-walk eval is sufficient for now

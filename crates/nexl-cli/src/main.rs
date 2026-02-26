@@ -42,28 +42,36 @@ fn main() {
     match cli.command {
         Command::Build { input, output } => {
             if let Err(message) = command_build(input, output) {
-                eprintln!("nexl: {message}");
+                print_error(&message);
                 process::exit(1);
             }
         }
         Command::Run { input } => {
             if let Err(message) = command_run(input) {
-                eprintln!("nexl: {message}");
+                print_error(&message);
                 process::exit(1);
             }
         }
         Command::Repl => {
             if let Err(message) = command_repl() {
-                eprintln!("nexl: {message}");
+                print_error(&message);
                 process::exit(1);
             }
         }
         Command::Check { input } => {
             if let Err(message) = command_check(input) {
-                eprintln!("nexl: {message}");
+                print_error(&message);
                 process::exit(1);
             }
         }
+    }
+}
+
+fn print_error(message: &str) {
+    if message.contains('\n') {
+        eprintln!("{message}");
+    } else {
+        eprintln!("nexl: {message}");
     }
 }
 
@@ -79,8 +87,9 @@ fn command_build(input_path: PathBuf, output_override: Option<PathBuf>) -> Resul
         .unwrap_or("module")
         .to_string();
 
-    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
-        .map_err(|e| format!("parse error: {e}"))?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
+        format_reader_report(*diag, &source, &input_path.display().to_string())
+    })?;
 
     let ir_module = nexl_ir::Lowerer::new(&module_name)
         .lower_module(&nodes)
@@ -101,8 +110,9 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
 
-    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
-        .map_err(|e| format!("parse error: {e}"))?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
+        format_reader_report(*diag, &source, &input_path.display().to_string())
+    })?;
 
     let env = nexl_eval::stdlib::standard_env();
     for node in &nodes {
@@ -155,7 +165,8 @@ fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()
         let nodes = match nexl_reader::read(source, meta::FileId::SYNTHETIC) {
             Ok(nodes) => nodes,
             Err(diag) => {
-                writeln!(output, "error: {diag}")?;
+                let report = format_reader_report(*diag, source, "<repl>");
+                writeln!(output, "{report}")?;
                 buffer.clear();
                 continue;
             }
@@ -332,6 +343,16 @@ fn delimiters_balanced(source: &str) -> bool {
     paren == 0 && bracket == 0 && brace == 0
 }
 
+fn format_reader_report(
+    mut diag: nexl_errors::Diagnostic,
+    source: &str,
+    name: &str,
+) -> String {
+    diag.attach_source(miette::NamedSource::new(name, source.to_string()));
+    let report = miette::Report::new(diag);
+    format!("{report:?}")
+}
+
 fn command_repl() -> Result<(), String> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -341,8 +362,9 @@ fn command_repl() -> Result<(), String> {
 fn command_check(input_path: PathBuf) -> Result<(), String> {
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
-    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
-        .map_err(|e| format!("parse error: {e}"))?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
+        format_reader_report(*diag, &source, &input_path.display().to_string())
+    })?;
 
     let mut env = nexl_infer::Env::new();
     let mut state = nexl_infer::InferState::new();
@@ -534,6 +556,17 @@ mod tests {
         let output = String::from_utf8(output).expect("utf8");
         let banner = format!("nexl {} | :help for commands", env!("CARGO_PKG_VERSION"));
         assert!(output.contains(&banner));
+    }
+
+    #[test]
+    fn reader_error_report_includes_source() {
+        let source = "(";
+        let diag = nexl_reader::read(source, meta::FileId::SYNTHETIC)
+            .expect_err("expected parse error");
+        let report = format_reader_report(*diag, source, "test.nxl");
+        assert!(report.contains("unclosed `(`"));
+        assert!(report.contains("test.nxl"));
+        assert!(report.contains('('));
     }
 
     #[test]
