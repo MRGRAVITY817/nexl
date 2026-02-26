@@ -1,15 +1,15 @@
 # M12 — Concurrency
 
 ## Core
-- [ ] `Concurrent` effect (`fork`, `join`, `yield`)
-- [ ] `fork` / `join`
-- [ ] `race` / `timeout`
-- [ ] Channels (`Chan/make-channel`, `Chan/send!`, `Chan/recv!`, `Chan/close!`)
-- [ ] `par-let`
-- [ ] `go` shorthand
-- [ ] Atoms (`atom`, `deref` / `@`, `swap!`, `reset!`)
-- [ ] `sleep`
-- [ ] Test handler (`sequential-executor`)
+- [x] `Concurrent` effect declaration (fork/join/race)
+- [ ] `Task` type in type system
+- [ ] `Channel` type and `Chan` effect declaration
+- [ ] Atoms (`atom`, `deref`/`@`, `swap!`, `reset!`) (ADR-007)
+- [ ] `par-let` parsing and desugaring
+- [ ] `go` shorthand sugar
+- [ ] `sleep` operation
+- [ ] `timeout` and `race`
+- [ ] Deterministic test handler (`sequential-executor`)
 
 ## Blocked
 - [ ] (none)

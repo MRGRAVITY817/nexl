@@ -88,12 +88,22 @@ impl Env {
             .extend_effect_ops("FileSystem", filesystem_effect_ops())
             .extend_effect_ops("Time", time_effect_ops())
             .extend_effect_ops("Random", random_effect_ops())
+            .extend_effect_schemes("Concurrent", concurrent_effect_ops())
     }
 
     fn extend_effect_ops(mut self, effect: &str, ops: Vec<(&'static str, Type)>) -> Self {
         let mut exports = HashMap::new();
         for (name, ty) in ops {
             let scheme = Scheme::mono(ty);
+            self = self.extend_builtin(name, scheme.clone());
+            exports.insert(name.to_string(), scheme);
+        }
+        self.extend_module(effect, exports)
+    }
+
+    fn extend_effect_schemes(mut self, effect: &str, ops: Vec<(&'static str, Scheme)>) -> Self {
+        let mut exports = HashMap::new();
+        for (name, scheme) in ops {
             self = self.extend_builtin(name, scheme.clone());
             exports.insert(name.to_string(), scheme);
         }
@@ -412,6 +422,35 @@ fn random_effect_ops() -> Vec<(&'static str, Type)> {
     ]
 }
 
+fn concurrent_effect_ops() -> Vec<(&'static str, Scheme)> {
+    let t0 = TypeVar(0);
+    let task_t0 = Type::Adt {
+        name: "Task".to_string(),
+        args: vec![Type::Var(t0)],
+    };
+    let fork_inner = Type::Fn {
+        params: vec![],
+        ret: Box::new(Type::Var(t0)),
+        effects: EffectRow::new(Vec::new(), Some("e".to_string())),
+    };
+    let fork_ty = effect_fn(vec![fork_inner], task_t0.clone(), "Concurrent");
+    let join_ty = effect_fn(vec![task_t0.clone()], Type::Var(t0), "Concurrent");
+    let race_ty = effect_fn(
+        vec![Type::Vec(Box::new(task_t0))],
+        Type::Var(t0),
+        "Concurrent",
+    );
+    let scheme = |body| Scheme {
+        forall: [t0].into_iter().collect(),
+        body,
+    };
+    vec![
+        ("fork", scheme(fork_ty)),
+        ("join", scheme(join_ty)),
+        ("race", scheme(race_ty)),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use nexl_types::{Constructor, EffectRow, Scheme, Type, TypeDef, TypeVar};
@@ -446,6 +485,30 @@ mod tests {
             .body
             .clone();
         assert_eq!(qualified, expected, "qualified `{effect}/{name}` mismatch");
+    }
+
+    fn assert_effect_scheme(env: &Env, effect: &str, name: &str, expected: Scheme) {
+        let unqualified = env
+            .lookup(name)
+            .unwrap_or_else(|| panic!("missing builtin `{name}`"));
+        assert_eq!(
+            unqualified, &expected,
+            "unqualified `{name}` scheme mismatch"
+        );
+        let qualified = env
+            .lookup_qualified(effect, name)
+            .unwrap_or_else(|| panic!("missing builtin `{effect}/{name}`"));
+        assert_eq!(
+            qualified, &expected,
+            "qualified `{effect}/{name}` scheme mismatch"
+        );
+    }
+
+    fn scheme_forall(t0: TypeVar, body: Type) -> Scheme {
+        Scheme {
+            forall: [t0].into_iter().collect(),
+            body,
+        }
     }
 
     // -- Test 1 --
@@ -767,6 +830,45 @@ mod tests {
         ];
         for (name, ty) in expected {
             assert_effect_op(&env, "Random", name, ty);
+        }
+    }
+
+    // -- Test 18 --
+    #[test]
+    fn env_new_includes_concurrent_effect_ops() {
+        let env = Env::new();
+        let t0 = TypeVar(0);
+        let task_t0 = Type::Adt {
+            name: "Task".to_string(),
+            args: vec![Type::Var(t0)],
+        };
+        let fork_inner = Type::Fn {
+            params: vec![],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::new(Vec::new(), Some("e".to_string())),
+        };
+        let fork_ty = Type::Fn {
+            params: vec![fork_inner],
+            ret: Box::new(task_t0.clone()),
+            effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+        };
+        let join_ty = Type::Fn {
+            params: vec![task_t0.clone()],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+        };
+        let race_ty = Type::Fn {
+            params: vec![Type::Vec(Box::new(task_t0))],
+            ret: Box::new(Type::Var(t0)),
+            effects: EffectRow::new(vec!["Concurrent".to_string()], None),
+        };
+        let expected = vec![
+            ("fork", fork_ty),
+            ("join", join_ty),
+            ("race", race_ty),
+        ];
+        for (name, ty) in expected {
+            assert_effect_scheme(&env, "Concurrent", name, scheme_forall(t0, ty));
         }
     }
 }
