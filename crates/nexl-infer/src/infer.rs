@@ -14,7 +14,7 @@ use nexl_types::{
 };
 
 use crate::Env;
-use crate::env::RecordDef;
+use crate::env::{PatternDef, RecordDef};
 
 /// Mutable inference state shared across a whole inference session.
 ///
@@ -1807,7 +1807,13 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         }
 
         // Pattern binding (destructuring).
-        let pattern = parse_pattern(binding_node).map_err(|e| {
+        let (expanded_pattern, guard) = expand_defpattern(binding_node, &current_env)?;
+        if guard.is_some() {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defpattern guards are only supported in match arms".to_string(),
+            }));
+        }
+        let pattern = parse_pattern(&expanded_pattern).map_err(|e| {
             TypeError::new(TypeErrorKind::MalformedForm {
                 description: format!("invalid let pattern: {}", e.description),
             })
@@ -2288,6 +2294,115 @@ pub fn infer_defn(
     };
     let new_env = env.extend(name.clone(), Scheme::mono(fn_ty.clone()));
     Ok((name, fn_ty, new_env))
+}
+
+/// Parse and register a `(defpattern ...)` form.
+#[allow(dead_code)]
+pub fn infer_defpattern(node: &Node, env: &Env) -> Result<Env, TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defpattern must be a list".to_string(),
+            }));
+        }
+    };
+
+    if items.len() < 4 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "defpattern expects (defpattern name [params...] pattern), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let is_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "defpattern"
+    );
+    if !is_head {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "first element of defpattern form must be the symbol `defpattern`"
+                .to_string(),
+        }));
+    }
+
+    let name = match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defpattern name must be an unqualified symbol".to_string(),
+            }));
+        }
+    };
+
+    let params = match &items[2].kind {
+        NodeKind::Vector(nodes) => nodes,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defpattern params must be a vector".to_string(),
+            }));
+        }
+    };
+
+    let mut param_names = Vec::new();
+    let mut seen = HashSet::new();
+    for param in params {
+        let param_name = match &param.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "defpattern params must be unqualified symbols".to_string(),
+                }));
+            }
+        };
+        if !seen.insert(param_name.clone()) {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: format!("duplicate defpattern param `{param_name}`"),
+            }));
+        }
+        param_names.push(param_name);
+    }
+
+    let pattern_node = &items[3];
+    parse_pattern(pattern_node).map_err(|e| {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!("invalid defpattern pattern: {}", e.description),
+        })
+    })?;
+
+    let mut idx = 4;
+    let mut guard = None;
+    if let Some(node) = items.get(idx) {
+        let is_when = matches!(
+            &node.kind,
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "when"
+        );
+        if is_when {
+            let Some(guard_node) = items.get(idx + 1) else {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "defpattern :when requires a guard expression".to_string(),
+                }));
+            };
+            guard = Some(guard_node.clone());
+            idx += 2;
+        }
+    }
+
+    if idx != items.len() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "defpattern has unexpected trailing forms".to_string(),
+        }));
+    }
+
+    let def = PatternDef {
+        params: param_names,
+        pattern: pattern_node.clone(),
+        guard,
+    };
+
+    Ok(env.extend_pattern_def(name, def))
 }
 
 // ---------------------------------------------------------------------------
@@ -3444,13 +3559,13 @@ pub fn register_deftype(env: &Env, decl: DeftypeDecl) -> Env {
 // ---------------------------------------------------------------------------
 
 fn synth_match(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
-    let (scrutinee, arms) = parse_match(node)?;
+    let (scrutinee, arms) = parse_match(node, env)?;
     let scrutinee_ty = synth(scrutinee, env, state)?;
     let mut result_ty: Option<Type> = None;
     for arm in &arms {
         let current = state.subst.apply(&scrutinee_ty);
         let arm_env = check_pattern(&arm.pattern, &current, env, state)?;
-        if let Some(guard) = arm.guard {
+        if let Some(guard) = &arm.guard {
             check(guard, &Type::Bool, &arm_env, state)?;
         }
         let body_ty = synth(arm.body, &arm_env, state)?;
@@ -3475,7 +3590,7 @@ fn synth_match(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, T
 #[derive(Debug, Clone, PartialEq)]
 struct MatchArm<'a> {
     pattern: Pattern,
-    guard: Option<&'a Node>,
+    guard: Option<Node>,
     body: &'a Node,
 }
 
@@ -3487,8 +3602,106 @@ fn is_when_node(node: &Node) -> bool {
     )
 }
 
+fn substitute_node(node: &Node, params: &HashMap<String, Node>, substitute_heads: bool) -> Node {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+            params.get(name).cloned().unwrap_or_else(|| node.clone())
+        }
+        NodeKind::List(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for (idx, item) in items.iter().enumerate() {
+                let should_substitute = if idx == 0 && !substitute_heads {
+                    !matches!(item.kind, NodeKind::Atom(Atom::Symbol { .. }))
+                } else {
+                    true
+                };
+                if should_substitute {
+                    out.push(substitute_node(item, params, substitute_heads));
+                } else {
+                    out.push(item.clone());
+                }
+            }
+            Node::new(NodeKind::List(out), node.span)
+        }
+        NodeKind::Vector(items) => {
+            let out = items
+                .iter()
+                .map(|item| substitute_node(item, params, substitute_heads))
+                .collect();
+            Node::new(NodeKind::Vector(out), node.span)
+        }
+        NodeKind::Map(entries) => {
+            let out = entries
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        substitute_node(k, params, substitute_heads),
+                        substitute_node(v, params, substitute_heads),
+                    )
+                })
+                .collect();
+            Node::new(NodeKind::Map(out), node.span)
+        }
+        NodeKind::Set(items) => {
+            let out = items
+                .iter()
+                .map(|item| substitute_node(item, params, substitute_heads))
+                .collect();
+            Node::new(NodeKind::Set(out), node.span)
+        }
+        _ => node.clone(),
+    }
+}
+
+fn expand_defpattern(node: &Node, env: &Env) -> Result<(Node, Option<Node>), TypeError> {
+    let NodeKind::List(items) = &node.kind else {
+        return Ok((node.clone(), None));
+    };
+    let Some(name) = head_sym(items) else {
+        return Ok((node.clone(), None));
+    };
+    let Some(def) = env.lookup_pattern_def(name) else {
+        return Ok((node.clone(), None));
+    };
+
+    let args = &items[1..];
+    if args.len() != def.params.len() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "defpattern `{name}` expects {} argument(s), got {}",
+                def.params.len(),
+                args.len()
+            ),
+        }));
+    }
+
+    let mut subs = HashMap::new();
+    for (param, arg) in def.params.iter().zip(args) {
+        subs.insert(param.clone(), arg.clone());
+    }
+
+    let pattern = substitute_node(&def.pattern, &subs, false);
+    let guard = def
+        .guard
+        .as_ref()
+        .map(|g| substitute_node(g, &subs, true));
+
+    Ok((pattern, guard))
+}
+
+fn combine_guards(def_guard: Option<Node>, call_guard: Option<Node>) -> Option<Node> {
+    match (def_guard, call_guard) {
+        (None, None) => None,
+        (Some(guard), None) | (None, Some(guard)) => Some(guard),
+        (Some(left), Some(right)) => Some(Node::new(
+            NodeKind::List(vec![sym_node("and"), left, right]),
+            Span::synthetic(),
+        )),
+    }
+}
+
 #[allow(dead_code)]
-fn parse_match<'a>(node: &'a Node) -> Result<(&'a Node, Vec<MatchArm<'a>>), TypeError> {
+fn parse_match<'a>(node: &'a Node, env: &Env) -> Result<(&'a Node, Vec<MatchArm<'a>>), TypeError> {
     let items = match &node.kind {
         NodeKind::List(items) => items,
         _ => {
@@ -3519,7 +3732,8 @@ fn parse_match<'a>(node: &'a Node) -> Result<(&'a Node, Vec<MatchArm<'a>>), Type
     let mut i = 2;
     while i < items.len() {
         let pattern_node = &items[i];
-        let pattern = parse_pattern(pattern_node).map_err(|e| {
+        let (expanded_pattern, def_guard) = expand_defpattern(pattern_node, env)?;
+        let pattern = parse_pattern(&expanded_pattern).map_err(|e| {
             TypeError::new(TypeErrorKind::MalformedForm {
                 description: format!("invalid match pattern: {}", e.description),
             })
@@ -3531,13 +3745,13 @@ fn parse_match<'a>(node: &'a Node) -> Result<(&'a Node, Vec<MatchArm<'a>>), Type
             }));
         }
 
-        let (guard, body) = if is_when_node(&items[i]) {
+        let (call_guard, body) = if is_when_node(&items[i]) {
             if i + 2 >= items.len() {
                 return Err(TypeError::new(TypeErrorKind::MalformedForm {
                     description: "match arm with :when must include guard and body".to_string(),
                 }));
             }
-            let guard = &items[i + 1];
+            let guard = items[i + 1].clone();
             let body = &items[i + 2];
             i += 3;
             (Some(guard), body)
@@ -3547,6 +3761,7 @@ fn parse_match<'a>(node: &'a Node) -> Result<(&'a Node, Vec<MatchArm<'a>>), Type
             (None, body)
         };
 
+        let guard = combine_guards(def_guard, call_guard);
         arms.push(MatchArm {
             pattern,
             guard,
@@ -6124,8 +6339,9 @@ mod tests {
     // -- Test 15 (match parse) --
     #[test]
     fn parse_match_two_arms_no_guard() {
+        let env = Env::new();
         let node = parse_one("(match x 0 1 _ 2)");
-        let (scrutinee, arms) = parse_match(&node).unwrap();
+        let (scrutinee, arms) = parse_match(&node, &env).unwrap();
         assert!(
             matches!(
                 &scrutinee.kind,
@@ -6169,11 +6385,12 @@ mod tests {
     // -- Test 16 (match parse) --
     #[test]
     fn parse_match_guard_arm() {
+        let env = Env::new();
         let node = parse_one("(match x 0 :when (> x 0) 1 _ 2)");
-        let (_scrutinee, arms) = parse_match(&node).unwrap();
+        let (_scrutinee, arms) = parse_match(&node, &env).unwrap();
         assert_eq!(arms.len(), 2);
         assert!(arms[0].guard.is_some());
-        let guard = arms[0].guard.unwrap();
+        let guard = arms[0].guard.as_ref().unwrap();
         assert!(
             matches!(
                 &guard.kind,
@@ -6190,8 +6407,9 @@ mod tests {
     // -- Test 17 (match parse) --
     #[test]
     fn parse_match_missing_body_is_malformed() {
+        let env = Env::new();
         let node = parse_one("(match x 0)");
-        let err = parse_match(&node).unwrap_err();
+        let err = parse_match(&node, &env).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
@@ -6201,11 +6419,96 @@ mod tests {
     // -- Test 18 (match parse) --
     #[test]
     fn parse_match_guard_missing_body_is_malformed() {
+        let env = Env::new();
         let node = parse_one("(match x 0 :when 1)");
-        let err = parse_match(&node).unwrap_err();
+        let err = parse_match(&node, &env).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Test 19 (defpattern expansion) --
+    #[test]
+    fn parse_match_expands_defpattern_guard() {
+        let env = Env::new();
+        let def = parse_one("(defpattern pos-int [n] (: Int n) :when (pos? n))");
+        let env = super::infer_defpattern(&def, &env).unwrap();
+        let node = parse_one("(match x (pos-int k) k _ 0)");
+        let (_scrutinee, arms) = parse_match(&node, &env).unwrap();
+        let guard = arms[0].guard.as_ref().expect("expected guard");
+        assert!(
+            matches!(
+                &guard.kind,
+                NodeKind::List(items)
+                    if matches!(
+                        &items[0].kind,
+                        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "pos?"
+                    )
+            ),
+            "guard should be (pos? k)"
+        );
+    }
+
+    // -- Test 20 (defpattern expansion) --
+    #[test]
+    fn parse_match_combines_defpattern_and_call_guard() {
+        let env = Env::new();
+        let def = parse_one("(defpattern pos-int [n] (: Int n) :when (pos? n))");
+        let env = super::infer_defpattern(&def, &env).unwrap();
+        let node = parse_one("(match x (pos-int k) :when (even? k) k _ 0)");
+        let (_scrutinee, arms) = parse_match(&node, &env).unwrap();
+        let guard = arms[0].guard.as_ref().expect("expected guard");
+        assert!(
+            matches!(
+                &guard.kind,
+                NodeKind::List(items)
+                    if matches!(
+                        &items[0].kind,
+                        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "and"
+                    )
+            ),
+            "guard should be (and ...)"
+        );
+    }
+
+    // -- Test 21 (defpattern expansion) --
+    #[test]
+    fn parse_match_substitutes_guard_head() {
+        let env = Env::new();
+        let def = parse_one("(defpattern satisfies [pred x] x :when (pred x))");
+        let env = super::infer_defpattern(&def, &env).unwrap();
+        let node = parse_one("(match n (satisfies even? k) k _ 0)");
+        let (_scrutinee, arms) = parse_match(&node, &env).unwrap();
+        let guard = arms[0].guard.as_ref().expect("expected guard");
+        assert!(
+            matches!(
+                &guard.kind,
+                NodeKind::List(items)
+                    if matches!(
+                        &items[0].kind,
+                        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "even?"
+                    )
+            ),
+            "guard head should be even?"
+        );
+    }
+
+    // -- Test 22 (defpattern expansion) --
+    #[test]
+    fn parse_match_substitutes_vector_pattern() {
+        let env = Env::new();
+        let def = parse_one("(defpattern non-empty [first rest] [first & rest])");
+        let env = super::infer_defpattern(&def, &env).unwrap();
+        let node = parse_one("(match xs (non-empty head tail) head _ 0)");
+        let (_scrutinee, arms) = parse_match(&node, &env).unwrap();
+        assert_eq!(
+            arms[0].pattern,
+            Pattern::Tuple(vec![
+                Pattern::Var("head".to_string()),
+                Pattern::Var("&".to_string()),
+                Pattern::Var("tail".to_string())
+            ])
         );
     }
 

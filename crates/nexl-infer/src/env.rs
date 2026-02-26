@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use nexl_ast::Node;
 use nexl_types::{Constructor, EffectRow, Scheme, Subst, Type, TypeDef, TypeVar};
 
 /// A record type definition: name, type parameters, and fields.
@@ -24,6 +25,17 @@ pub struct CtorDef {
     pub ctor: Constructor,
 }
 
+/// A named pattern definition from `defpattern`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatternDef {
+    /// Parameter names in the defpattern header.
+    pub params: Vec<String>,
+    /// The pattern form to splice at the call site.
+    pub pattern: Node,
+    /// Optional guard expression to splice as `:when`.
+    pub guard: Option<Node>,
+}
+
 /// The typing environment: maps names to polymorphic type schemes.
 ///
 /// `Env` is designed to be cheap to extend — `extend` clones the map and
@@ -35,6 +47,7 @@ pub struct Env {
     type_defs: HashMap<String, TypeDef>,
     record_defs: HashMap<String, RecordDef>,
     constructors: HashMap<String, CtorDef>,
+    pattern_defs: HashMap<String, PatternDef>,
     module_bindings: HashMap<String, HashMap<String, Scheme>>,
     defined_names: HashSet<String>,
 }
@@ -100,6 +113,7 @@ impl Env {
             type_defs: self.type_defs.clone(),
             record_defs: self.record_defs.clone(),
             constructors: self.constructors.clone(),
+            pattern_defs: self.pattern_defs.clone(),
             module_bindings: self.module_bindings.clone(),
             defined_names,
         }
@@ -114,6 +128,7 @@ impl Env {
             type_defs: self.type_defs.clone(),
             record_defs: self.record_defs.clone(),
             constructors: self.constructors.clone(),
+            pattern_defs: self.pattern_defs.clone(),
             module_bindings: self.module_bindings.clone(),
             defined_names: self.defined_names.clone(),
         }
@@ -137,6 +152,7 @@ impl Env {
             type_defs: self.type_defs.clone(),
             record_defs: self.record_defs.clone(),
             constructors: self.constructors.clone(),
+            pattern_defs: self.pattern_defs.clone(),
             module_bindings,
             defined_names: self.defined_names.clone(),
         }
@@ -199,6 +215,7 @@ impl Env {
             type_defs,
             record_defs: self.record_defs.clone(),
             constructors,
+            pattern_defs: self.pattern_defs.clone(),
             module_bindings: self.module_bindings.clone(),
             defined_names,
         }
@@ -235,6 +252,7 @@ impl Env {
             type_defs: self.type_defs.clone(),
             record_defs,
             constructors: self.constructors.clone(),
+            pattern_defs: self.pattern_defs.clone(),
             module_bindings: self.module_bindings.clone(),
             defined_names,
         }
@@ -253,6 +271,27 @@ impl Env {
     /// Look up a constructor definition by constructor name.
     pub fn lookup_ctor(&self, name: &str) -> Option<&CtorDef> {
         self.constructors.get(name)
+    }
+
+    /// Return a new environment with a named pattern definition added.
+    pub fn extend_pattern_def(&self, name: impl Into<String>, def: PatternDef) -> Self {
+        let name = name.into();
+        let mut pattern_defs = self.pattern_defs.clone();
+        pattern_defs.insert(name, def);
+        Self {
+            bindings: self.bindings.clone(),
+            type_defs: self.type_defs.clone(),
+            record_defs: self.record_defs.clone(),
+            constructors: self.constructors.clone(),
+            pattern_defs,
+            module_bindings: self.module_bindings.clone(),
+            defined_names: self.defined_names.clone(),
+        }
+    }
+
+    /// Look up a named pattern definition.
+    pub fn lookup_pattern_def(&self, name: &str) -> Option<&PatternDef> {
+        self.pattern_defs.get(name)
     }
 
     /// Return all binding names defined in this environment.

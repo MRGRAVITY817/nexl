@@ -275,6 +275,13 @@ fn update_repl_type_env(
             }
             continue;
         }
+        if list_head_is(node, "defpattern") {
+            match nexl_infer::infer_defpattern(node, env) {
+                Ok(new_env) => *env = new_env,
+                Err(err) => errors.push(err.to_string()),
+            }
+            continue;
+        }
         if list_head_is(node, "impl") {
             match nexl_infer::infer_impl(node, env, state) {
                 Ok(new_env) => *env = new_env,

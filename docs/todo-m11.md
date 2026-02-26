@@ -8,7 +8,7 @@
 - [x] `deftype-alias`
 - [x] Any escape hatch (`as-any`, `assert-type`)
 - [x] Refinement types (`Refined`, `refine`)
-- [ ] Named patterns (`defpattern`)
+- [x] Named patterns (`defpattern`)
 
 ## Blocked
 - [ ] (none)
