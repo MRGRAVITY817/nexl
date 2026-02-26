@@ -128,6 +128,11 @@ impl HeapHeader {
         }
     }
 
+    /// Return the raw 64-bit representation.
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+
     /// Extract the field count.
     pub fn field_count(self) -> u32 {
         ((self.0 >> 8) & 0xFFFF_FFFF) as u32

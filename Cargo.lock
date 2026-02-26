@@ -544,6 +544,7 @@ dependencies = [
  "nexl-eval",
  "nexl-infer",
  "nexl-ir",
+ "nexl-native",
  "nexl-reader",
  "nexl-wasm",
 ]

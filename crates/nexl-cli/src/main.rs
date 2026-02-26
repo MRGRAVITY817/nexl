@@ -25,6 +25,9 @@ enum Command {
         input: PathBuf,
         #[arg(value_name = "OUT")]
         output: Option<PathBuf>,
+        /// Target: "wasm" (default) or "native"
+        #[arg(short = 't', long = "target", default_value = "wasm")]
+        target: String,
     },
     Run {
         #[arg(value_name = "FILE")]
@@ -40,8 +43,8 @@ enum Command {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::Build { input, output } => {
-            if let Err(message) = command_build(input, output) {
+        Command::Build { input, output, target } => {
+            if let Err(message) = command_build(input, output, &target) {
                 print_error(&message);
                 process::exit(1);
             }
@@ -75,8 +78,17 @@ fn print_error(message: &str) {
     }
 }
 
-fn command_build(input_path: PathBuf, output_override: Option<PathBuf>) -> Result<(), String> {
-    let output_path = output_override.unwrap_or_else(|| input_path.with_extension("wasm"));
+fn command_build(
+    input_path: PathBuf,
+    output_override: Option<PathBuf>,
+    target: &str,
+) -> Result<(), String> {
+    let default_ext = match target {
+        "wasm" => "wasm",
+        "native" => "o",
+        other => return Err(format!("unknown target: {other} (expected \"wasm\" or \"native\")")),
+    };
+    let output_path = output_override.unwrap_or_else(|| input_path.with_extension(default_ext));
 
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
@@ -95,14 +107,24 @@ fn command_build(input_path: PathBuf, output_override: Option<PathBuf>) -> Resul
         .lower_module(&nodes)
         .map_err(|e| format!("lowering error: {e}"))?;
 
-    let wasm_bytes = nexl_wasm::Emitter::new()
-        .emit(&ir_module)
-        .map_err(|e| format!("codegen error: {e}"))?;
+    let bytes = match target {
+        "wasm" => nexl_wasm::Emitter::new()
+            .emit(&ir_module)
+            .map_err(|e| format!("codegen error: {e}"))?,
+        "native" => {
+            let mut compiler = nexl_native::compile::Compiler::new();
+            compiler
+                .compile_module(&ir_module)
+                .map_err(|e| format!("native codegen error: {e}"))?;
+            compiler.finish()
+        }
+        _ => unreachable!(),
+    };
 
-    std::fs::write(&output_path, &wasm_bytes)
+    std::fs::write(&output_path, &bytes)
         .map_err(|e| format!("cannot write {:?}: {e}", output_path))?;
 
-    println!("nexl: wrote {} bytes to {:?}", wasm_bytes.len(), output_path);
+    println!("nexl: wrote {} bytes to {:?}", bytes.len(), output_path);
     Ok(())
 }
 
@@ -458,6 +480,7 @@ mod tests {
             Command::Build {
                 input: PathBuf::from("main.nexl"),
                 output: None,
+                target: "wasm".to_string(),
             }
         );
     }
@@ -471,8 +494,33 @@ mod tests {
             Command::Build {
                 input: PathBuf::from("main.nexl"),
                 output: Some(PathBuf::from("out.wasm")),
+                target: "wasm".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn parse_build_with_native_target() {
+        let cli =
+            Cli::try_parse_from(["nexl", "build", "main.nexl", "-t", "native"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Build {
+                input: PathBuf::from("main.nexl"),
+                output: None,
+                target: "native".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn build_native_produces_object_file() {
+        let path = write_temp_file("(defn f [x] x)", "build_native");
+        let out = path.with_extension("o");
+        let result = command_build(path.clone(), Some(out.clone()), "native");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&out);
+        assert!(result.is_ok(), "native build should succeed, got: {result:?}");
     }
 
     #[test]

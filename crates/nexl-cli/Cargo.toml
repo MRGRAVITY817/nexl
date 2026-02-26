@@ -13,4 +13,5 @@ nexl-eval = { path = "../nexl-eval" }
 nexl-infer = { path = "../nexl-infer" }
 nexl-ir = { path = "../nexl-ir" }
 nexl-wasm = { path = "../nexl-wasm" }
+nexl-native = { path = "../nexl-native" }
 meta = { package = "nexl-ast", path = "../nexl-ast" }

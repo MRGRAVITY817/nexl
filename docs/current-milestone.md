@@ -1,25 +1,22 @@
-# Current Milestone: M13 — Native Backend (Cranelift)
+# Current Milestone: M14 — Standard Library
 
-**Goal:** Compile to native binaries (ELF/Mach-O) via Cranelift.
+**Goal:** Implement all §11.1 core modules.
 
-**Crates:** `nexl-ir`, `nexl-wasm` (extended), new `nexl-native` crate
+**Crates:** existing crates + new stdlib modules
 
 **Spec sections to reference:**
-- §12 Compilation Model (lines 2984+)
-- §13 Value Representation (lines ~3100+)
+- §11 Standard Library (lines ~2600+)
 
 **Key ADRs:**
-- (none yet — native backend decisions TBD)
+- ADR-008: No HKT, compiler-dispatched map/filter
+- ADR-011: Naming conventions (append/put/remove/each/etc.)
 
 **Acceptance criteria:**
-- IR → Cranelift IR → machine code (x86-64, aarch64)
-- Native value representation (tagged pointers, unboxed numerics)
-- Native memory management (Perceus RC)
-- Native effect runtime (evidence vectors as native arrays)
-- Tail calls via Cranelift
-- `nexl build --target native` CLI
+- core, str, math, conv, io, json, time, crypto, log, test, net, async modules
+- All §11.1 functions implemented and tested
+- `nexl` binary can compile real programs using the stdlib
 
-**When done:** Update this file to point to M14.
+**When done:** Update this file to point to M15.
 
-See `docs/todo-m13.md` for the task checklist.
+See `docs/todo-m14.md` for the task checklist.
 See `milestones.md` for the full plan.

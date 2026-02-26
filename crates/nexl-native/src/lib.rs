@@ -6,6 +6,12 @@
 //!
 //! Pipeline position: nexl-ir → **nexl-native** → object file → linker → binary.
 
+pub mod closure;
+pub mod compile;
+pub mod continuation;
+pub mod evidence;
+pub mod rc;
+pub mod reuse;
 pub mod value;
 
 #[cfg(test)]
