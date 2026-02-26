@@ -6,7 +6,7 @@ pub mod unify;
 
 pub use subst::Subst;
 pub use types::{
-    Constructor, EffectRow, ProtocolDef, ProtocolOpDef, Scheme, Type, TypeDef, TypeVar,
-    TypeVarSupply,
+    Constructor, EffectDef, EffectOpDef, EffectRow, ProtocolDef, ProtocolOpDef, Scheme, Type,
+    TypeDef, TypeVar, TypeVarSupply,
 };
 pub use unify::{TypeError, TypeErrorKind, unify};

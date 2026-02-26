@@ -303,6 +303,51 @@ impl fmt::Display for ProtocolDef {
     }
 }
 
+/// An effect definition: name, type parameters, and operations.
+///
+/// Represents the result of processing a `defeffect` form (spec §6.2, §10.2–§10.3):
+/// - `(defeffect Console (print : (Fn [Str] -> Unit)))` — simple effect.
+/// - `(defeffect State [a] (get-state : ...) (put-state : ...))` — parameterized.
+/// - `(defeffect Concurrent (fork : ...) (join : ...) (race : ...))` — concurrency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectDef {
+    /// The effect name (e.g. `"Console"`, `"Concurrent"`, `"Chan"`).
+    pub name: String,
+    /// Type parameters (e.g. `[a]` in `State [a]`).
+    pub params: Vec<TypeVar>,
+    /// The operations, in declaration order.
+    pub operations: Vec<EffectOpDef>,
+}
+
+/// A single operation within an effect definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectOpDef {
+    /// Operation name (e.g. `"fork"`, `"print"`, `"send!"`).
+    pub name: String,
+    /// The function type signature.
+    pub signature: Type,
+}
+
+impl fmt::Display for EffectDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(defeffect {}", self.name)?;
+        if !self.params.is_empty() {
+            write!(f, " [")?;
+            for (i, tv) in self.params.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " ")?;
+                }
+                write!(f, "t{}", tv.0)?;
+            }
+            write!(f, "]")?;
+        }
+        for op in &self.operations {
+            write!(f, " ({} : {})", op.name, op.signature)?;
+        }
+        write!(f, ")")
+    }
+}
+
 /// Monotonically increasing source of fresh [`TypeVar`]s.
 #[derive(Debug)]
 pub struct TypeVarSupply {

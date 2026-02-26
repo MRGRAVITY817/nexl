@@ -375,6 +375,61 @@ mod tests {
 
     // ── Test 10 ──
 
+    /// Build a type application node, e.g. `(Task a)`.
+    fn type_app(name: &str, args: Vec<Node>) -> Node {
+        let mut children = vec![sym(name)];
+        children.extend(args);
+        list(children)
+    }
+
+    /// Build a Fn type with an effect annotation: `(Fn [args...] -> ret ! [effects...])`.
+    fn fn_type_with_effects(args: Vec<Node>, ret: Node, effects: Vec<Node>) -> Node {
+        list(vec![
+            sym("Fn"),
+            vec_node(args),
+            sym("->"),
+            ret,
+            sym("!"),
+            vec_node(effects),
+        ])
+    }
+
+    #[test]
+    fn test_parse_concurrent_effect() {
+        // (defeffect Concurrent
+        //   (fork : (Fn [(Fn [] -> a ! [e])] -> (Task a)))
+        //   (join : (Fn [(Task a)] -> a))
+        //   (race : (Fn [(Vec (Task a))] -> a)))
+        let fork_inner_fn = fn_type_with_effects(vec![], sym("a"), vec![sym("e")]);
+        let fork_type = fn_type(vec![fork_inner_fn], type_app("Task", vec![sym("a")]));
+        let join_type = fn_type(vec![type_app("Task", vec![sym("a")])], sym("a"));
+        let race_type = fn_type(
+            vec![type_app("Vec", vec![type_app("Task", vec![sym("a")])])],
+            sym("a"),
+        );
+
+        let items = vec![
+            sym("defeffect"),
+            sym("Concurrent"),
+            op("fork", fork_type.clone()),
+            op("join", join_type.clone()),
+            op("race", race_type.clone()),
+        ];
+
+        let decl = parse_effect_decl(&items).unwrap();
+        assert_eq!(decl.name, "Concurrent");
+        assert!(decl.type_params.is_empty());
+        assert_eq!(decl.operations.len(), 3);
+        assert_eq!(decl.operations[0].name, "fork");
+        assert_eq!(decl.operations[0].type_node, fork_type);
+        assert_eq!(decl.operations[1].name, "join");
+        assert_eq!(decl.operations[1].type_node, join_type);
+        assert_eq!(decl.operations[2].name, "race");
+        assert_eq!(decl.operations[2].type_node, race_type);
+    }
+
+    // ── Test 11 ──
+
     #[test]
     fn test_parse_effect_struct_fields() {
         let type_node = sym("SomeType");

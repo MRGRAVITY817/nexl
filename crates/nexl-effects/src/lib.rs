@@ -9,6 +9,8 @@
 //! so it can be used both by the tree-walk evaluator (where
 //! `F = Rc<dyn Fn(&[Value]) -> Value>`) and by future compilation backends.
 
+pub mod builtin;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
