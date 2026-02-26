@@ -5,7 +5,7 @@
 - [x] `nexl build <file>` — compile to WASM (refactor existing main into subcommand)
 - [x] `nexl run <file>` — parse + evaluate via nexl-eval (tree-walk for now)
 - [x] `nexl repl` — interactive REPL (move existing repl from nexl-eval bin)
-- [ ] `nexl check <file>` — parse + type-check via nexl-infer, report errors
+- [x] `nexl check <file>` — parse + type-check via nexl-infer, report errors
 
 ## REPL improvements
 - [ ] Multi-line input — detect unbalanced delimiters, prompt for continuation

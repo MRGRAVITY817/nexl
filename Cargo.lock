@@ -350,6 +350,7 @@ dependencies = [
  "clap",
  "nexl-ast",
  "nexl-eval",
+ "nexl-infer",
  "nexl-ir",
  "nexl-reader",
  "nexl-wasm",

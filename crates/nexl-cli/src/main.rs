@@ -6,6 +6,7 @@
 //! by replacing the extension with `.wasm`.
 
 use clap::{Parser, Subcommand};
+use meta::{Atom, Node, NodeKind};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
@@ -57,9 +58,11 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Check { .. } => {
-            eprintln!("nexl: check is not implemented yet");
-            process::exit(1);
+        Command::Check { input } => {
+            if let Err(message) = command_check(input) {
+                eprintln!("nexl: {message}");
+                process::exit(1);
+            }
         }
     }
 }
@@ -139,6 +142,64 @@ fn command_repl() -> Result<(), String> {
     let stdout = io::stdout();
     repl_loop(stdin.lock(), stdout.lock()).map_err(|e| format!("repl error: {e}"))
 }
+
+fn command_check(input_path: PathBuf) -> Result<(), String> {
+    let source = std::fs::read_to_string(&input_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|e| format!("parse error: {e}"))?;
+
+    let mut env = nexl_infer::Env::new();
+    let mut state = nexl_infer::InferState::new();
+    for node in &nodes {
+        env = check_top_level(node, env, &mut state)?;
+    }
+
+    if !state.errors.is_empty() {
+        let message = state
+            .errors
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(message);
+    }
+
+    Ok(())
+}
+
+fn check_top_level(
+    node: &Node,
+    env: nexl_infer::Env,
+    state: &mut nexl_infer::InferState,
+) -> Result<nexl_infer::Env, String> {
+    if list_head_is(node, "def") {
+        let (_name, _ty, new_env) =
+            nexl_infer::infer_def(node, &env, state).map_err(|e| format!("type error: {e}"))?;
+        return Ok(new_env);
+    }
+    if list_head_is(node, "defn") {
+        let (_name, _ty, new_env) =
+            nexl_infer::infer_defn(node, &env, state).map_err(|e| format!("type error: {e}"))?;
+        return Ok(new_env);
+    }
+    nexl_infer::synth(node, &env, state).map_err(|e| format!("type error: {e}"))?;
+    Ok(env)
+}
+
+fn list_head_is(node: &Node, name: &str) -> bool {
+    let NodeKind::List(items) = &node.kind else {
+        return false;
+    };
+    let Some(first) = items.first() else {
+        return false;
+    };
+    match &first.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name: head }) => head == name,
+        _ => false,
+    }
+}
+
 
 
 #[cfg(test)]
@@ -227,5 +288,13 @@ mod tests {
         let output = String::from_utf8(output).expect("utf8");
         assert!(output.contains("nexl> "));
         assert!(output.contains('3'));
+    }
+
+    #[test]
+    fn check_type_checks_file() {
+        let path = write_temp_file("(def x 1) x", "check_ok");
+        let result = command_check(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "check should succeed, got: {result:?}");
     }
 }
