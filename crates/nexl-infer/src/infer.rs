@@ -2840,6 +2840,16 @@ pub enum DeftypeDecl {
     },
 }
 
+/// A parsed `deftype-opaque` declaration (spec §5.9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpaqueTypeDef {
+    pub name: String,
+    pub params: Vec<TypeVar>,
+    pub underlying: Type,
+    pub derives: Vec<String>,
+    pub drop: Option<String>,
+}
+
 /// Parse a `deftype` declaration.
 #[allow(dead_code)]
 pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
@@ -3023,6 +3033,165 @@ pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
                 .to_string(),
         })),
     }
+}
+
+/// Parse a `deftype-opaque` declaration.
+#[allow(dead_code)]
+pub fn parse_deftype_opaque(node: &Node) -> Result<OpaqueTypeDef, TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "deftype-opaque must be a list".to_string(),
+            }));
+        }
+    };
+
+    if items.len() < 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "deftype-opaque expects (deftype-opaque Name Underlying), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let is_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "deftype-opaque"
+    );
+    if !is_head {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "first element of deftype-opaque form must be `deftype-opaque`"
+                .to_string(),
+        }));
+    }
+
+    let name = match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "deftype-opaque name must be an unqualified symbol".to_string(),
+            }));
+        }
+    };
+
+    let mut params = Vec::new();
+    let mut param_map: HashMap<String, TypeVar> = HashMap::new();
+    let mut idx = 2;
+    if let Some(NodeKind::Vector(param_nodes)) = items.get(idx).map(|n| &n.kind) {
+        let mut supply = TypeVarSupply::new();
+        for param_node in param_nodes {
+            let param_name = match &param_node.kind {
+                NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+                _ => {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description:
+                            "deftype-opaque type params must be unqualified symbols".to_string(),
+                    }));
+                }
+            };
+            if param_map.contains_key(&param_name) {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: format!("duplicate type param `{param_name}`"),
+                }));
+            }
+            let tv = supply.fresh();
+            param_map.insert(param_name, tv);
+            params.push(tv);
+        }
+        idx += 1;
+    }
+
+    let underlying_node = items.get(idx).ok_or_else(|| {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: "deftype-opaque missing underlying type".to_string(),
+        })
+    })?;
+    idx += 1;
+
+    let underlying = parse_type_expr_with_params(underlying_node, &param_map)?;
+
+    let mut derives = Vec::new();
+    let mut drop = None;
+    while idx < items.len() {
+        let keyword = match &items[idx].kind {
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) => name.as_str(),
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "deftype-opaque has unexpected trailing forms".to_string(),
+                }));
+            }
+        };
+        match keyword {
+            "derive" => {
+                if !derives.is_empty() {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "deftype-opaque duplicate :derive clause".to_string(),
+                    }));
+                }
+                let Some(derive_node) = items.get(idx + 1) else {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "deftype-opaque :derive expects a vector of symbols".to_string(),
+                    }));
+                };
+                let NodeKind::Vector(derive_items) = &derive_node.kind else {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "deftype-opaque :derive expects a vector of symbols".to_string(),
+                    }));
+                };
+                for item in derive_items {
+                    match &item.kind {
+                        NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+                            derives.push(name.clone());
+                        }
+                        _ => {
+                            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                                description: "deftype-opaque :derive entries must be symbols"
+                                    .to_string(),
+                            }))
+                        }
+                    }
+                }
+                idx += 2;
+            }
+            "drop" => {
+                if drop.is_some() {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "deftype-opaque duplicate :drop clause".to_string(),
+                    }));
+                }
+                let Some(drop_node) = items.get(idx + 1) else {
+                    return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                        description: "deftype-opaque :drop expects a symbol".to_string(),
+                    }));
+                };
+                let drop_name = match &drop_node.kind {
+                    NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+                    _ => {
+                        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                            description: "deftype-opaque :drop expects a symbol".to_string(),
+                        }))
+                    }
+                };
+                drop = Some(drop_name);
+                idx += 2;
+            }
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "deftype-opaque has unexpected trailing forms".to_string(),
+                }));
+            }
+        }
+    }
+
+    Ok(OpaqueTypeDef {
+        name,
+        params,
+        underlying,
+        derives,
+        drop,
+    })
 }
 
 fn parse_deftype_derive_clause(
@@ -5278,6 +5447,48 @@ mod tests {
         assert_eq!(name, "Point");
         assert!(params.is_empty());
         assert_eq!(fields, vec![("x".to_string(), Type::Float)]);
+    }
+
+    // -- Opaque Test 1 --
+    #[test]
+    fn parse_deftype_opaque_basic() {
+        let node = parse_one("(deftype-opaque Email Str)");
+        let decl = super::parse_deftype_opaque(&node).unwrap();
+        assert_eq!(decl.name, "Email");
+        assert!(decl.params.is_empty());
+        assert_eq!(decl.underlying, Type::Str);
+        assert!(decl.derives.is_empty());
+    }
+
+    // -- Opaque Test 2 --
+    #[test]
+    fn parse_deftype_opaque_with_params_and_derive() {
+        let node = parse_one("(deftype-opaque Boxed [a] (Vec a) :derive [Show])");
+        let decl = super::parse_deftype_opaque(&node).unwrap();
+        assert_eq!(decl.name, "Boxed");
+        assert_eq!(decl.params.len(), 1);
+        let a = decl.params[0];
+        assert_eq!(
+            decl.underlying,
+            Type::Adt {
+                name: "Vec".to_string(),
+                args: vec![Type::Var(a)],
+            }
+        );
+        assert_eq!(decl.derives, vec!["Show".to_string()]);
+    }
+
+    // -- Opaque Test 3 --
+    #[test]
+    fn parse_deftype_opaque_with_drop_clause() {
+        let node = parse_one("(deftype-opaque CHandle Ptr :drop free-handle)");
+        let decl = super::parse_deftype_opaque(&node).unwrap();
+        assert_eq!(decl.name, "CHandle");
+        assert_eq!(decl.underlying, Type::Adt {
+            name: "Ptr".to_string(),
+            args: vec![],
+        });
+        assert_eq!(decl.drop, Some("free-handle".to_string()));
     }
 
     // -----------------------------------------------------------------------

@@ -4,7 +4,7 @@
 - [x] `defprotocol`
 - [x] `impl`
 - [x] Compiler-dispatched ops (`map`, `filter`, `reduce`)
-- [ ] Opaque types (`deftype-opaque`)
+- [x] Opaque types (`deftype-opaque`)
 - [ ] `deftype-alias`
 - [ ] Any escape hatch (`as-any`, `assert-type`)
 - [ ] Refinement types (`Refined`, `refine`)
