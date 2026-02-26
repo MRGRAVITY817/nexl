@@ -1,24 +1,23 @@
-# Current Milestone: M11 — Protocols + Advanced Types
+# Current Milestone: M12 — Concurrency
 
-**Goal:** Protocols, implementations, compiler-dispatched ops, and advanced type features.
+**Goal:** Structured concurrency with `fork`/`join`, channels, and `par-let`.
 
-**Crates:** `nexl-types`, `nexl-infer`, `nexl-ast`
+**Crates:** `nexl-effects`, `nexl-runtime`, `nexl-infer`
 
 **Spec sections to reference:**
-- §5.9–§5.12 (opaque types, protocols, Any, refinements)
-- §7.6 (named patterns)
+- §10.3–§10.6 (channels, atoms, par-let)
 
 **Key ADRs:**
-- ADR-008: No HKT, compiler-dispatched map/filter
+- ADR-007: Atoms outside effect system
 
 **Acceptance criteria:**
-- `defprotocol` and `impl` work end-to-end
-- Compiler-dispatched ops (`map`, `filter`, `reduce`) resolve statically
-- Opaque types and `deftype-alias` supported
-- Any escape hatch and refinement types implemented
-- Named patterns (`defpattern`) usable in `match`
+- `Concurrent` effect with `fork`/`join`/`yield`
+- `fork`, `join`, `race`, `timeout`
+- Channels and atoms
+- `par-let` and `go` sugar
+- `sleep` and a deterministic test handler
 
-**When done:** Update this file to point to M12.
+**When done:** Update this file to point to M13.
 
-See `docs/todo-m11.md` for the task checklist.
+See `docs/todo-m12.md` for the task checklist.
 See `milestones.md` for the full plan.
