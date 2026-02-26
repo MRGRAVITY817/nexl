@@ -1,22 +1,24 @@
-# Current Milestone: M10 — Macro System
+# Current Milestone: M11 — Protocols + Advanced Types
 
-**Goal:** Hygienic macros via scope sets (`defmacro`, `defmacro-syntax`).
+**Goal:** Protocols, implementations, compiler-dispatched ops, and advanced type features.
 
-**Crates:** `nexl-macros` (new), `nexl-reader` (extend), `nexl-ast` (extend)
+**Crates:** `nexl-types`, `nexl-infer`, `nexl-ast`
 
 **Spec sections to reference:**
-- §7 Macros (lines 1802–1941)
+- §5.9–§5.12 (opaque types, protocols, Any, refinements)
+- §7.6 (named patterns)
 
 **Key ADRs:**
-- ADR-013: Def-form renames (`defn-macro`, `defmacro-syntax`, etc.)
+- ADR-008: No HKT, compiler-dispatched map/filter
 
 **Acceptance criteria:**
-- `defmacro` expands hygienically
-- `defmacro-syntax` supports pattern-based macros
-- Built-in macros (`->`, `->>`, `when`, `unless`, `and`, `or`) expand correctly
-- `cargo test` passes across all crates
+- `defprotocol` and `impl` work end-to-end
+- Compiler-dispatched ops (`map`, `filter`, `reduce`) resolve statically
+- Opaque types and `deftype-alias` supported
+- Any escape hatch and refinement types implemented
+- Named patterns (`defpattern`) usable in `match`
 
-**When done:** Update this file to point to M11.
+**When done:** Update this file to point to M12.
 
-See `docs/todo-m10.md` for the task checklist.
+See `docs/todo-m11.md` for the task checklist.
 See `milestones.md` for the full plan.
