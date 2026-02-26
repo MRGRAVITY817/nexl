@@ -3,7 +3,7 @@
 ## Core
 - [x] `defprotocol`
 - [x] `impl`
-- [ ] Compiler-dispatched ops (`map`, `filter`, `reduce`)
+- [x] Compiler-dispatched ops (`map`, `filter`, `reduce`)
 - [ ] Opaque types (`deftype-opaque`)
 - [ ] `deftype-alias`
 - [ ] Any escape hatch (`as-any`, `assert-type`)
