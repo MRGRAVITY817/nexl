@@ -61,6 +61,18 @@ nexl-macros
 └── nexl-ast
 ```
 
+## M13 Crates
+
+```
+nexl-native
+├── nexl-ir (M8)
+├── cranelift-codegen (external)
+├── cranelift-frontend (external)
+├── cranelift-module (external)
+├── cranelift-object (external)
+└── target-lexicon (external)
+```
+
 ## Planned (future milestones)
 
 ```
