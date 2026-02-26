@@ -152,6 +152,65 @@ fn expected_import_decl(span: Span, label: &str) -> Box<Diagnostic> {
     Box::new(d)
 }
 
+fn make_src_loc(span: Span) -> Node {
+    let file = Node::atom(
+        Atom::Int {
+            value: span.file_id.0 as i128,
+            suffix: None,
+        },
+        Span::synthetic(),
+    );
+    let start = Node::atom(
+        Atom::Int {
+            value: span.start as i128,
+            suffix: None,
+        },
+        Span::synthetic(),
+    );
+    let len = Node::atom(
+        Atom::Int {
+            value: span.len as i128,
+            suffix: None,
+        },
+        Span::synthetic(),
+    );
+
+    let pairs = vec![
+        (
+            Node::atom(
+                Atom::Keyword {
+                    ns: None,
+                    name: "file".into(),
+                },
+                Span::synthetic(),
+            ),
+            file,
+        ),
+        (
+            Node::atom(
+                Atom::Keyword {
+                    ns: None,
+                    name: "start".into(),
+                },
+                Span::synthetic(),
+            ),
+            start,
+        ),
+        (
+            Node::atom(
+                Atom::Keyword {
+                    ns: None,
+                    name: "len".into(),
+                },
+                Span::synthetic(),
+            ),
+            len,
+        ),
+    ];
+
+    Node::new(NodeKind::Map(pairs), Span::synthetic())
+}
+
 // ---------------------------------------------------------------------------
 // Reader
 // ---------------------------------------------------------------------------
@@ -229,6 +288,32 @@ impl<'src> Reader<'src> {
             }
             TokenKind::Comment(_) => {
                 unreachable!("comments must be drained before dispatch")
+            }
+            TokenKind::DispatchTag { name } => Ok(Node::atom(
+                Atom::Symbol {
+                    ns: None,
+                    name: format!("#{name}"),
+                },
+                tok.span,
+            )),
+            TokenKind::DispatchText {
+                name,
+                text,
+                text_span,
+            } => {
+                let head = Node::atom(
+                    Atom::Symbol {
+                        ns: None,
+                        name,
+                    },
+                    tok.span,
+                );
+                let text_node = Node::atom(Atom::Str(text), text_span);
+                let loc_node = make_src_loc(text_span);
+                Ok(Node::new(
+                    NodeKind::List(vec![head, text_node, loc_node]),
+                    tok.span,
+                ))
             }
             // Operator/separator tokens — treated as symbol atoms so they can
             // appear as elements inside collections (e.g. `[x : Int]`, `| Red`).
@@ -940,6 +1025,57 @@ mod tests {
             })
         );
         assert_eq!(nodes[1].kind, NodeKind::Atom(Atom::Str("hi".into())));
+    }
+
+    // ── R1. reader_text_dispatch ────────────────────────────────────────────
+    #[test]
+    fn reader_text_dispatch() {
+        let src = "#sql[SELECT name FROM users WHERE id = {user-id}]";
+        let nodes = read(src, fid()).expect("parse failed");
+        assert_eq!(nodes.len(), 1);
+
+        let NodeKind::List(items) = &nodes[0].kind else {
+            panic!("expected List");
+        };
+        assert_eq!(items.len(), 3);
+        assert!(
+            matches!(
+                items[0].kind,
+                NodeKind::Atom(Atom::Symbol { ns: None, ref name }) if name == "sql"
+            ),
+            "expected sql head"
+        );
+        let NodeKind::Atom(Atom::Str(text)) = &items[1].kind else {
+            panic!("expected Str");
+        };
+        assert_eq!(
+            text,
+            "SELECT name FROM users WHERE id = {user-id}"
+        );
+        let NodeKind::Map(pairs) = &items[2].kind else {
+            panic!("expected map loc");
+        };
+
+        let mut file = None;
+        let mut start = None;
+        let mut len = None;
+        for (k, v) in pairs {
+            let NodeKind::Atom(Atom::Keyword { ns: None, name }) = &k.kind else {
+                continue;
+            };
+            let NodeKind::Atom(Atom::Int { value, .. }) = &v.kind else {
+                continue;
+            };
+            match name.as_str() {
+                "file" => file = Some(*value),
+                "start" => start = Some(*value),
+                "len" => len = Some(*value),
+                _ => {}
+            }
+        }
+        assert_eq!(file, Some(0));
+        assert_eq!(start, Some(5));
+        assert_eq!(len, Some(text.len() as i128));
     }
 
     // ── 18. parse_multiple_top_level ─────────────────────────────────────

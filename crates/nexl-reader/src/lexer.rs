@@ -72,6 +72,14 @@ pub enum TokenKind {
     Discard,
     /// Set-literal open `#{` — begins a set collection (spec §2.9).
     SetOpen,
+    /// Reader extension tag, e.g. `#sql` (spec §2.10, §7.10).
+    DispatchTag { name: String },
+    /// Reader extension text form, e.g. `#sql[...]` (spec §2.10, §7.10).
+    DispatchText {
+        name: String,
+        text: String,
+        text_span: Span,
+    },
     /// Line comment — text from `;` to end of line, not including the newline.
     ///
     /// Preserved as a token so the reader can attach comments to adjacent
@@ -224,7 +232,7 @@ impl<'src> Lexer<'src> {
             });
         }
 
-        // Hash-dispatched reader macros: `#_` and `#{`
+        // Hash-dispatched reader macros: `#_`, `#{`, and `#tag...`
         if ch == '#' {
             let start = self.pos;
             self.advance(); // consume '#'
@@ -241,6 +249,33 @@ impl<'src> Lexer<'src> {
                     return Ok(Token {
                         kind: TokenKind::SetOpen,
                         span: self.span_from(start),
+                    });
+                }
+                Some(next) if is_symbol_start(next) => {
+                    let name = self.lex_dispatch_tag_name()?;
+                    let (maybe_open, maybe_close) = match self.peek() {
+                        Some('[') => (Some('['), Some(']')),
+                        Some('(') => (Some('('), Some(')')),
+                        Some('"') => (Some('"'), Some('"')),
+                        _ => (None, None),
+                    };
+                    if let (Some(open), Some(close)) = (maybe_open, maybe_close) {
+                        self.advance(); // consume opening delimiter
+                        let (text, text_span) = self.read_dispatch_text(open, close, start)?;
+                        let span = self.span_from(start);
+                        return Ok(Token {
+                            kind: TokenKind::DispatchText {
+                                name,
+                                text,
+                                text_span,
+                            },
+                            span,
+                        });
+                    }
+                    let span = self.span_from(start);
+                    return Ok(Token {
+                        kind: TokenKind::DispatchTag { name },
+                        span,
                     });
                 }
                 other => {
@@ -760,6 +795,87 @@ impl<'src> Lexer<'src> {
         };
 
         Ok(Token { kind, span })
+    }
+
+    /// Lex a reader-extension tag name after `#`, e.g. `sql` in `#sql[...]`.
+    fn lex_dispatch_tag_name(&mut self) -> Result<String, Box<Diagnostic>> {
+        let first = self.collect_while(is_symbol_cont);
+        if first.is_empty() {
+            return Err(Box::new(self.error_at(
+                self.pos,
+                "expected reader extension tag after `#`".to_string(),
+                None,
+            )));
+        }
+        if self.peek() == Some('/') && self.peek_ahead(1).is_some_and(is_symbol_start) {
+            self.advance(); // consume '/'
+            let name = self.collect_while(is_symbol_cont);
+            Ok(format!("{first}/{name}"))
+        } else {
+            Ok(first)
+        }
+    }
+
+    fn read_dispatch_text(
+        &mut self,
+        open: char,
+        close: char,
+        start: usize,
+    ) -> Result<(String, Span), Box<Diagnostic>> {
+        let text_start = self.pos;
+        if open == '"' {
+            while let Some(ch) = self.peek() {
+                match ch {
+                    '\\' => {
+                        self.advance();
+                        if self.peek().is_some() {
+                            self.advance();
+                        }
+                    }
+                    '"' => {
+                        let text_end = self.pos;
+                        let text = self.src[text_start..text_end].to_string();
+                        let span = Span::new(
+                            self.file_id,
+                            text_start as u32,
+                            (text_end - text_start) as u32,
+                        );
+                        self.advance(); // consume closing quote
+                        return Ok((text, span));
+                    }
+                    _ => {
+                        self.advance();
+                    }
+                }
+            }
+        } else {
+            let mut depth = 1;
+            while let Some(ch) = self.peek() {
+                if ch == open {
+                    depth += 1;
+                } else if ch == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        let text_end = self.pos;
+                        let text = self.src[text_start..text_end].to_string();
+                        let span = Span::new(
+                            self.file_id,
+                            text_start as u32,
+                            (text_end - text_start) as u32,
+                        );
+                        self.advance(); // consume closing delimiter
+                        return Ok((text, span));
+                    }
+                }
+                self.advance();
+            }
+        }
+
+        Err(Box::new(self.error_at(
+            start,
+            "unterminated reader extension text".to_string(),
+            None,
+        )))
     }
 
     // --- character literal lexing ---

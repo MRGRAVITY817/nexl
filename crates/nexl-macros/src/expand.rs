@@ -73,6 +73,10 @@ impl Expander {
             self.macros.insert(def.0, def.1);
             return Ok(None);
         }
+        if let Some(def) = parse_defreader_text(node)? {
+            self.macros.insert(def.0, def.1);
+            return Ok(None);
+        }
         if let Some(def) = parse_defmacro_elab(node)? {
             self.macros.insert(def.0, def.1);
             return Ok(None);
@@ -266,6 +270,74 @@ fn parse_defmacro_elab(node: &Node) -> Result<Option<(String, MacroKind)>, Macro
 
     Ok(Some((
         name.clone(),
+        MacroKind::Proc(ProcMacro {
+            params: args,
+            rest,
+            body,
+        }),
+    )))
+}
+
+fn parse_defreader_text(node: &Node) -> Result<Option<(String, MacroKind)>, MacroError> {
+    let NodeKind::List(items) = &node.kind else {
+        return Ok(None);
+    };
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let head = &items[0];
+    let Some(head_name) = symbol_name(head) else {
+        return Ok(None);
+    };
+    if head_name != "defreader-text" {
+        return Ok(None);
+    }
+    if items.len() < 4 {
+        return Err(MacroError::Message(
+            "defreader-text requires tag, params, body".to_string(),
+        ));
+    }
+    let raw_tag = symbol_name(&items[1]).ok_or_else(|| {
+        MacroError::Message("defreader-text tag must be a symbol".to_string())
+    })?;
+    let tag = raw_tag
+        .strip_prefix('#')
+        .ok_or_else(|| MacroError::Message("defreader-text tag must start with #".to_string()))?;
+    if tag.is_empty() {
+        return Err(MacroError::Message(
+            "defreader-text tag cannot be empty".to_string(),
+        ));
+    }
+
+    let params = match &items[2].kind {
+        NodeKind::Vector(items) => items,
+        _ => {
+            return Err(MacroError::Message(
+                "defreader-text params must be a vector".to_string(),
+            ))
+        }
+    };
+    let (args, rest) = parse_params_typed(params)?;
+
+    let body = if items.len() == 4 {
+        items[3].clone()
+    } else if items.len() == 5
+        && symbol_name(&items[3]) == Some("&")
+        && symbol_name(&items[4]) == Some("form")
+    {
+        Node::atom(
+            Atom::Symbol {
+                ns: None,
+                name: "&form".to_string(),
+            },
+            items[3].span,
+        )
+    } else {
+        make_do(&items[3..])
+    };
+
+    Ok(Some((
+        tag.to_string(),
         MacroKind::Proc(ProcMacro {
             params: args,
             rest,
@@ -948,6 +1020,18 @@ mod tests {
         let nodes = read(src, FileId::SYNTHETIC).expect("parse");
         let expanded = expand_forms(&nodes).expect("expand");
         let expected = read("1", FileId::SYNTHETIC).expect("parse expected");
+        assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
+    }
+
+    #[test]
+    fn expand_defreader_text_basic() {
+        let src = r#"
+        (defreader-text #sql [text : Str loc : SrcLoc] text)
+        #sql[SELECT 1]
+        "#;
+        let nodes = read(src, FileId::SYNTHETIC).expect("parse");
+        let expanded = expand_forms(&nodes).expect("expand");
+        let expected = read("\"SELECT 1\"", FileId::SYNTHETIC).expect("parse expected");
         assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
     }
 
