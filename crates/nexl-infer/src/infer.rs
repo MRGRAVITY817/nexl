@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use nexl_ast::{
-    Atom, FloatSuffix, IntSuffix, ModuleDecl, Node, NodeKind, Pattern, parse_handle_form,
+    Atom, FloatSuffix, IntSuffix, ModuleDecl, Node, NodeKind, Pattern, Span, parse_handle_form,
     parse_pattern,
 };
 use nexl_types::{
@@ -2219,6 +2219,169 @@ pub fn infer_defn(
     };
     let new_env = env.extend(name.clone(), Scheme::mono(fn_ty.clone()));
     Ok((name, fn_ty, new_env))
+}
+
+// ---------------------------------------------------------------------------
+// impl form
+// ---------------------------------------------------------------------------
+
+/// Infer an `(impl ...)` form.
+///
+/// For now, this validates shape and type-checks method bodies. It does not
+/// register implementations for dispatch (M11 follow-up work).
+#[allow(dead_code)]
+pub fn infer_impl(node: &Node, env: &Env, state: &mut InferState) -> Result<Env, TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "impl must be a list".to_string(),
+            }));
+        }
+    };
+
+    if items.len() < 4 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: format!(
+                "impl expects (impl Type Protocol ...), got {} elements",
+                items.len()
+            ),
+        }));
+    }
+
+    let is_head = matches!(
+        &items[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "impl"
+    );
+    if !is_head {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "first element of impl form must be the symbol `impl`".to_string(),
+        }));
+    }
+
+    let mut idx = 2;
+    while idx < items.len() {
+        if !is_impl_protocol_ref(&items[idx]) {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "impl expects a protocol name after the type".to_string(),
+            }));
+        }
+        idx += 1;
+
+        let mut methods = Vec::new();
+        while idx < items.len() && !is_impl_protocol_ref(&items[idx]) {
+            methods.push(&items[idx]);
+            idx += 1;
+        }
+
+        if methods.is_empty() {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "impl requires method definitions for each protocol".to_string(),
+            }));
+        }
+
+        for method in methods {
+            infer_impl_method(method, env, state)?;
+        }
+    }
+
+    Ok(env.clone())
+}
+
+fn infer_impl_method(node: &Node, env: &Env, state: &mut InferState) -> Result<(), TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "impl method must be a list".to_string(),
+            }));
+        }
+    };
+
+    if items.len() < 3 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "impl method expects (name [params...] body)".to_string(),
+        }));
+    }
+
+    match &items[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, .. }) => {}
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "impl method name must be an unqualified symbol".to_string(),
+            }));
+        }
+    }
+
+    let params = match &items[1].kind {
+        NodeKind::Vector(params) => params,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "impl method parameter list must be a vector".to_string(),
+            }));
+        }
+    };
+    if params.is_empty() {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "impl method must include a self parameter".to_string(),
+        }));
+    }
+    for param in params {
+        match &param.kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, .. }) => {}
+            _ => {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "impl method params must be unqualified symbols".to_string(),
+                }));
+            }
+        }
+    }
+
+    let body = if items.len() == 3 {
+        items[2].clone()
+    } else {
+        make_do(&items[2..])
+    };
+
+    let fn_node = Node::new(
+        NodeKind::List(vec![
+            sym_node("fn"),
+            Node::new(NodeKind::Vector(params.clone()), Span::synthetic()),
+            body,
+        ]),
+        Span::synthetic(),
+    );
+
+    synth(&fn_node, env, state).map(|_| ())
+}
+
+fn is_impl_protocol_ref(node: &Node) -> bool {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, .. }) => true,
+        NodeKind::List(items) => !is_impl_method_form(items),
+        _ => false,
+    }
+}
+
+fn is_impl_method_form(items: &[Node]) -> bool {
+    items.len() >= 2 && matches!(items[1].kind, NodeKind::Vector(_))
+}
+
+fn sym_node(name: &str) -> Node {
+    Node::atom(
+        Atom::Symbol {
+            ns: None,
+            name: name.to_string(),
+        },
+        Span::synthetic(),
+    )
+}
+
+fn make_do(forms: &[Node]) -> Node {
+    let mut items = Vec::with_capacity(forms.len() + 1);
+    items.push(sym_node("do"));
+    items.extend(forms.iter().cloned());
+    Node::new(NodeKind::List(items), Span::synthetic())
 }
 
 // ---------------------------------------------------------------------------
@@ -5118,10 +5281,62 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // impl form tests
+    // -----------------------------------------------------------------------
+
+    // -- Impl Test 1 --
+    #[test]
+    fn infer_impl_single_protocol() {
+        let (env, mut state) = empty();
+        let node = parse_one(r#"(impl Point Show (show [p] "ok"))"#);
+        let result = super::infer_impl(&node, &env, &mut state);
+        assert!(result.is_ok(), "expected impl to type-check");
+    }
+
+    // -- Impl Test 2 --
+    #[test]
+    fn infer_impl_multiple_protocols() {
+        let (env, mut state) = empty();
+        let node = parse_one(r#"
+        (impl Point
+          Show
+          (show [p] "ok")
+          Eq
+          (eq? [a b] true))
+        "#);
+        let result = super::infer_impl(&node, &env, &mut state);
+        assert!(result.is_ok(), "expected impl to type-check");
+    }
+
+    // -- Impl Test 3 --
+    #[test]
+    fn infer_impl_requires_self_param() {
+        let (env, mut state) = empty();
+        let node = parse_one(r#"(impl Point Show (show [] "no"))"#);
+        let err = super::infer_impl(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -- Impl Test 4 --
+    #[test]
+    fn infer_impl_params_must_be_vector() {
+        let (env, mut state) = empty();
+        let node = parse_one(r#"(impl Point Show (show p "no"))"#);
+        let err = super::infer_impl(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
+            "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // deftype registration tests
     // -----------------------------------------------------------------------
 
-    // -- Test 11 (deftype register) --
+    // -- Test 12 (deftype register) --
     #[test]
     fn register_deftype_sum_adds_type_def_and_ctors() {
         let t0 = TypeVar(0);

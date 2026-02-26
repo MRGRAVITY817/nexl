@@ -5,6 +5,6 @@ mod infer;
 
 pub use env::Env;
 pub use infer::{
-    InferState, check, check_module_performs, infer_def, infer_defn, synth,
+    InferState, check, check_module_performs, infer_def, infer_defn, infer_impl, synth,
     validate_module_performs,
 };

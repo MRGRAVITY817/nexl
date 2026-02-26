@@ -2,7 +2,7 @@
 
 ## Core
 - [x] `defprotocol`
-- [ ] `impl`
+- [x] `impl`
 - [ ] Compiler-dispatched ops (`map`, `filter`, `reduce`)
 - [ ] Opaque types (`deftype-opaque`)
 - [ ] `deftype-alias`
