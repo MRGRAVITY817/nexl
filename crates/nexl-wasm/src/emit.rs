@@ -224,7 +224,7 @@ fn emit_func(func: &FuncDef, so: &StringMap) -> Result<Function, EmitError> {
     let locals = if num_extra > 0 { vec![(num_extra, DEFAULT_VAL)] } else { vec![] };
 
     let mut wasm_func = Function::new(locals);
-    emit_block(&func.body, &local_map, so, &mut wasm_func)?;
+    emit_block(&func.body, &local_map, so, &mut wasm_func, None)?;
     wasm_func.instruction(&Instruction::End);
 
     Ok(wasm_func)
@@ -256,6 +256,16 @@ fn collect_bind_vars(block: &Block, local_map: &mut HashMap<VarId, u32>, next: &
                 collect_bind_vars(&arm.body, local_map, next);
             }
         }
+        Tail::Loop { vars, body } => {
+            for (var_id, _) in vars {
+                local_map.entry(*var_id).or_insert_with(|| {
+                    let idx = *next;
+                    *next += 1;
+                    idx
+                });
+            }
+            collect_bind_vars(body, local_map, next);
+        }
         _ => {}
     }
 }
@@ -267,13 +277,14 @@ fn emit_block(
     local_map: &HashMap<VarId, u32>,
     so: &StringMap,
     func: &mut Function,
+    lv: Option<(&[VarId], u32)>,
 ) -> Result<(), EmitError> {
     for bind in &block.binds {
         emit_rhs(&bind.rhs, local_map, so, func)?;
         let idx = local_idx(bind.var, local_map)?;
         func.instruction(&Instruction::LocalSet(idx));
     }
-    emit_tail(block.tail.as_ref(), local_map, so, func)
+    emit_tail(block.tail.as_ref(), local_map, so, func, lv)
 }
 
 fn emit_tail(
@@ -281,6 +292,7 @@ fn emit_tail(
     local_map: &HashMap<VarId, u32>,
     so: &StringMap,
     func: &mut Function,
+    lv: Option<(&[VarId], u32)>,
 ) -> Result<(), EmitError> {
     match tail {
         Tail::Return(atom) => emit_atom(atom, local_map, so, func),
@@ -289,9 +301,11 @@ fn emit_tail(
             // Bool is stored as i64 (1/0); WASM `if` expects i32.
             func.instruction(&Instruction::I32WrapI64);
             func.instruction(&Instruction::If(BlockType::Result(DEFAULT_VAL)));
-            emit_block(then_block, local_map, so, func)?;
+            // Increase br depth by 1 since we're now inside an `if` block.
+            let inner_lv = lv.map(|(v, d)| (v, d + 1));
+            emit_block(then_block, local_map, so, func, inner_lv)?;
             func.instruction(&Instruction::Else);
-            emit_block(else_block, local_map, so, func)?;
+            emit_block(else_block, local_map, so, func, inner_lv)?;
             func.instruction(&Instruction::End);
             Ok(())
         }
@@ -305,7 +319,36 @@ fn emit_tail(
             }
             emit_call_atom(f_atom, local_map, func)
         }
-        Tail::Match { scrutinee, arms } => emit_match_arms(scrutinee, arms, local_map, so, func),
+        Tail::Match { scrutinee, arms } => {
+            emit_match_arms(scrutinee, arms, local_map, so, func, lv)
+        }
+        Tail::Loop { vars, body } => {
+            // Emit initial values and set loop-variable locals.
+            let var_ids: Vec<VarId> = vars.iter().map(|(v, _)| *v).collect();
+            for (var_id, init_atom) in vars {
+                emit_atom(init_atom, local_map, so, func)?;
+                let idx = local_idx(*var_id, local_map)?;
+                func.instruction(&Instruction::LocalSet(idx));
+            }
+            // `loop (result i64)` — `br 0` inside returns to the top.
+            func.instruction(&Instruction::Loop(BlockType::Result(DEFAULT_VAL)));
+            emit_block(body, local_map, so, func, Some((&var_ids, 0)))?;
+            func.instruction(&Instruction::End);
+            Ok(())
+        }
+        Tail::Recur { args } => {
+            let (loop_var_ids, depth) = lv
+                .ok_or_else(|| EmitError("recur outside loop".to_string()))?;
+            // Set each loop variable to its new value.
+            for (var_id, arg) in loop_var_ids.iter().zip(args.iter()) {
+                emit_atom(arg, local_map, so, func)?;
+                let idx = local_idx(*var_id, local_map)?;
+                func.instruction(&Instruction::LocalSet(idx));
+            }
+            // Branch back to the top of the loop.
+            func.instruction(&Instruction::Br(depth));
+            Ok(())
+        }
     }
 }
 
@@ -505,6 +548,7 @@ fn emit_match_arms(
     local_map: &HashMap<VarId, u32>,
     so: &StringMap,
     func: &mut Function,
+    lv: Option<(&[VarId], u32)>,
 ) -> Result<(), EmitError> {
     if arms.is_empty() {
         // Exhaustiveness is guaranteed by the type checker; emit a trap.
@@ -515,8 +559,8 @@ fn emit_match_arms(
     let arm = &arms[0];
 
     if arm.ctor == "_" {
-        // Wildcard arm — unconditionally execute body.
-        return emit_block(&arm.body, local_map, so, func);
+        // Wildcard arm — unconditionally execute body (no new block, depth unchanged).
+        return emit_block(&arm.body, local_map, so, func, lv);
     }
 
     // Load tag from scrutinee (ptr as i32, tag is i64 at offset 0).
@@ -527,6 +571,8 @@ fn emit_match_arms(
     // i64.eq returns i32 (0 or 1) — consumed directly by `if`.
     func.instruction(&Instruction::I64Eq);
 
+    // Opening this `if` block increases br depth by 1.
+    let inner_lv = lv.map(|(v, d)| (v, d + 1));
     func.instruction(&Instruction::If(BlockType::Result(DEFAULT_VAL)));
 
     // Arm taken: bind fields from memory, then run arm body.
@@ -543,10 +589,10 @@ fn emit_match_arms(
             .ok_or_else(|| EmitError(format!("unresolved bind var VarId({})", bind_var.0)))?;
         func.instruction(&Instruction::LocalSet(bind_local));
     }
-    emit_block(&arm.body, local_map, so, func)?;
+    emit_block(&arm.body, local_map, so, func, inner_lv)?;
 
     func.instruction(&Instruction::Else);
-    emit_match_arms(scrutinee, &arms[1..], local_map, so, func)?;
+    emit_match_arms(scrutinee, &arms[1..], local_map, so, func, inner_lv)?;
     func.instruction(&Instruction::End);
 
     Ok(())
@@ -688,6 +734,17 @@ fn collect_strings_in_tail(tail: &Tail, order: &mut Vec<Rc<str>>, seen: &mut Has
             collect_strings_in_atom(scrutinee, order, seen);
             for arm in arms {
                 collect_strings_in_block(&arm.body, order, seen);
+            }
+        }
+        Tail::Loop { vars, body } => {
+            for (_, init) in vars {
+                collect_strings_in_atom(init, order, seen);
+            }
+            collect_strings_in_block(body, order, seen);
+        }
+        Tail::Recur { args } => {
+            for a in args {
+                collect_strings_in_atom(a, order, seen);
             }
         }
     }
@@ -943,6 +1000,34 @@ mod tests {
         let bytes = emit("(defn f [] 1)");
         let found = bytes.windows(b"__evv_get".len()).any(|w| w == b"__evv_get");
         assert!(found, "__evv_get name not found in WASM output");
+    }
+
+    // ─── 26. loop without recur emits valid WASM ──────────────────────────────
+    #[test]
+    fn emit_loop_simple() {
+        // (defn f [n] (loop [i n] i)) — loop that immediately returns its var
+        let bytes = emit("(defn f [n] (loop [i n] i))");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        assert!(bytes.len() > 8);
+    }
+
+    // ─── 27. loop opcode appears in WASM binary ───────────────────────────────
+    #[test]
+    fn emit_loop_has_loop_opcode() {
+        // WASM `loop (result i64)` encodes as [0x03, 0x7E]
+        let bytes = emit("(defn f [n] (loop [i n] i))");
+        let found = bytes.windows(2).any(|w| w == [0x03, 0x7E]);
+        assert!(found, "WASM loop opcode [0x03, 0x7E] not found in output");
+    }
+
+    // ─── 28. recur emits br back to loop ─────────────────────────────────────
+    #[test]
+    fn emit_loop_recur_has_br() {
+        // (defn f [n] (loop [i n] (if false 99 (recur 0))))
+        // Recur is inside an if-else block, so br depth = 1 → [0x0C, 0x01]
+        let bytes = emit("(defn f [n] (loop [i n] (if false 99 (recur 0))))");
+        let found = bytes.windows(2).any(|w| w == [0x0C, 0x01]);
+        assert!(found, "WASM br 1 [0x0C, 0x01] not found in output (recur inside if)");
     }
 
 }

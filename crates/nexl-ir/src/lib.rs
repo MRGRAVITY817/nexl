@@ -199,6 +199,23 @@ pub enum Tail {
 
     /// Abort the program with a message atom (from `panic` or failed `assert!`).
     Panic(Atom),
+
+    /// A `loop/recur` tail-recursive loop (spec §4.10).
+    ///
+    /// Initializes each loop variable to its `init` atom, then executes `body`
+    /// repeatedly.  The body must end with either a non-[`Tail::Recur`] tail
+    /// (normal exit) or [`Tail::Recur`] (go back to the top of the loop).
+    Loop {
+        /// `(var_id, init_atom)` pairs — loop variable and its initial value.
+        vars: Vec<(VarId, Atom)>,
+        /// The loop body; may contain `Tail::Recur` in tail position.
+        body: Box<Block>,
+    },
+
+    /// Jump back to the nearest enclosing [`Tail::Loop`] with new values.
+    ///
+    /// `args.len()` must equal `vars.len()` of the enclosing `Loop`.
+    Recur { args: Vec<Atom> },
 }
 
 /// One arm of a [`Tail::Match`] decision tree.

@@ -21,7 +21,7 @@
 - [x] Tail-resumptive handlers → direct function calls through evidence
 
 ## Tail Calls
-- [ ] loop/recur → WASM `loop`/`br`
+- [x] loop/recur → WASM `loop`/`br`
 - [ ] General tail calls → WASM `return_call`
 
 ## Output

@@ -32,6 +32,8 @@ pub enum LowerError {
     EmptyBody,
     /// A symbol was referenced that has no binding in scope.
     UnboundVariable(String),
+    /// `loop` form is malformed (missing binding vector, odd bindings, …).
+    MalformedLoop,
     /// An expression form not yet supported by this lowering pass.
     UnsupportedExpr,
     /// A pattern form not yet supported (non-constructor, non-variable, …).
@@ -49,6 +51,7 @@ impl std::fmt::Display for LowerError {
             LowerError::MalformedMatch => write!(f, "malformed match"),
             LowerError::EmptyBody => write!(f, "empty body"),
             LowerError::UnboundVariable(n) => write!(f, "unbound variable: {n}"),
+            LowerError::MalformedLoop => write!(f, "malformed loop"),
             LowerError::UnsupportedExpr => write!(f, "unsupported expression"),
             LowerError::UnsupportedPattern => write!(f, "unsupported pattern"),
         }
@@ -233,6 +236,8 @@ impl Lowerer {
                         "if" => return self.lower_if_tail(items, env),
                         "let" => return self.lower_let_tail(items, env),
                         "match" => return self.lower_match_tail(items, env),
+                        "loop" => return self.lower_loop_tail(items, env),
+                        "recur" => return self.lower_recur_tail(items, env),
                         "do" => {
                             let block = self.lower_body(&items[1..], env)?;
                             return Ok((block.binds, *block.tail));
@@ -371,6 +376,60 @@ impl Lowerer {
         }
 
         Ok((scrut_binds, Tail::Match { scrutinee: scrut_atom, arms }))
+    }
+
+    fn lower_loop_tail(
+        &mut self,
+        items: &[Node],
+        env: &HashMap<String, VarId>,
+    ) -> Result<(Vec<LetBind>, Tail), LowerError> {
+        // (loop [var init, var init, ...] body...)
+        if items.len() < 3 {
+            return Err(LowerError::MalformedLoop);
+        }
+        let bindings = match &items[1].kind {
+            NodeKind::Vector(v) => v,
+            _ => return Err(LowerError::MalformedLoop),
+        };
+        if bindings.len() % 2 != 0 {
+            return Err(LowerError::MalformedLoop);
+        }
+
+        let mut all_binds: Vec<LetBind> = vec![];
+        let mut loop_vars: Vec<(VarId, Atom)> = vec![];
+        let mut current_env = env.clone();
+
+        // Bindings are sequential: each init is evaluated with previous loop vars in scope.
+        for pair in bindings.chunks(2) {
+            let var_name = match &pair[0].kind {
+                NodeKind::Atom(AstAtom::Symbol { name, .. }) => name.clone(),
+                _ => return Err(LowerError::MalformedLoop),
+            };
+            let (init_binds, init_atom) = self.lower_expr(&pair[1], &current_env)?;
+            all_binds.extend(init_binds);
+            let var_id = self.var_gen.fresh();
+            current_env.insert(var_name, var_id);
+            loop_vars.push((var_id, init_atom));
+        }
+
+        let body = self.lower_body(&items[2..], &current_env)?;
+        Ok((all_binds, Tail::Loop { vars: loop_vars, body: Box::new(body) }))
+    }
+
+    fn lower_recur_tail(
+        &mut self,
+        items: &[Node],
+        env: &HashMap<String, VarId>,
+    ) -> Result<(Vec<LetBind>, Tail), LowerError> {
+        // (recur arg1 arg2 ...)
+        let mut all_binds: Vec<LetBind> = vec![];
+        let mut args: Vec<Atom> = vec![];
+        for arg in &items[1..] {
+            let (binds, atom) = self.lower_expr(arg, env)?;
+            all_binds.extend(binds);
+            args.push(atom);
+        }
+        Ok((all_binds, Tail::Recur { args }))
     }
 
     // ── Expression-position lowering ─────────────────────────────────────────
@@ -877,6 +936,38 @@ mod tests {
         assert_eq!(fields.len(), 1);
         let x_var = m.funcs[0].params[0];
         assert!(matches!(fields[0], Atom::Var(v) if v == x_var));
+    }
+
+    // ─── 17. loop with single binding ────────────────────────────────────────
+    #[test]
+    fn lower_loop_single_var() {
+        // (defn f [n] (loop [i n] i))
+        // Tail should be Tail::Loop with 1 var
+        let m = lower("(defn f [n] (loop [i n] i))").unwrap();
+        let func = &m.funcs[0];
+        let Tail::Loop { ref vars, .. } = *func.body.tail else {
+            panic!("expected Tail::Loop, got {:?}", func.body.tail)
+        };
+        assert_eq!(vars.len(), 1, "one loop variable");
+    }
+
+    // ─── 18. loop with recur in else branch ──────────────────────────────────
+    #[test]
+    fn lower_loop_with_recur() {
+        // (defn f [n] (loop [i n] (if true i (recur 0))))
+        // Loop body tail should be Tail::If; else branch tail should be Tail::Recur
+        let m = lower("(defn f [n] (loop [i n] (if true i (recur 0))))").unwrap();
+        let func = &m.funcs[0];
+        let Tail::Loop { ref body, .. } = *func.body.tail else {
+            panic!("expected Tail::Loop, got {:?}", func.body.tail)
+        };
+        let Tail::If { ref else_block, .. } = *body.tail else {
+            panic!("expected Tail::If inside loop body, got {:?}", body.tail)
+        };
+        let Tail::Recur { ref args } = *else_block.tail else {
+            panic!("expected Tail::Recur in else branch, got {:?}", else_block.tail)
+        };
+        assert_eq!(args.len(), 1, "recur passes 1 new value");
     }
 
     // ─── 16. nullary constructor (None) ──────────────────────────────────────
