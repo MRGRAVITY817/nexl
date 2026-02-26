@@ -114,9 +114,11 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
 
 fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()> {
     let env = nexl_eval::stdlib::standard_env();
+    let mut buffer = String::new();
 
     loop {
-        output.write_all(b"nexl> ")?;
+        let prompt = if buffer.is_empty() { "nexl> " } else { "...> " };
+        output.write_all(prompt.as_bytes())?;
         output.flush()?;
 
         let mut line = String::new();
@@ -126,15 +128,83 @@ fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()
             break;
         }
 
-        for result in nexl_eval::repl::eval_line(line.trim_end_matches('\n'), &env) {
+        buffer.push_str(&line);
+        if !delimiters_balanced(&buffer) {
+            continue;
+        }
+
+        let source = buffer.trim_end_matches('\n');
+        for result in nexl_eval::repl::eval_line(source, &env) {
             match result {
                 Ok(value) => writeln!(output, "{value}")?,
                 Err(message) => writeln!(output, "error: {message}")?,
             }
         }
+
+        buffer.clear();
     }
 
     Ok(())
+}
+
+fn delimiters_balanced(source: &str) -> bool {
+    let mut paren = 0i32;
+    let mut bracket = 0i32;
+    let mut brace = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_comment = false;
+
+    for ch in source.chars() {
+        if in_comment {
+            if ch == '\n' {
+                in_comment = false;
+            }
+            continue;
+        }
+
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            ';' => in_comment = true,
+            '"' => in_string = true,
+            '(' => paren += 1,
+            ')' => {
+                paren -= 1;
+                if paren < 0 {
+                    return true;
+                }
+            }
+            '[' => bracket += 1,
+            ']' => {
+                bracket -= 1;
+                if bracket < 0 {
+                    return true;
+                }
+            }
+            '{' => brace += 1,
+            '}' => {
+                brace -= 1;
+                if brace < 0 {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    paren == 0 && bracket == 0 && brace == 0
 }
 
 fn command_repl() -> Result<(), String> {
@@ -288,6 +358,18 @@ mod tests {
         let output = String::from_utf8(output).expect("utf8");
         assert!(output.contains("nexl> "));
         assert!(output.contains('3'));
+    }
+
+    #[test]
+    fn repl_loop_continues_for_unbalanced_input() {
+        let input = Cursor::new(b"(+ 1\n 2)\n");
+        let mut output = Vec::new();
+        repl_loop(input, &mut output).expect("repl loop");
+        let output = String::from_utf8(output).expect("utf8");
+        assert!(output.contains("nexl> "));
+        assert!(output.contains("...> "));
+        assert!(output.contains('3'));
+        assert!(!output.contains("error:"));
     }
 
     #[test]

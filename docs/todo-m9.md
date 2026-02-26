@@ -8,7 +8,7 @@
 - [x] `nexl check <file>` — parse + type-check via nexl-infer, report errors
 
 ## REPL improvements
-- [ ] Multi-line input — detect unbalanced delimiters, prompt for continuation
+- [x] Multi-line input — detect unbalanced delimiters, prompt for continuation
 - [ ] REPL commands: `:help`, `:quit`, `:type <expr>`
 - [ ] Banner on startup (`nexl 0.1.0 | :help for commands`)
 
