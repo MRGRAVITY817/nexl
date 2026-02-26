@@ -171,6 +171,7 @@ fn synth_list(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type,
     match head_sym(items) {
         Some("let") => synth_let(items, env, state),
         Some("par-let") => synth_par_let(items, env, state),
+        Some("go") => synth_go(items, env, state),
         Some("do") => synth_do(items, env, state),
         Some("if") => synth_if(items, env, state),
         Some("fn") => synth_fn(items, env, state),
@@ -295,6 +296,42 @@ fn synth_par_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Ty
 
     let let_node = list(vec![sym("let"), vector(let_bindings), items[2].clone()]);
     synth(&let_node, env, state)
+}
+
+fn synth_go(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
+    // Structure: (go body...)
+    if items.len() < 2 {
+        return Err(TypeError::new(TypeErrorKind::MalformedForm {
+            description: "go requires at least one body expression".to_string(),
+        }));
+    }
+
+    let sym = |name: &str| {
+        Node::atom(
+            Atom::Symbol {
+                ns: None,
+                name: name.to_string(),
+            },
+            Span::synthetic(),
+        )
+    };
+    let list = |items: Vec<Node>| Node::new(NodeKind::List(items), Span::synthetic());
+    let vector = |items: Vec<Node>| Node::new(NodeKind::Vector(items), Span::synthetic());
+
+    let body_node = if items.len() == 2 {
+        items[1].clone()
+    } else {
+        let mut body_items = Vec::with_capacity(items.len() - 1);
+        body_items.push(sym("do"));
+        body_items.extend(items[1..].iter().cloned());
+        list(body_items)
+    };
+
+    let fork_call = list(vec![
+        sym("fork"),
+        list(vec![sym("fn"), vector(Vec::new()), body_node]),
+    ]);
+    synth(&fork_call, env, state)
 }
 
 fn par_let_references_any(node: &Node, names: &HashSet<String>) -> bool {
@@ -7507,6 +7544,40 @@ mod tests {
         assert!(
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
             "expected MalformedForm, got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // go form tests
+    // -----------------------------------------------------------------------
+
+    // -- Test 1 (go) --
+    #[test]
+    fn infer_go_single_body() {
+        // (go 42) → (Task Int)
+        let (env, mut state) = empty();
+        let node = parse_one("(go 42)");
+        assert_eq!(
+            synth(&node, &env, &mut state).unwrap(),
+            Type::Adt {
+                name: "Task".to_string(),
+                args: vec![Type::Int],
+            }
+        );
+    }
+
+    // -- Test 2 (go) --
+    #[test]
+    fn infer_go_multi_body() {
+        // (go (print \"hi\") 42) → (Task Int)
+        let (env, mut state) = empty();
+        let node = parse_one("(go (print \"hi\") 42)");
+        assert_eq!(
+            synth(&node, &env, &mut state).unwrap(),
+            Type::Adt {
+                name: "Task".to_string(),
+                args: vec![Type::Int],
+            }
         );
     }
 

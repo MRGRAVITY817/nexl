@@ -6,7 +6,7 @@
 - [x] `Channel` type and `Chan` effect declaration
 - [x] Atoms (`atom`, `deref`/`@`, `swap!`, `reset!`) (ADR-007)
 - [x] `par-let` parsing and desugaring
-- [ ] `go` shorthand sugar
+- [x] `go` shorthand sugar
 - [ ] `sleep` operation
 - [ ] `timeout` and `race`
 - [ ] Deterministic test handler (`sequential-executor`)
