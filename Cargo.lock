@@ -404,6 +404,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexl-macros"
+version = "0.1.0"
+dependencies = [
+ "nexl-ast",
+]
+
+[[package]]
 name = "nexl-memory"
 version = "0.1.0"
 dependencies = [

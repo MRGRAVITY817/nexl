@@ -1,0 +1,8 @@
+[package]
+name = "nexl-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexl-ast = { path = "../nexl-ast" }
