@@ -317,7 +317,7 @@ fn emit_tail(
             for arg in args {
                 emit_atom(arg, local_map, so, func)?;
             }
-            emit_call_atom(f_atom, local_map, func)
+            emit_return_call_atom(f_atom, func)
         }
         Tail::Match { scrutinee, arms } => {
             emit_match_arms(scrutinee, arms, local_map, so, func, lv)
@@ -476,6 +476,19 @@ fn emit_call_atom(
         _ => Err(EmitError(
             "indirect calls through closures not yet implemented (use FuncRef for direct calls)"
                 .to_string(),
+        )),
+    }
+}
+
+/// Emit a `return_call` (tail call) to a direct function reference (TCO).
+fn emit_return_call_atom(f_atom: &Atom, func: &mut Function) -> Result<(), EmitError> {
+    match f_atom {
+        Atom::FuncRef(fid) => {
+            func.instruction(&Instruction::ReturnCall(fid.0));
+            Ok(())
+        }
+        _ => Err(EmitError(
+            "indirect tail calls through closures not yet implemented".to_string(),
         )),
     }
 }
@@ -1002,7 +1015,28 @@ mod tests {
         assert!(found, "__evv_get name not found in WASM output");
     }
 
-    // ─── 26. loop without recur emits valid WASM ──────────────────────────────
+    // ─── 26. direct tail call emits return_call opcode ───────────────────────
+    #[test]
+    fn emit_tail_call_has_return_call() {
+        // (defn f [x] (f x)) — self-recursive tail call
+        // WASM return_call opcode = 0x12
+        let bytes = emit("(defn f [x] (f x))");
+        let found = bytes.windows(1).any(|w| w == [0x12]);
+        assert!(found, "WASM return_call opcode (0x12) not found in output");
+    }
+
+    // ─── 27. inter-function tail call emits valid WASM ────────────────────────
+    #[test]
+    fn emit_inter_func_tail_call() {
+        // (defn a [x] (b x)) / (defn b [x] x) — mutual tail call
+        let bytes = emit("(defn a [x] (b x))\n(defn b [x] x)");
+        assert_eq!(&bytes[..4], &WASM_MAGIC);
+        // return_call opcode must appear (from (b x) in tail position)
+        let found = bytes.windows(1).any(|w| w == [0x12]);
+        assert!(found, "WASM return_call opcode (0x12) not found for inter-func tail call");
+    }
+
+    // ─── 28. loop without recur emits valid WASM ──────────────────────────────
     #[test]
     fn emit_loop_simple() {
         // (defn f [n] (loop [i n] i)) — loop that immediately returns its var

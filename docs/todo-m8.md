@@ -22,7 +22,7 @@
 
 ## Tail Calls
 - [x] loop/recur → WASM `loop`/`br`
-- [ ] General tail calls → WASM `return_call`
+- [x] General tail calls → WASM `return_call`
 
 ## Output
 - [ ] End-to-end: compile a trivial Nexl program to a runnable .wasm file (Wasmtime)

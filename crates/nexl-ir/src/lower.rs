@@ -257,8 +257,26 @@ impl Lowerer {
                     }
                 }
                 // Generic function call in tail position.
-                let (binds, atom) = self.lower_call(items, env)?;
-                Ok((binds, Tail::Return(atom)))
+                // Lower func and args to atoms.  If the function resolves to a
+                // known FuncRef (direct call), emit Tail::TailCall for TCO.
+                // Variable calls fall back to Rhs::Call + Tail::Return since
+                // indirect tail calls through closures are not yet supported.
+                let mut all_binds: Vec<LetBind> = vec![];
+                let (f_binds, f_atom) = self.lower_expr(&items[0], env)?;
+                all_binds.extend(f_binds);
+                let mut args: Vec<Atom> = vec![];
+                for arg in &items[1..] {
+                    let (arg_binds, arg_atom) = self.lower_expr(arg, env)?;
+                    all_binds.extend(arg_binds);
+                    args.push(arg_atom);
+                }
+                if matches!(f_atom, Atom::FuncRef(_)) {
+                    Ok((all_binds, Tail::TailCall { func: f_atom, args }))
+                } else {
+                    let result_var = self.var_gen.fresh();
+                    all_binds.push(LetBind { var: result_var, rhs: Rhs::Call { func: f_atom, args } });
+                    Ok((all_binds, Tail::Return(Atom::Var(result_var))))
+                }
             }
             _ => {
                 let (binds, atom) = self.lower_expr(node, env)?;
@@ -938,7 +956,22 @@ mod tests {
         assert!(matches!(fields[0], Atom::Var(v) if v == x_var));
     }
 
-    // ─── 17. loop with single binding ────────────────────────────────────────
+    // ─── 17. direct tail call lowered to Tail::TailCall ─────────────────────
+    #[test]
+    fn lower_tail_call_direct() {
+        // (defn f [x] (f x)) — self-recursive tail call
+        // f is a known global FuncRef, so lower_tail should produce Tail::TailCall.
+        let m = lower("(defn f [x] (f x))").unwrap();
+        let body = &m.funcs[0].body;
+        // No Rhs::Call bind — the tail call is in Tail::TailCall directly.
+        let Tail::TailCall { ref func, ref args } = *body.tail else {
+            panic!("expected Tail::TailCall, got {:?}", body.tail)
+        };
+        assert!(matches!(func, Atom::FuncRef(_)), "func should be a FuncRef");
+        assert_eq!(args.len(), 1, "one argument");
+    }
+
+    // ─── 18. loop with single binding ────────────────────────────────────────
     #[test]
     fn lower_loop_single_var() {
         // (defn f [n] (loop [i n] i))
