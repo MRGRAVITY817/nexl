@@ -1003,7 +1003,8 @@ fn is_structural(c: char) -> bool {
 /// Returns `true` for characters that may start a symbol or keyword name
 /// (Appendix D: `symbol-start`).
 pub(crate) fn is_symbol_start(c: char) -> bool {
-    c.is_alphabetic() || matches!(c, '_' | '?' | '!' | '*' | '+' | '<' | '>' | '=' | '-')
+    c.is_alphabetic()
+        || matches!(c, '_' | '?' | '!' | '*' | '+' | '<' | '>' | '=' | '-' | '&')
 }
 
 /// Returns `true` for characters that may continue a symbol or keyword name

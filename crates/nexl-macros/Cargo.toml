@@ -6,3 +6,7 @@ license.workspace = true
 
 [dependencies]
 nexl-ast = { path = "../nexl-ast" }
+thiserror = "2"
+
+[dev-dependencies]
+nexl-reader = { path = "../nexl-reader" }

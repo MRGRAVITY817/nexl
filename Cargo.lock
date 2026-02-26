@@ -408,6 +408,8 @@ name = "nexl-macros"
 version = "0.1.0"
 dependencies = [
  "nexl-ast",
+ "nexl-reader",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

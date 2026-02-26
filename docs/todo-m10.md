@@ -2,7 +2,7 @@
 
 ## Core
 - [x] Scope sets for hygienic expansion (ADR-009)
-- [ ] `defmacro` (AST in → AST out)
+- [x] `defmacro` (AST in → AST out)
 - [ ] `defmacro-syntax` (pattern-based macros)
 - [ ] `defmacro-elab` (elaboration macros)
 - [ ] `defreader-text` (reader macros)
