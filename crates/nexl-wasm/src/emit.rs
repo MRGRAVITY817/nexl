@@ -94,6 +94,16 @@ impl Emitter {
             return Ok(wasm.finish());
         }
 
+        let n = module.funcs.len() as u32;
+        // Helper type indices: N = push, N+1 = pop, N+2 = get.
+        let ty_push = n;
+        let ty_pop = n + 1;
+        let ty_get = n + 2;
+        // Helper function indices (placed after all user functions).
+        let fn_push = n;
+        let fn_pop = n + 1;
+        let fn_get = n + 2;
+
         // ── Type section ────────────────────────────────────────────────────
         // One type entry per function (duplicates are fine for correctness;
         // de-duplication is an optimisation deferred to later).
@@ -102,6 +112,10 @@ impl Emitter {
             let params: Vec<ValType> = func.params.iter().map(|_| DEFAULT_VAL).collect();
             types.ty().function(params, [DEFAULT_VAL]);
         }
+        // Helper types.
+        types.ty().function([ValType::I64], []); // push(handler: i64) -> ()
+        types.ty().function([], [ValType::I64]); // pop() -> i64
+        types.ty().function([ValType::I32], [ValType::I64]); // get(idx: i32) -> i64
         wasm.section(&types);
 
         // ── Function section ─────────────────────────────────────────────────
@@ -109,6 +123,10 @@ impl Emitter {
         for (type_idx, _) in module.funcs.iter().enumerate() {
             funcs_section.function(type_idx as u32);
         }
+        // Helper functions.
+        funcs_section.function(ty_push);
+        funcs_section.function(ty_pop);
+        funcs_section.function(ty_get);
         wasm.section(&funcs_section);
 
         // ── Memory section (1 page = 64 KiB) ─────────────────────────────────
@@ -136,20 +154,19 @@ impl Emitter {
         );
         wasm.section(&globals);
 
-        // ── Export section (named defns become exports) ──────────────────────
-        let named: Vec<(usize, &FuncDef)> = module
-            .funcs
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| f.name.is_some())
-            .collect();
-
-        if !named.is_empty() {
+        // ── Export section ────────────────────────────────────────────────────
+        {
             let mut exports = ExportSection::new();
-            for (idx, func) in &named {
-                let name = func.name.as_deref().expect("filtered on is_some");
-                exports.export(name, ExportKind::Func, *idx as u32);
+            // User-defined named functions.
+            for (idx, func) in module.funcs.iter().enumerate() {
+                if let Some(name) = func.name.as_deref() {
+                    exports.export(name, ExportKind::Func, idx as u32);
+                }
             }
+            // Always export the evv helper functions (used by effect operations).
+            exports.export("__evv_push", ExportKind::Func, fn_push);
+            exports.export("__evv_pop", ExportKind::Func, fn_pop);
+            exports.export("__evv_get", ExportKind::Func, fn_get);
             wasm.section(&exports);
         }
 
@@ -172,6 +189,10 @@ impl Emitter {
             let wasm_func = emit_func(func, &string_map)?;
             code.function(&wasm_func);
         }
+        // Helper function bodies.
+        code.function(&emit_evv_push());
+        code.function(&emit_evv_pop());
+        code.function(&emit_evv_get());
         wasm.section(&code);
 
         // ── Data section (strings, if any) ───────────────────────────────────
@@ -531,6 +552,70 @@ fn emit_match_arms(
     Ok(())
 }
 
+// ── Evidence-vector helper functions ─────────────────────────────────────────
+
+/// Emit `__evv_push(handler: i64) -> ()`.
+///
+/// Stores the handler pointer at `EVV_BASE + depth * 8`, then increments
+/// `__evv_depth`.
+fn emit_evv_push() -> Function {
+    let mut f = Function::new([]);
+    // memory[EVV_BASE + depth*8] = handler (local 0)
+    f.instruction(&Instruction::GlobalGet(EVV_DEPTH));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::I32Const(EVV_BASE));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Store(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    // __evv_depth++
+    f.instruction(&Instruction::GlobalGet(EVV_DEPTH));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::GlobalSet(EVV_DEPTH));
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// Emit `__evv_pop() -> i64`.
+///
+/// Decrements `__evv_depth`, then loads and returns the handler pointer at
+/// `EVV_BASE + new_depth * 8`.
+fn emit_evv_pop() -> Function {
+    let mut f = Function::new([]);
+    // --depth
+    f.instruction(&Instruction::GlobalGet(EVV_DEPTH));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::GlobalSet(EVV_DEPTH));
+    // return memory[EVV_BASE + depth*8]
+    f.instruction(&Instruction::GlobalGet(EVV_DEPTH));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::I32Const(EVV_BASE));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I64Load(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// Emit `__evv_get(idx: i32) -> i64`.
+///
+/// Loads and returns the handler pointer at `EVV_BASE + idx * 8`.
+/// Used for tail-resumptive dispatch: the caller already knows the handler index.
+fn emit_evv_get() -> Function {
+    let mut f = Function::new([]);
+    // return memory[EVV_BASE + idx*8]
+    f.instruction(&Instruction::LocalGet(0)); // idx (i32)
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::I32Const(EVV_BASE));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I64Load(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::End);
+    f
+}
+
 fn local_idx(var: VarId, local_map: &HashMap<VarId, u32>) -> Result<u32, EmitError> {
     local_map
         .get(&var)
@@ -749,8 +834,9 @@ mod tests {
         // Any non-empty module should include a memory section (for closures)
         // Memory section id = 0x05
         let bytes = emit("(defn f [] 1)");
-        let has_memory_marker = bytes.windows(2).any(|w| w == [0x05, 0x01]);
-        assert!(has_memory_marker, "expected memory section in WASM bytes");
+        // Memory section (id=0x05), size=3, count=1, no-max flag=0x00, 1 page
+        let has_memory_section = bytes.windows(5).any(|w| w == [0x05, 0x03, 0x01, 0x00, 0x01]);
+        assert!(has_memory_section, "expected memory section in WASM bytes");
     }
 
     // ─── 15. ADT constructor (Some x) codegen ────────────────────────────────
@@ -829,12 +915,34 @@ mod tests {
     // ─── 22. __evv_depth initialized to 0 ────────────────────────────────────
     #[test]
     fn emit_evv_depth_initialized_zero() {
-        // The __evv_depth global is initialized to i32.const 0.
-        // In WASM binary, i32.const 0 is encoded as [0x41, 0x00] (followed by end=0x0B).
         let bytes = emit("(defn f [] 1)");
         let init_zero = [0x41u8, 0x00, 0x0B]; // i32.const 0 end
         let found = bytes.windows(3).any(|w| w == init_zero);
         assert!(found, "__evv_depth i32.const 0 initializer not found in output");
+    }
+
+    // ─── 23. __evv_push exported ──────────────────────────────────────────────
+    #[test]
+    fn emit_evv_push_in_output() {
+        let bytes = emit("(defn f [] 1)");
+        let found = bytes.windows(b"__evv_push".len()).any(|w| w == b"__evv_push");
+        assert!(found, "__evv_push name not found in WASM output");
+    }
+
+    // ─── 24. __evv_pop exported ───────────────────────────────────────────────
+    #[test]
+    fn emit_evv_pop_in_output() {
+        let bytes = emit("(defn f [] 1)");
+        let found = bytes.windows(b"__evv_pop".len()).any(|w| w == b"__evv_pop");
+        assert!(found, "__evv_pop name not found in WASM output");
+    }
+
+    // ─── 25. __evv_get exported ───────────────────────────────────────────────
+    #[test]
+    fn emit_evv_get_in_output() {
+        let bytes = emit("(defn f [] 1)");
+        let found = bytes.windows(b"__evv_get".len()).any(|w| w == b"__evv_get");
+        assert!(found, "__evv_get name not found in WASM output");
     }
 
 }

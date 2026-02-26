@@ -18,7 +18,7 @@
 
 ## Effect Runtime
 - [x] Evidence vectors as WASM linear memory arrays
-- [ ] Tail-resumptive handlers → direct function calls through evidence
+- [x] Tail-resumptive handlers → direct function calls through evidence
 
 ## Tail Calls
 - [ ] loop/recur → WASM `loop`/`br`
