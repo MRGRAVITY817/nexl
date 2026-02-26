@@ -1,22 +1,22 @@
-# Current Milestone: M9 — CLI + REPL
+# Current Milestone: M10 — Macro System
 
-**Goal:** A complete `nexl` CLI with REPL, `run`, `check`, and `build` subcommands.
+**Goal:** Hygienic macros via scope sets (`defmacro`, `defmacro-syntax`).
 
-**Crates:** `nexl-cli` (extend), `nexl-repl` (new)
+**Crates:** `nexl-macros` (new), `nexl-reader` (extend), `nexl-ast` (extend)
 
 **Spec sections to reference:**
-- §14 Toolchain (lines 3203–end)
+- §7 Macros (lines 1802–1941)
 
 **Key ADRs:**
-- (none specific to M9)
+- ADR-013: Def-form renames (`defn-macro`, `defmacro-syntax`, etc.)
 
 **Acceptance criteria:**
-- `nexl run <file>` compiles and runs a Nexl program
-- `nexl check <file>` type-checks without emitting
-- `nexl repl` provides an interactive REPL
+- `defmacro` expands hygienically
+- `defmacro-syntax` supports pattern-based macros
+- Built-in macros (`->`, `->>`, `when`, `unless`, `and`, `or`) expand correctly
 - `cargo test` passes across all crates
 
-**When done:** Update this file to point to M10.
+**When done:** Update this file to point to M11.
 
-See `docs/todo-m9.md` for the task checklist.
+See `docs/todo-m10.md` for the task checklist.
 See `milestones.md` for the full plan.
