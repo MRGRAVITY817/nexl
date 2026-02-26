@@ -1,13 +1,23 @@
 //! Standard built-in functions pre-loaded into the top-level environment.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use nexl_runtime::{NativeFn, Value};
 
 use crate::{Env, eval::apply_value};
 
+/// Adapter: call a Value as a function, for use by stdlib closures.
+fn eval_call_value(callee: &Value, args: &[Value]) -> Result<Value, String> {
+    apply_value(callee, args).map_err(|e| e.to_string())
+}
+
 /// Create a root [`Env`] pre-populated with all standard built-in functions.
 pub fn standard_env() -> Rc<Env> {
+    // Register the evaluator's apply_value so stdlib closures can call
+    // arbitrary Value functions (including Nexl-defined Function values).
+    nexl_runtime::register_call_value(eval_call_value);
+
     let env = Rc::new(Env::new());
 
     // Option constructors
@@ -60,7 +70,23 @@ pub fn standard_env() -> Rc<Env> {
     env.define("filter", native("filter", filter_fn));
     env.define("reduce", native("reduce", reduce_fn));
 
+    // Register §11.1 stdlib modules as qualified module aliases
+    register_stdlib_modules(&env);
+
     env
+}
+
+/// Register all `nexl-stdlib` modules as module aliases in the environment,
+/// making them accessible via qualified names (e.g. `core/identity`, `str/split`).
+fn register_stdlib_modules(env: &Env) {
+    for (module_name, entries) in nexl_stdlib::all_modules() {
+        let mut exports: HashMap<Rc<str>, Value> = HashMap::new();
+        for (fn_name, f) in entries {
+            let value = Value::NativeFunction(Rc::new(NativeFn { name: fn_name, f }));
+            exports.insert(Rc::from(fn_name), value);
+        }
+        env.define_module_alias(Rc::from(module_name), Rc::new(exports));
+    }
 }
 
 // ---------------------------------------------------------------------------

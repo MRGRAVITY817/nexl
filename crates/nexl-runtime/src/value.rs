@@ -4,6 +4,9 @@ use std::rc::Rc;
 
 type ModuleExports = Rc<HashMap<Rc<str>, Value>>;
 
+/// Type alias for a native closure's implementation.
+pub type NativeClosureFn = Rc<dyn Fn(&[Value]) -> Result<Value, String>>;
+
 /// A built-in function implemented natively in Rust.
 ///
 /// Uses a raw function pointer (not a trait object) so that `NativeFn`
@@ -53,7 +56,7 @@ pub struct Function {
 /// This is distinct from the reader's `Atom` type: `Atom` is a *source-level*
 /// representation with suffix annotations and raw text; `Value` is the
 /// *evaluated* form that the interpreter operates on.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Value {
     /// 64-bit signed integer.
     Int(i64),
@@ -95,6 +98,17 @@ pub enum Value {
 
     /// A built-in (native Rust) function.
     NativeFunction(Rc<NativeFn>),
+
+    /// A native closure — a Rust closure capturing runtime values.
+    ///
+    /// Used by stdlib higher-order functions like `comp`, `partial`, `constantly`
+    /// that return new functions capturing their arguments.
+    NativeClosure {
+        /// Display name for error messages.
+        name: Rc<str>,
+        /// The closure implementation.
+        f: NativeClosureFn,
+    },
 }
 
 impl PartialEq for Value {
@@ -144,7 +158,54 @@ impl PartialEq for Value {
             ) => a_type == b_type && a_ctor == b_ctor && a_fields == b_fields,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
+            (
+                Value::NativeClosure { f: af, .. },
+                Value::NativeClosure { f: bf, .. },
+            ) => Rc::ptr_eq(af, bf),
             _ => false,
+        }
+    }
+}
+
+impl std::fmt::Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Int(n) => f.debug_tuple("Int").field(n).finish(),
+            Value::Float(n) => f.debug_tuple("Float").field(n).finish(),
+            Value::Bool(b) => f.debug_tuple("Bool").field(b).finish(),
+            Value::Str(s) => f.debug_tuple("Str").field(s).finish(),
+            Value::Unit => write!(f, "Unit"),
+            Value::Char(c) => f.debug_tuple("Char").field(c).finish(),
+            Value::Keyword { ns, name } => f
+                .debug_struct("Keyword")
+                .field("ns", ns)
+                .field("name", name)
+                .finish(),
+            Value::Symbol { ns, name } => f
+                .debug_struct("Symbol")
+                .field("ns", ns)
+                .field("name", name)
+                .finish(),
+            Value::Ratio(n, d) => f.debug_tuple("Ratio").field(n).field(d).finish(),
+            Value::Vec(items) => f.debug_tuple("Vec").field(items).finish(),
+            Value::Map(entries) => f.debug_tuple("Map").field(entries).finish(),
+            Value::Set(items) => f.debug_tuple("Set").field(items).finish(),
+            Value::Adt {
+                type_name,
+                ctor,
+                fields,
+            } => f
+                .debug_struct("Adt")
+                .field("type_name", type_name)
+                .field("ctor", ctor)
+                .field("fields", fields)
+                .finish(),
+            Value::Function(func) => f.debug_tuple("Function").field(func).finish(),
+            Value::NativeFunction(nf) => f.debug_tuple("NativeFunction").field(nf).finish(),
+            Value::NativeClosure { name, .. } => f
+                .debug_struct("NativeClosure")
+                .field("name", name)
+                .finish_non_exhaustive(),
         }
     }
 }
@@ -186,6 +247,7 @@ impl Value {
             Value::Adt { type_name, .. } => type_name,
             Value::Function(_) => "Function",
             Value::NativeFunction(_) => "Function",
+            Value::NativeClosure { .. } => "Function",
         }
     }
 }
@@ -286,6 +348,7 @@ impl std::fmt::Display for Value {
                 }
             }
             Value::NativeFunction(native) => write!(f, "fn {}/native", native.name),
+            Value::NativeClosure { name, .. } => write!(f, "fn {name}/closure"),
         }
     }
 }

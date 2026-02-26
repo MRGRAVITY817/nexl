@@ -574,6 +574,7 @@ dependencies = [
  "nexl-modules",
  "nexl-reader",
  "nexl-runtime",
+ "nexl-stdlib",
  "thiserror 1.0.69",
 ]
 
@@ -643,6 +644,13 @@ name = "nexl-runtime"
 version = "0.1.0"
 dependencies = [
  "nexl-ast",
+]
+
+[[package]]
+name = "nexl-stdlib"
+version = "0.1.0"
+dependencies = [
+ "nexl-runtime",
 ]
 
 [[package]]

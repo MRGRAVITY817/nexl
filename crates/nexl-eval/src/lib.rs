@@ -4097,4 +4097,176 @@ mod tests {
         let result = eval_forms("(fib 10)", &env).expect("fib 10 should succeed");
         assert_eq!(result, Value::Int(55));
     }
+
+    // --- stdlib module qualified access ---
+
+    #[test]
+    fn test_stdlib_module_qualified_access() {
+        let result = eval_str("(core/identity 42)").expect("core/identity should work");
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_core_identity_preserves_type() {
+        assert_eq!(
+            eval_str(r#"(core/identity "hello")"#).unwrap(),
+            Value::Str(Rc::from("hello"))
+        );
+        assert_eq!(
+            eval_str("(core/identity true)").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str("(core/identity [1 2 3])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn test_core_comp() {
+        let env = crate::stdlib::standard_env();
+        // (defn inc [x] (+ x 1))
+        // (defn double [x] (* x 2))
+        // ((core/comp inc double) 3) => (inc (double 3)) => (inc 6) => 7
+        eval_forms("(defn inc [x] (+ x 1))", &env).unwrap();
+        eval_forms("(defn double [x] (* x 2))", &env).unwrap();
+        let result = eval_forms("((core/comp inc double) 3)", &env).unwrap();
+        assert_eq!(result, Value::Int(7));
+    }
+
+    #[test]
+    fn test_core_partial() {
+        // ((core/partial + 1) 2) => (+ 1 2) => 3
+        let result = eval_str("((core/partial + 1) 2)").unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_core_constantly() {
+        // ((core/constantly 42) "ignored") => 42
+        let result = eval_str(r#"((core/constantly 42) "ignored")"#).unwrap();
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_core_constantly_ignores_args() {
+        let result = eval_str(r#"((core/constantly 42) 1 2 3)"#).unwrap();
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_core_apply() {
+        // (core/apply + [1 2 3]) => 6
+        let result = eval_str("(core/apply + [1 2 3])").unwrap();
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_core_apply_with_leading_args() {
+        // (core/apply + 1 [2 3]) => (+ 1 2 3) => 6
+        let result = eval_str("(core/apply + 1 [2 3])").unwrap();
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_core_juxt() {
+        // ((core/juxt first last) [1 2 3]) => [(Some 1) (Some 3)]
+        let result = eval_str("((core/juxt first last) [1 2 3])").unwrap();
+        let expected = Value::Vec(Rc::new(vec![
+            option_some(Value::Int(1)),
+            option_some(Value::Int(3)),
+        ]));
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_str_module_qualified_access() {
+        let result = eval_str(r#"(str/upper "hello")"#).unwrap();
+        assert_eq!(result, Value::Str(Rc::from("HELLO")));
+    }
+
+    #[test]
+    fn test_str_split_via_eval() {
+        let result = eval_str(r#"(str/split "a,b,c" ",")"#).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![
+                Value::Str(Rc::from("a")),
+                Value::Str(Rc::from("b")),
+                Value::Str(Rc::from("c")),
+            ]))
+        );
+    }
+
+    // --- end-to-end stdlib integration ---
+
+    #[test]
+    fn test_e2e_stdlib_pipeline_simple() {
+        // Verify qualified access works from within a defn body
+        let env = crate::stdlib::standard_env();
+        eval_forms(r#"(defn up [s] (str/upper s))"#, &env).unwrap();
+        let result = eval_forms(r#"(up "hello")"#, &env).unwrap();
+        assert_eq!(result, Value::Str(Rc::from("HELLO")));
+    }
+
+    #[test]
+    fn test_e2e_stdlib_pipeline() {
+        // A realistic pipeline using multiple stdlib modules:
+        // Split a CSV line, uppercase each field, join with " | "
+        let env = crate::stdlib::standard_env();
+        eval_forms(
+            r#"(defn format-row [line]
+                 (str/join " | "
+                   (map (fn [s] (str/upper (str/trim s)))
+                        (str/split line ","))))"#,
+            &env,
+        )
+        .unwrap();
+        let result = eval_forms(r#"(format-row " alice , bob , carol ")"#, &env).unwrap();
+        assert_eq!(result, Value::Str(Rc::from("ALICE | BOB | CAROL")));
+    }
+
+    #[test]
+    fn test_e2e_math_with_core() {
+        // Use core/comp with math functions
+        let env = crate::stdlib::standard_env();
+        // compose abs and floor: first abs then floor
+        let result = eval_forms("((core/comp math/floor math/abs) -3.7)", &env).unwrap();
+        assert_eq!(result, Value::Float(3.0));
+    }
+
+    #[test]
+    fn test_e2e_json_roundtrip() {
+        let env = crate::stdlib::standard_env();
+        // Create a map, stringify it, parse it back
+        eval_forms(
+            r#"(def data {:name "nexl" :version 1})"#,
+            &env,
+        )
+        .unwrap();
+        eval_forms(
+            r#"(def json-str (json/stringify data))"#,
+            &env,
+        )
+        .unwrap();
+        let result = eval_forms(r#"(json/parse json-str)"#, &env).unwrap();
+        // Should be (Ok {...})
+        match result {
+            Value::Adt { ctor, .. } => assert_eq!(ctor.as_ref(), "Ok"),
+            _ => panic!("expected Result Ok"),
+        }
+    }
+
+    #[test]
+    fn test_e2e_conv_pipeline() {
+        let env = crate::stdlib::standard_env();
+        // Convert string to int, check it's Some
+        eval_forms(
+            r#"(def result (conv/->int "42"))"#,
+            &env,
+        )
+        .unwrap();
+        let result = eval_forms(r#"result"#, &env).unwrap();
+        assert_eq!(result, option_some(Value::Int(42)));
+    }
 }

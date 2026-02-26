@@ -832,6 +832,19 @@ fn eval_apply<'a>(
         return Ok(EvalReturn::Value(result));
     }
 
+    // Dispatch native closures (stdlib HOFs like comp, partial, etc.).
+    if let Value::NativeClosure { f, .. } = &callee {
+        let mut args = Vec::with_capacity(items.len() - 1);
+        for arg_node in &items[1..] {
+            match eval_with_loop(arg_node, env, loop_state)? {
+                EvalReturn::Value(v) => args.push(v),
+                recur @ EvalReturn::Recur(_) => return Ok(recur),
+            }
+        }
+        let result = f(&args).map_err(EvalError::NativeError)?;
+        return Ok(EvalReturn::Value(result));
+    }
+
     let Value::Function(func) = callee else {
         return Err(EvalError::InvalidCallable);
     };
@@ -848,6 +861,9 @@ fn eval_apply<'a>(
     // load captures
     for (name, value) in &func.captures {
         call_env.define(name.clone(), value.clone());
+    }
+    for (alias, exports) in &func.module_captures {
+        call_env.define_module_alias(alias.clone(), Rc::clone(exports));
     }
 
     // Named functions can call themselves: bind the function under its own name
@@ -925,6 +941,10 @@ fn eval_apply<'a>(
 pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalError> {
     if let Value::NativeFunction(native) = callee {
         return (native.f)(args).map_err(EvalError::NativeError);
+    }
+
+    if let Value::NativeClosure { f, .. } = callee {
+        return f(args).map_err(EvalError::NativeError);
     }
 
     let Value::Function(func) = callee else {

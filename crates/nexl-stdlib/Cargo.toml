@@ -1,0 +1,8 @@
+[package]
+name = "nexl-stdlib"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nexl-runtime = { path = "../nexl-runtime" }

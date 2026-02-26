@@ -271,7 +271,7 @@ mod tests {
     // ─── 5. Atom::Float display ──────────────────────────────────────────────
     #[test]
     fn ir_atom_float_display() {
-        assert_eq!(Atom::Float(3.14).to_string(), "3.14");
+        assert_eq!(Atom::Float(2.5).to_string(), "2.5");
     }
 
     // ─── 6. Atom::Bool display ───────────────────────────────────────────────

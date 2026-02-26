@@ -73,6 +73,16 @@ nexl-native
 └── target-lexicon (external)
 ```
 
+## M14 Crates
+
+```
+nexl-stdlib
+└── nexl-runtime (M1)
+
+nexl-eval (updated)
+└── nexl-stdlib (M14)
+```
+
 ## Planned (future milestones)
 
 ```
