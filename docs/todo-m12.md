@@ -7,7 +7,7 @@
 - [x] Atoms (`atom`, `deref`/`@`, `swap!`, `reset!`) (ADR-007)
 - [x] `par-let` parsing and desugaring
 - [x] `go` shorthand sugar
-- [ ] `sleep` operation
+- [x] `sleep` operation
 - [ ] `timeout` and `race`
 - [ ] Deterministic test handler (`sequential-executor`)
 

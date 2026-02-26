@@ -1,9 +1,10 @@
 //! Built-in effect definitions for the Nexl language.
 //!
 //! Contains the [`BuiltinEffects`] registry which holds [`EffectDef`]s for
-//! effects that are part of the language core (spec §10.2–§10.3):
+//! effects that are part of the language core (spec §6.9, §10.2–§10.3):
 //! - `Concurrent` — structured concurrency (fork/join/race)
 //! - `Chan` — channel-based communication
+//! - `Time` — clock and sleep (now/sleep)
 
 use std::collections::HashMap;
 
@@ -23,6 +24,8 @@ impl BuiltinEffects {
         effects.insert(concurrent.name.clone(), concurrent);
         let chan = build_chan_effect();
         effects.insert(chan.name.clone(), chan);
+        let time = build_time_effect();
+        effects.insert(time.name.clone(), time);
         Self { effects }
     }
 
@@ -171,6 +174,41 @@ fn build_chan_effect() -> EffectDef {
     }
 }
 
+/// Build the `Time` effect (spec §6.9).
+///
+/// ```text
+/// (defeffect Time
+///   (now   : (Fn [] -> Int))
+///   (sleep : (Fn [Int] -> Unit)))
+/// ```
+fn build_time_effect() -> EffectDef {
+    // now : (Fn [] -> Int)
+    let now = EffectOpDef {
+        name: "now".to_string(),
+        signature: Type::Fn {
+            params: vec![],
+            ret: Box::new(Type::Int),
+            effects: EffectRow::empty(),
+        },
+    };
+
+    // sleep : (Fn [Int] -> Unit)
+    let sleep = EffectOpDef {
+        name: "sleep".to_string(),
+        signature: Type::Fn {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Unit),
+            effects: EffectRow::empty(),
+        },
+    };
+
+    EffectDef {
+        name: "Time".to_string(),
+        params: vec![],
+        operations: vec![now, sleep],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +353,56 @@ mod tests {
             }
             other => panic!("close! sig should be Fn, got {other:?}"),
         }
+    }
+
+    // -- Test 7 --
+    #[test]
+    fn test_builtin_registry_has_time() {
+        let registry = BuiltinEffects::new();
+        let time = registry.get("Time");
+        assert!(time.is_some(), "Time effect must be registered");
+        assert_eq!(time.unwrap().name, "Time");
+    }
+
+    // -- Test 8 --
+    #[test]
+    fn test_builtin_time_has_now_and_sleep() {
+        let registry = BuiltinEffects::new();
+        let time = registry.get("Time").unwrap();
+        assert_eq!(time.operations.len(), 2);
+
+        let op_names: Vec<&str> = time.operations.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(op_names, vec!["now", "sleep"]);
+
+        // now : (Fn [] -> Int)
+        match &time.operations[0].signature {
+            nexl_types::Type::Fn { params, ret, .. } => {
+                assert!(params.is_empty(), "now takes no params");
+                assert_eq!(ret.as_ref(), &nexl_types::Type::Int);
+            }
+            other => panic!("now signature should be Fn, got {other:?}"),
+        }
+
+        // sleep : (Fn [Int] -> Unit)
+        match &time.operations[1].signature {
+            nexl_types::Type::Fn { params, ret, .. } => {
+                assert_eq!(params.len(), 1, "sleep takes one Int param");
+                assert_eq!(params[0], nexl_types::Type::Int);
+                assert_eq!(ret.as_ref(), &nexl_types::Type::Unit);
+            }
+            other => panic!("sleep signature should be Fn, got {other:?}"),
+        }
+    }
+
+    // -- Test 9 --
+    #[test]
+    fn test_builtin_time_has_no_type_params() {
+        let registry = BuiltinEffects::new();
+        let time = registry.get("Time").unwrap();
+        assert!(
+            time.params.is_empty(),
+            "Time effect has no type parameters (unlike State [a])"
+        );
     }
 
     // -- Test 6 --
