@@ -850,6 +850,12 @@ fn eval_apply<'a>(
         call_env.define(name.clone(), value.clone());
     }
 
+    // Named functions can call themselves: bind the function under its own name
+    // so recursive calls resolve correctly regardless of capture-snapshot timing.
+    if let Some(self_name) = &func.name {
+        call_env.define(self_name.clone(), Value::Function(Rc::clone(&func)));
+    }
+
     // bind required params
     for (idx, param) in func.params.iter().enumerate() {
         let arg_val = match eval_with_loop(&items[idx + 1], env, loop_state)? {
@@ -939,6 +945,12 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
     }
     for (alias, exports) in &func.module_captures {
         call_env.define_module_alias(alias.clone(), Rc::clone(exports));
+    }
+
+    // Named functions can call themselves: bind the function under its own name
+    // so recursive calls resolve correctly regardless of capture-snapshot timing.
+    if let Some(self_name) = &func.name {
+        call_env.define(self_name.clone(), callee.clone());
     }
 
     for (idx, param) in func.params.iter().enumerate() {

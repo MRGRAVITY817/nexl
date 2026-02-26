@@ -4071,4 +4071,30 @@ mod tests {
         let result = eval_forms("(try (Ok 1))", &env);
         assert!(matches!(result, Err(EvalError::NativeError(_))));
     }
+
+    // ── Self-recursive defn ──────────────────────────────────────────────────
+
+    #[test]
+    fn eval_self_recursive_defn() {
+        // (defn fact [n] (if (<= n 1) 1 (* n (fact (- n 1)))))
+        // fact must be visible inside its own body at call time.
+        let env = crate::stdlib::standard_env();
+        eval_forms("(defn fact [n] (if (<= n 1) 1 (* n (fact (- n 1)))))", &env)
+            .expect("defn should succeed");
+        let result = eval_forms("(fact 5)", &env).expect("fact 5 should succeed");
+        assert_eq!(result, Value::Int(120));
+    }
+
+    #[test]
+    fn eval_recursive_defn_fibonacci() {
+        // Classic double-recursive fib — exercises multiple recursive calls.
+        let env = crate::stdlib::standard_env();
+        eval_forms(
+            "(defn fib [n] (if (<= n 1) n (+ (fib (- n 1)) (fib (- n 2)))))",
+            &env,
+        )
+        .expect("defn should succeed");
+        let result = eval_forms("(fib 10)", &env).expect("fib 10 should succeed");
+        assert_eq!(result, Value::Int(55));
+    }
 }
