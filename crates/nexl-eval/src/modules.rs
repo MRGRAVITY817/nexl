@@ -29,7 +29,8 @@ pub fn parse_module_source(nodes: &[Node]) -> Result<ModuleSource, EvalError> {
     let decl =
         parse_module_decl(module_items).map_err(|e| EvalError::ModuleParse(e.description))?;
 
-    let mut imports = Vec::new();
+    // Start with imports declared via :imports in the module form
+    let mut imports: Vec<ImportDecl> = decl.imports.clone();
     let mut forms = Vec::new();
     for node in iter {
         match &node.kind {
@@ -309,5 +310,41 @@ mod tests {
         let modules = eval_modules(vec![mod_a, mod_b]).expect("eval failed");
         let env_b = modules.get("app.b").expect("missing app.b env");
         assert_eq!(get_int(env_b, "y"), 2);
+    }
+
+    // -- Test 4 --
+    #[test]
+    fn parse_module_source_with_imports() {
+        let m = module_from_src(
+            "(module app.main
+               :imports [[app.util :as u]
+                         [app.data :refer [load!]]])
+             (def x 1)",
+        );
+        assert_eq!(m.imports.len(), 2);
+        assert_eq!(m.imports[0].module_path, "app.util");
+        assert_eq!(m.imports[0].kind, ImportKind::Alias("u".to_string()));
+        assert_eq!(m.imports[1].module_path, "app.data");
+        assert_eq!(
+            m.imports[1].kind,
+            ImportKind::Refer(vec!["load!".to_string()])
+        );
+        assert_eq!(m.forms.len(), 1);
+    }
+
+    // -- Test 5 --
+    #[test]
+    fn parse_module_source_imports_and_standalone_merge() {
+        let m = module_from_src(
+            "(module app.main
+               :imports [[app.util :as u]])
+             (import app.data :refer [load!])
+             (def x 1)",
+        );
+        // :imports entries come first, standalone import appended
+        assert_eq!(m.imports.len(), 2);
+        assert_eq!(m.imports[0].module_path, "app.util");
+        assert_eq!(m.imports[1].module_path, "app.data");
+        assert_eq!(m.forms.len(), 1);
     }
 }

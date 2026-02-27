@@ -5339,6 +5339,7 @@ mod tests {
             name: "my.mod".to_string(),
             exports: Some(vec!["start!".to_string()]),
             performs: Some(vec!["Net".to_string()]),
+            imports: vec![],
         };
         let env = Env::new().extend("start!", Scheme::mono(effectful_fn_ty(vec!["Net"])));
         let state = InferState::new();
@@ -5355,6 +5356,7 @@ mod tests {
             name: "my.mod".to_string(),
             exports: Some(vec!["start!".to_string()]),
             performs: Some(vec!["Net".to_string()]),
+            imports: vec![],
         };
         let env = Env::new().extend(
             "start!",
@@ -5378,6 +5380,7 @@ mod tests {
             name: "my.mod".to_string(),
             exports: Some(vec!["start!".to_string(), "stop!".to_string()]),
             performs: None,
+            imports: vec![],
         };
         let env = Env::new()
             .extend("start!", Scheme::mono(effectful_fn_ty(vec!["Net"])))
@@ -5396,6 +5399,7 @@ mod tests {
             name: "my.mod".to_string(),
             exports: Some(vec!["helper".to_string()]),
             performs: Some(vec!["Net".to_string()]),
+            imports: vec![],
         };
         let env = Env::new().extend(
             "helper",
@@ -5419,6 +5423,7 @@ mod tests {
             name: "my.mod".to_string(),
             exports: Some(vec!["start!".to_string()]),
             performs: Some(vec!["Net".to_string()]),
+            imports: vec![],
         };
         let env = Env::new()
             .extend("start!", Scheme::mono(effectful_fn_ty(vec!["Net"])))
@@ -5436,6 +5441,7 @@ mod tests {
             name: "my.mod".to_string(),
             exports: None,
             performs: None,
+            imports: vec![],
         };
         let env = Env::new().extend(
             "f",
