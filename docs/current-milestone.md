@@ -1,29 +1,30 @@
-# Current Milestone: M16 — Interoperability
+# Current Milestone: M17 — Optimization
 
-**Goal:** WASM Component Model, WIT generation, C FFI.
+**Goal:** Make compiled code fast.
 
-**Crates:** `nexl-wasm`, `nexl-cli`, plus potential new crate for WIT generation
+**Crates:** `nexl-ir`, `nexl-wasm`, `nexl-native`, plus potential new optimizer crate
 
 **Spec sections to reference:**
-- §15 Interoperability (FFI, Component Model)
-- §15.3 C ABI FFI
-- §15.4 Exporting for C
+- §12 Compilation Model
 
 **Key design points:**
-- WASM Component Model for importing/exporting modules
-- WIT interface generation from Nexl types
-- Effect ↔ WIT mapping (Nexl effects → WIT interfaces)
-- C FFI via `defextern` with `:performs` and `:unsafe` annotations
-- Memory ownership: Nexl values pinned during C calls
+- Inlining small functions at call sites
+- Escape analysis: stack-allocate closures/collections that don't escape
+- Perceus reuse analysis: in-place mutation for uniquely-owned persistent data
+- Dead code elimination
+- Constant folding
+- Specialization: monomorphize polymorphic functions
+- Optional WASM GC backend
+- Arena mode (`--gc none`) for short-lived WASM plugins
 
 **Acceptance criteria:**
-- `(import-component ...)` imports foreign WASM components with type verification
-- `(export-component ...)` exports Nexl modules as WASM components
-- WIT resource types with lifecycle verification
-- `(defextern name : Type "c_name")` imports C functions
-- `(defn-export name ...)` generates C-callable functions
+- Inlining pass reduces call overhead for small functions
+- Escape analysis identifies stack-allocatable values
+- DCE removes unreachable definitions
+- Constant folding evaluates compile-time constants
+- Benchmarks show measurable improvement
 
-**When done:** Update this file to point to M17.
+**When done:** Update this file to point to M18.
 
-See `docs/todo-m16.md` for the task checklist.
+See `docs/todo-m17.md` for the task checklist.
 See `milestones.md` for the full plan.

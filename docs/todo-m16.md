@@ -1,29 +1,29 @@
 # M16 — Interoperability
 
 ## WASM Component Model
-- [ ] Implement `(import-component ...)` — import foreign WASM components with type verification
-- [ ] Implement `(export-component ...)` — export Nexl modules as WASM components
-- [ ] Generate WIT interfaces from Nexl types
-- [ ] Canonical ABI serialization at component boundaries
+- [x] Implement `(import-component ...)` — import foreign WASM components with type verification
+- [x] Implement `(export-component ...)` — export Nexl modules as WASM components
+- [x] Generate WIT interfaces from Nexl types
+- [x] Canonical ABI serialization at component boundaries
 
 ## WIT Resource Types
-- [ ] Resource import/export
-- [ ] Lifecycle verification (resources must be closed/transferred)
+- [x] Resource import/export
+- [x] Lifecycle verification (resources must be closed/transferred)
 
 ## Effect ↔ WIT Mapping
-- [ ] Nexl effects → WIT interfaces for export
-- [ ] WIT interfaces → Nexl effects for import
+- [x] Nexl effects → WIT interfaces for export
+- [x] WIT interfaces → Nexl effects for import
 
 ## C ABI FFI
-- [ ] `(defextern name : Type "c_name")` — import C functions
-- [ ] `:performs [Effect]` annotation on extern declarations
-- [ ] `:unsafe` annotation → requires `Unsafe` capability
-- [ ] Memory ownership: Nexl values pinned during C calls
-- [ ] `(deftype-opaque CHandle Ptr :drop free-fn)` for C resource wrapping
+- [x] `(defextern name : Type "c_name")` — import C functions
+- [x] `:performs [Effect]` annotation on extern declarations
+- [x] `:unsafe` annotation → requires `Unsafe` capability
+- [x] Memory ownership: Nexl values pinned during C calls
+- [x] `(deftype-opaque CHandle Ptr :drop free-fn)` for C resource wrapping
 
 ## Exporting for C
-- [ ] `(defn-export name ...)` → generates C-callable function with C ABI
-- [ ] Automatic type marshaling
+- [x] `(defn-export name ...)` → generates C-callable function with C ABI
+- [x] Automatic type marshaling
 
 ## Blocked
 - [ ] (none)

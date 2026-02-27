@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 nexl-ir = { version = "0.1.0", path = "../nexl-ir" }
+nexl-types = { version = "0.1.0", path = "../nexl-types" }
 wasm-encoder = "0.245.1"
 
 [dev-dependencies]

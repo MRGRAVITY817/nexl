@@ -1094,6 +1094,7 @@ dependencies = [
  "nexl-ast",
  "nexl-ir",
  "nexl-reader",
+ "nexl-types",
  "tempfile",
  "wasm-encoder 0.245.1",
  "wasmparser 0.245.1",
