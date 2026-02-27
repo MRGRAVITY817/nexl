@@ -7,6 +7,7 @@
 
 use clap::{Parser, Subcommand};
 use meta::{Atom, Node, NodeKind};
+use nexl_doc::{extract_module_doc, render_module_pages};
 use nexl_pkg::{build_lockfile, parse_manifest, DependencySpec, PackageManifest};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -38,6 +39,12 @@ enum Command {
     Check {
         #[arg(value_name = "FILE")]
         input: PathBuf,
+    },
+    Doc {
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+        #[arg(value_name = "OUT")]
+        output: Option<PathBuf>,
     },
     Lsp,
     Pkg {
@@ -88,6 +95,12 @@ fn main() {
         }
         Command::Check { input } => {
             if let Err(message) = command_check(input) {
+                print_error(&message);
+                process::exit(1);
+            }
+        }
+        Command::Doc { input, output } => {
+            if let Err(message) = command_doc(input, output) {
                 print_error(&message);
                 process::exit(1);
             }
@@ -457,6 +470,22 @@ fn command_check(input_path: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+fn command_doc(input_path: PathBuf, output_override: Option<PathBuf>) -> Result<(), String> {
+    let source = std::fs::read_to_string(&input_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
+    let doc = extract_module_doc(&source).map_err(|e| format!("doc error: {e}"))?;
+    let pages = render_module_pages(&[doc]);
+    let output_dir = output_override.unwrap_or_else(|| PathBuf::from("docs"));
+    std::fs::create_dir_all(&output_dir)
+        .map_err(|e| format!("cannot create {:?}: {e}", output_dir))?;
+    for page in pages {
+        let path = output_dir.join(page.filename);
+        std::fs::write(&path, page.html)
+            .map_err(|e| format!("cannot write {:?}: {e}", path))?;
+    }
+    Ok(())
+}
+
 fn command_pkg(command: PkgCommand) -> Result<(), String> {
     match command {
         PkgCommand::Add { dep, dev, version } => command_pkg_add(dep, version, dev),
@@ -638,6 +667,17 @@ mod tests {
         path
     }
 
+    fn write_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be available")
+            .as_nanos();
+        let mut path = std::env::temp_dir();
+        path.push(format!("nexl_cli_{label}_{nanos}"));
+        std::fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
     #[test]
     fn parse_build_with_input() {
         let cli = Cli::try_parse_from(["nexl", "build", "main.nexl"]).expect("parse");
@@ -812,6 +852,31 @@ mod tests {
     }
 
     #[test]
+    fn parse_doc_with_input() {
+        let cli = Cli::try_parse_from(["nexl", "doc", "mod.nexl"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Doc {
+                input: PathBuf::from("mod.nexl"),
+                output: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_doc_with_output() {
+        let cli = Cli::try_parse_from(["nexl", "doc", "mod.nexl", "out"])
+            .expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Doc {
+                input: PathBuf::from("mod.nexl"),
+                output: Some(PathBuf::from("out")),
+            }
+        );
+    }
+
+    #[test]
     fn parse_pkg_add_with_version_in_spec() {
         let cli = Cli::try_parse_from(["nexl", "pkg", "add", "json@^1.0.0"])
             .expect("parse");
@@ -873,5 +938,20 @@ mod tests {
                 command: PkgCommand::Lock
             }
         );
+    }
+
+    #[test]
+    fn doc_command_writes_html() {
+        let source = "(module demo)\n(defn ident [x] x)";
+        let path = write_temp_file(source, "doc");
+        let out_dir = write_temp_dir("doc_out");
+        let result = command_doc(path.clone(), Some(out_dir.clone()));
+        let _ = std::fs::remove_file(&path);
+        let html_path = out_dir.join("demo.html");
+        let html_exists = html_path.exists();
+        let _ = std::fs::remove_file(&html_path);
+        let _ = std::fs::remove_dir_all(&out_dir);
+        assert!(result.is_ok(), "doc command should succeed, got: {result:?}");
+        assert!(html_exists, "doc command should write html output");
     }
 }

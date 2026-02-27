@@ -925,6 +925,7 @@ dependencies = [
  "clap",
  "miette",
  "nexl-ast",
+ "nexl-doc",
  "nexl-errors",
  "nexl-eval",
  "nexl-infer",

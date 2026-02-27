@@ -3,7 +3,6 @@
 ## Package Manager Foundation
 
 ## Documentation
-- [ ] Wire `nexl doc` subcommand in CLI
 
 ## Sandbox
 - [ ] Implement `nexl sandbox` with `--allow-*` flags
@@ -32,3 +31,4 @@
 - [x] Create `nexl-doc` crate with HTML generation
 - [x] Extract doc comments, type signatures, effects, contracts from source
 - [x] Generate per-module HTML pages with cross-links
+- [x] Wire `nexl doc` subcommand in CLI

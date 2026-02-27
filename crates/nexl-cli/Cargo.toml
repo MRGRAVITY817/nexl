@@ -16,6 +16,7 @@ nexl-wasm = { path = "../nexl-wasm" }
 nexl-native = { path = "../nexl-native" }
 nexl-lsp = { path = "../nexl-lsp" }
 nexl-pkg = { path = "../nexl-pkg" }
+nexl-doc = { path = "../nexl-doc" }
 tokio = { version = "1", features = ["full"] }
 meta = { package = "nexl-ast", path = "../nexl-ast" }
 toml = "0.8"
