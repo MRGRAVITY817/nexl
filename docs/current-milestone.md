@@ -1,29 +1,29 @@
-# Current Milestone: M15 — Advanced Toolchain
+# Current Milestone: M16 — Interoperability
 
-**Goal:** LSP, package manager, documentation, sandbox mode.
+**Goal:** WASM Component Model, WIT generation, C FFI.
 
-**Crates:** `nexl-lsp`, `nexl-pkg`, `nexl-doc`, plus CLI subcommands
+**Crates:** `nexl-wasm`, `nexl-cli`, plus potential new crate for WIT generation
 
 **Spec sections to reference:**
-- §14.1 CLI commands (lines ~3227–3255)
-- §14.7 Documentation (lines ~3465–3473)
-- §8.4 Content-addressed definitions (lines ~2521–2560)
-- §8.11 Package vs module (lines ~2667–2684)
-- LSP section (lines ~3443–3463)
+- §15 Interoperability (FFI, Component Model)
+- §15.3 C ABI FFI
+- §15.4 Exporting for C
 
 **Key design points:**
-- LSP and compiler share the same analysis engine (incremental queries)
-- Effects ARE the capability system → sandbox is a thin layer
-- Content-addressed definitions for packages
-- Semver enforcement via API diffing
+- WASM Component Model for importing/exporting modules
+- WIT interface generation from Nexl types
+- Effect ↔ WIT mapping (Nexl effects → WIT interfaces)
+- C FFI via `defextern` with `:performs` and `:unsafe` annotations
+- Memory ownership: Nexl values pinned during C calls
 
 **Acceptance criteria:**
-- `nexl lsp` provides diagnostics, hover, go-to-def, completions
-- `nexl pkg add/remove/lock` manages dependencies
-- `nexl doc` generates HTML documentation
-- `nexl sandbox` restricts effects via CLI flags
+- `(import-component ...)` imports foreign WASM components with type verification
+- `(export-component ...)` exports Nexl modules as WASM components
+- WIT resource types with lifecycle verification
+- `(defextern name : Type "c_name")` imports C functions
+- `(defn-export name ...)` generates C-callable functions
 
-**When done:** Update this file to point to M16.
+**When done:** Update this file to point to M17.
 
-See `docs/todo-m15.md` for the task checklist.
+See `docs/todo-m16.md` for the task checklist.
 See `milestones.md` for the full plan.
