@@ -920,17 +920,19 @@ fn body_form_leading_count(head: &str, items: &[Node]) -> usize {
             if items.len() < 2 {
                 return items.len();
             }
-            // head + name
-            let mut count = 2;
-            // optional docstring
-            if let Some(Node {
-                kind: NodeKind::Atom(Atom::Str(_)),
-                ..
-            }) = items.get(2)
-            {
-                count = 3;
+            // If a docstring is present, only put head + name on line 1.
+            // The docstring, param vector, and body each get their own line.
+            if matches!(
+                items.get(2),
+                Some(Node {
+                    kind: NodeKind::Atom(Atom::Str(_)),
+                    ..
+                })
+            ) {
+                return 2.min(items.len());
             }
-            // parameter vector
+            // No docstring: head + name + parameter vector on line 1
+            let mut count = 2;
             if count < items.len()
                 && let NodeKind::Vector(_) = &items[count].kind
             {
@@ -1902,8 +1904,11 @@ mod tests {
             ..PrintConfig::default()
         });
         let out = pp.print_file(&[node]);
-        assert!(out.contains("\"Greet someone.\""));
-        assert!(out.contains("[name]"));
+        // Docstring should be on its own line, not on line 1 with defn name
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "(defn greet");
+        assert_eq!(lines[1].trim(), "\"Greet someone.\"");
+        assert_eq!(lines[2].trim(), "[name]");
     }
 
     // ── 66. empty_file ──────────────────────────────────────────────────

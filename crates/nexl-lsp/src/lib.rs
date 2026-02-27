@@ -279,6 +279,135 @@ fn span_contains(span: Span, offset: usize) -> bool {
     offset >= start && offset < end
 }
 
+/// Return documentation for a stdlib function, if known.
+fn stdlib_doc(name: &str) -> Option<&'static str> {
+    Some(match name {
+        // ── arithmetic ──────────────────────────────────────────────
+        "+" => "`(+ args...)` — Variadic addition (Int or Float). Identity = 0.",
+        "-" => "`(- x)` or `(- x y ...)` — Unary negation or variadic subtraction.",
+        "*" => "`(* args...)` — Variadic multiplication (Int or Float). Identity = 1.",
+        "/" => "`(/ x y)` — Integer or float division. Division by zero is a runtime error.",
+        "mod" => "`(mod x y)` — Integer remainder.",
+        // ── comparison ──────────────────────────────────────────────
+        "=" => "`(= a b)` — Structural equality.",
+        "<" => "`(< a b)` — Less-than on Int or Float.",
+        ">" => "`(> a b)` — Greater-than on Int or Float.",
+        "<=" => "`(<= a b)` — Less-than-or-equal on Int or Float.",
+        ">=" => "`(>= a b)` — Greater-than-or-equal on Int or Float.",
+        // ── logic ───────────────────────────────────────────────────
+        "not" => "`(not x)` — Boolean negation.",
+        "and" => "`(and a b)` — Strict (eager) boolean AND.",
+        "or" => "`(or a b)` — Strict (eager) boolean OR.",
+        // ── string / collection ─────────────────────────────────────
+        "str" => "`(str args...)` — Convert each argument to its display string and concatenate.",
+        "count" => "`(count coll)` — Number of elements in a collection or string.",
+        "get" => "`(get coll key)` — Return `(Some value)` if key is in bounds, else `None`.",
+        "put" => "`(put coll key val)` — Update the value at key/index.",
+        "append" => "`(append vec val)` — Append to the end of a vector.",
+        "first" => "`(first vec)` — Return `(Some x)` for the first element, or `None`.",
+        "rest" => "`(rest vec)` — Return the tail of the vector (empty if length <= 1).",
+        "last" => "`(last vec)` — Return `(Some x)` for the last element, or `None`.",
+        "slice" => "`(slice vec start end)` — Return elements in [start, end).",
+        "remove" => "`(remove map key)` — Remove key from map if present.",
+        "keys" => "`(keys map)` — Return map keys in insertion order.",
+        "vals" => "`(vals map)` — Return map values in insertion order.",
+        "entries" => "`(entries map)` — Return map entries as a Vec of 2-tuples.",
+        "contains?" => "`(contains? coll key)` — Check for key membership.",
+        "add" => "`(add set val)` — Add element to a set if missing.",
+        "union" => "`(union a b)` — Set union.",
+        "intersection" => "`(intersection a b)` — Set intersection.",
+        "difference" => "`(difference a b)` — Set difference (elements in a not in b).",
+        // ── higher-order ────────────────────────────────────────────
+        "map" => "`(map f coll)` — Apply f to each element, return new collection.",
+        "filter" => "`(filter pred coll)` — Keep elements where pred returns true.",
+        "reduce" => "`(reduce f init coll)` — Reduce collection with accumulator.",
+        // ── option/result constructors ──────────────────────────────
+        "Some" => "`(Some val)` — Wrap a value in an Option.",
+        "None" => "`None` — The absent Option value.",
+        "Ok" => "`(Ok val)` — Wrap a success value in a Result.",
+        "Err" => "`(Err val)` — Wrap an error value in a Result.",
+        // ── str module ──────────────────────────────────────────────
+        "str/split" => "`(str/split s sep)` — Split string by separator, return Vec of Str.",
+        "str/join" => "`(str/join vec sep)` — Join a Vec of Str with separator.",
+        "str/trim" => "`(str/trim s)` — Remove leading and trailing whitespace.",
+        "str/upper" => "`(str/upper s)` — Convert to uppercase.",
+        "str/lower" => "`(str/lower s)` — Convert to lowercase.",
+        "str/starts-with?" => "`(str/starts-with? s prefix)` — Check if string starts with prefix.",
+        "str/ends-with?" => "`(str/ends-with? s suffix)` — Check if string ends with suffix.",
+        "str/contains?" => "`(str/contains? s sub)` — Check if string contains substring.",
+        "str/replace" => "`(str/replace s from to)` — Replace all occurrences of `from` with `to`.",
+        "str/index-of" => "`(str/index-of s sub)` — Return `(Some Int)` of first occurrence, or `None`.",
+        "str/blank?" => "`(str/blank? s)` — True if empty or only whitespace.",
+        "str/chars" => "`(str/chars s)` — Return Vec of Char (Unicode scalar values).",
+        "str/graphemes" => "`(str/graphemes s)` — Return Vec of Str (grapheme clusters).",
+        "str/trim-start" => "`(str/trim-start s)` — Remove leading whitespace.",
+        "str/trim-end" => "`(str/trim-end s)` — Remove trailing whitespace.",
+        // ── math module ─────────────────────────────────────────────
+        "math/abs" => "`(math/abs x)` — Absolute value (works for Int and Float).",
+        "math/floor" => "`(math/floor x)` — Floor (returns Float).",
+        "math/ceil" => "`(math/ceil x)` — Ceiling (returns Float).",
+        "math/round" => "`(math/round x)` — Round to nearest integer (returns Float).",
+        "math/pow" => "`(math/pow base exp)` — Exponentiation (returns Float).",
+        "math/sqrt" => "`(math/sqrt x)` — Square root (returns Float).",
+        "math/log" => "`(math/log x)` — Natural logarithm (returns Float).",
+        "math/exp" => "`(math/exp x)` — e^x (returns Float).",
+        "math/sin" => "`(math/sin x)` — Sine (radians, returns Float).",
+        "math/cos" => "`(math/cos x)` — Cosine (radians, returns Float).",
+        "math/tan" => "`(math/tan x)` — Tangent (radians, returns Float).",
+        "math/asin" => "`(math/asin x)` — Arc sine (returns Float in radians).",
+        "math/acos" => "`(math/acos x)` — Arc cosine (returns Float in radians).",
+        "math/atan" => "`(math/atan x)` — Arc tangent (returns Float in radians).",
+        "math/atan2" => "`(math/atan2 y x)` — Two-argument arc tangent (returns Float in radians).",
+        "math/min" => "`(math/min a b)` — Minimum of two numbers.",
+        "math/max" => "`(math/max a b)` — Maximum of two numbers.",
+        "math/clamp" => "`(math/clamp x lo hi)` — Clamp x to [lo, hi].",
+        "math/pi" => "`math/pi` — The constant π.",
+        "math/e" => "`math/e` — The constant e.",
+        // ── io module ───────────────────────────────────────────────
+        "io/println" => "`(io/println s)` — Print string with newline.",
+        "io/print" => "`(io/print s)` — Print string without newline.",
+        "io/read-file" => "`(io/read-file path)` — Read file contents as Str. Returns `(Result Str Str)`.",
+        "io/write-file" => "`(io/write-file path content)` — Write string to file. Returns `(Result Unit Str)`.",
+        "io/path-join" => "`(io/path-join parts...)` — Join path components.",
+        // ── core module ─────────────────────────────────────────────
+        "core/identity" => "`(core/identity x)` — Returns its argument unchanged.",
+        "core/comp" => "`(core/comp f g)` — Returns a function that applies g then f.",
+        "core/partial" => "`(core/partial f args...)` — Returns a function with args pre-applied.",
+        "core/constantly" => "`(core/constantly x)` — Returns a function that always returns x.",
+        "core/juxt" => "`(core/juxt f g ...)` — Returns a function that applies each fn and collects results.",
+        "core/apply" => "`(core/apply f args)` — Call f with args. Last argument must be a Vec.",
+        _ => return None,
+    })
+}
+
+/// Return documentation for a special form, if known.
+fn special_form_doc(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "defn" => "`(defn name \"doc?\" [params] body)` — Define a named function.",
+        "def" => "`(def name expr)` — Bind a value to a name.",
+        "fn" => "`(fn [params] body)` — Create an anonymous function.",
+        "let" => "`(let [name val ...] body)` — Bind local variables.",
+        "if" => "`(if test then else)` — Conditional branch.",
+        "do" => "`(do exprs...)` — Evaluate forms sequentially, return last.",
+        "when" => "`(when test body...)` — Evaluate body when test is true.",
+        "unless" => "`(unless test body...)` — Evaluate body when test is false.",
+        "cond" => "`(cond test1 result1 ...)` — Multi-way conditional.",
+        "match" => "`(match expr pattern1 body1 ...)` — Pattern matching.",
+        "loop" => "`(loop [name val ...] body)` — Loop with rebindable locals.",
+        "recur" => "`(recur args...)` — Tail-recursive jump back to enclosing loop/fn.",
+        "deftype" => "`(deftype Name variants...)` — Define an algebraic data type.",
+        "defeffect" => "`(defeffect Name operations...)` — Define an effect type.",
+        "defprotocol" => "`(defprotocol Name methods...)` — Define a protocol (interface).",
+        "handle" => "`(handle expr handlers...)` — Handle effects from an expression.",
+        "module" => "`(module meta...)` — Declare module metadata.",
+        "import" => "`(import module-path)` — Import a module.",
+        "try" => "`(try expr (catch pattern body))` — Error handling.",
+        "for" => "`(for [binding clause ...] body)` — List comprehension.",
+        "each" => "`(each [binding iterable] body)` — Iterate for side effects.",
+        _ => return None,
+    })
+}
+
 fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover> {
     let mut env = Env::new();
     let mut state = InferState::new();
@@ -301,6 +430,16 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
                 }
                 Err(err) => {
                     state.push_error(err);
+                    // Inference failed (likely missing stdlib types), but we
+                    // can still show a useful hover from the AST structure.
+                    if is_target {
+                        return Some(build_defn_fallback_hover(
+                            node,
+                            docstring.as_deref(),
+                            name_node.span,
+                            source,
+                        ));
+                    }
                 }
             }
             continue;
@@ -317,6 +456,15 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
                 }
                 Err(err) => {
                     state.push_error(err);
+                    if is_target
+                        && let Some(name) = symbol_name(name_node)
+                    {
+                        return Some(build_simple_hover(
+                            &name,
+                            name_node.span,
+                            source,
+                        ));
+                    }
                 }
             }
             continue;
@@ -324,7 +472,151 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
 
         let _ = nexl_infer::synth(node, &env, &mut state);
     }
+
+    // Fall through: cursor is not on a definition-site name.
+    // Try to provide hover for a usage-site symbol.
+    let sym_node = find_symbol_at_offset(nodes, offset)?;
+    let name = symbol_name(sym_node)?;
+    let span = sym_node.span;
+
+    // 1. Check inference env for user-defined bindings
+    if let Some(scheme) = env.lookup(&name) {
+        let ty = scheme.instantiate(&mut state.supply);
+        // Try to find a docstring from the defn that defines this name
+        let docstring = find_defn_docstring(nodes, &name);
+        let doc = docstring.as_deref().or_else(|| stdlib_doc(&name));
+        return Some(build_hover(&name, &ty, doc, span, source));
+    }
+
+    // 2. Check if it's a user-defined defn (inference may have failed)
+    if let Some(defn_node) = find_defn_node(nodes, &name) {
+        let docstring = find_defn_docstring(nodes, &name);
+        return Some(build_defn_fallback_hover(
+            defn_node,
+            docstring.as_deref(),
+            span,
+            source,
+        ));
+    }
+
+    // 3. Check stdlib documentation
+    if let Some(doc) = stdlib_doc(&name) {
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!("```nexl\n{name}\n```\n\n{doc}"),
+            }),
+            range: Some(span_to_range(source, span)),
+        });
+    }
+
+    // 4. Check special form documentation
+    if let Some(doc) = special_form_doc(&name) {
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!("```nexl\n{name}\n```\n\n{doc}"),
+            }),
+            range: Some(span_to_range(source, span)),
+        });
+    }
+
     None
+}
+
+/// Find the docstring for a defn with the given name.
+fn find_defn_docstring(nodes: &[Node], name: &str) -> Option<String> {
+    for node in nodes {
+        if let Some((name_node, docstring)) = defn_name_and_docstring(node)
+            && symbol_name(name_node).as_deref() == Some(name)
+        {
+            return docstring;
+        }
+    }
+    None
+}
+
+/// Find the defn node that defines the given name.
+fn find_defn_node<'a>(nodes: &'a [Node], name: &str) -> Option<&'a Node> {
+    for node in nodes {
+        if let Some((name_node, _)) = defn_name_and_docstring(node)
+            && symbol_name(name_node).as_deref() == Some(name)
+        {
+            return Some(node);
+        }
+    }
+    None
+}
+
+/// Build a hover for a `defn` when type inference failed.
+/// Extracts name and params from the AST.
+fn build_defn_fallback_hover(
+    node: &Node,
+    docstring: Option<&str>,
+    span: Span,
+    source: &str,
+) -> Hover {
+    let NodeKind::List(items) = &node.kind else {
+        return build_simple_hover("defn", span, source);
+    };
+    let name = items
+        .get(1)
+        .and_then(symbol_name)
+        .unwrap_or_else(|| "?".to_string());
+
+    // Find the parameter vector (skip optional docstring)
+    let param_idx = if matches!(
+        items.get(2),
+        Some(Node {
+            kind: NodeKind::Atom(Atom::Str(_)),
+            ..
+        })
+    ) {
+        3
+    } else {
+        2
+    };
+
+    let params = items.get(param_idx).and_then(|n| {
+        if let NodeKind::Vector(elems) = &n.kind {
+            let names: Vec<String> = elems.iter().filter_map(symbol_name).collect();
+            Some(names.join(" "))
+        } else {
+            None
+        }
+    });
+
+    let signature = match params {
+        Some(p) => format!("(defn {name} [{p}] ...)",),
+        None => format!("(defn {name} ...)",),
+    };
+
+    let mut value = format!("```nexl\n{signature}\n```");
+    if let Some(doc) = docstring
+        && !doc.is_empty()
+    {
+        value.push_str("\n\n");
+        value.push_str(doc);
+    }
+
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value,
+        }),
+        range: Some(span_to_range(source, span)),
+    }
+}
+
+/// Build a minimal hover showing just the name.
+fn build_simple_hover(name: &str, span: Span, source: &str) -> Hover {
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: format!("```nexl\n{name}\n```"),
+        }),
+        range: Some(span_to_range(source, span)),
+    }
 }
 
 fn build_hover(name: &str, ty: &Type, docstring: Option<&str>, span: Span, source: &str) -> Hover {
@@ -408,6 +700,10 @@ fn def_name_node(node: &Node) -> Option<&Node> {
 fn symbol_name(node: &Node) -> Option<String> {
     match &node.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) => Some(name.clone()),
+        NodeKind::Atom(Atom::Symbol {
+            ns: Some(ns),
+            name,
+        }) => Some(format!("{ns}/{name}")),
         _ => None,
     }
 }
@@ -1304,5 +1600,266 @@ mod tests {
             result.is_empty(),
             "should return empty edits for already-formatted file"
         );
+    }
+
+    // ── Hover on usage sites ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_hover_usage_site_shows_type() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-usage.nexl");
+        let source = "(defn add1 [x] (+ x 1))\n(add1 5)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        // Hover on the usage of `add1` in `(add1 5)`, not the definition
+        let usage_offset = source.rfind("add1").expect("add1 usage");
+        let position = offset_to_position(source, usage_offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("add1"), "should contain the name");
+    }
+
+    #[tokio::test]
+    async fn test_hover_usage_site_shows_docstring() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-usage-doc.nexl");
+        let source = "(defn greet \"Says hello.\" [name] name)\n(greet \"world\")";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let usage_offset = source.rfind("greet").expect("greet usage");
+        let position = offset_to_position(source, usage_offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("Says hello."), "should contain the docstring");
+    }
+
+    // ── Hover on stdlib functions ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_hover_stdlib_function() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-stdlib.nexl");
+        let source = "(map inc [1 2 3])";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let offset = source.find("map").expect("map in source");
+        let position = offset_to_position(source, offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("map"), "should contain the name");
+        assert!(
+            value.contains("Apply f to each element"),
+            "should contain stdlib doc"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hover_qualified_stdlib() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-qualified.nexl");
+        let source = "(str/split \"a,b\" \",\")";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let offset = source.find("str/split").expect("str/split in source");
+        let position = offset_to_position(source, offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("str/split"), "should contain the name");
+        assert!(
+            value.contains("Split string by separator"),
+            "should contain stdlib doc"
+        );
+    }
+
+    // ── Hover on special forms ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_hover_special_form_let() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-let.nexl");
+        let source = "(let [x 1] x)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let offset = source.find("let").expect("let in source");
+        let position = offset_to_position(source, offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("let"), "should contain the name");
+        assert!(
+            value.contains("Bind local variables"),
+            "should contain special form doc"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hover_special_form_if() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-if.nexl");
+        let source = "(if true 1 2)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let offset = source.find("if").expect("if in source");
+        let position = offset_to_position(source, offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("if"), "should contain the name");
+        assert!(
+            value.contains("Conditional branch"),
+            "should contain special form doc"
+        );
+    }
+
+    // ── Unit test for doc lookup functions ───────────────────────────────
+
+    #[test]
+    fn test_stdlib_doc_coverage() {
+        // Spot-check a few entries exist
+        assert!(stdlib_doc("+").is_some());
+        assert!(stdlib_doc("str/split").is_some());
+        assert!(stdlib_doc("math/pi").is_some());
+        assert!(stdlib_doc("io/println").is_some());
+        assert!(stdlib_doc("core/identity").is_some());
+        assert!(stdlib_doc("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_special_form_doc_coverage() {
+        assert!(special_form_doc("defn").is_some());
+        assert!(special_form_doc("let").is_some());
+        assert!(special_form_doc("if").is_some());
+        assert!(special_form_doc("match").is_some());
+        assert!(special_form_doc("nonexistent").is_none());
     }
 }
