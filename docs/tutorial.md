@@ -613,12 +613,27 @@ a summary. Save this as `wordcount.nxl`:
 (summarize "sample.txt")
 ```
 
-Create `sample.txt` with some text, then:
+**Before running**, create `sample.txt` in the same directory as the script:
+
+```
+Hello world
+This is a test file
+for the Nexl wordcount example
+It has multiple lines
+and several words
+```
+
+Then run **from that directory**:
 
 ```
 $ nexl run wordcount.nxl
 sample.txt: 6 lines, 19 words
 ```
+
+> **Gotcha:** `summarize` uses `?` to unwrap the `Result` from `io/read-file`. If
+> the file doesn't exist, `?` causes an early return from `summarize` and the program
+> exits silently with no output. Make sure `sample.txt` exists in the directory where
+> you run the command. To handle errors explicitly, use `try`/`catch` (see §13).
 
 ---
 
