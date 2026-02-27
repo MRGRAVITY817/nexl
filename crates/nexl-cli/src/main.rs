@@ -7,6 +7,7 @@
 
 use clap::{Parser, Subcommand};
 use meta::{Atom, Node, NodeKind};
+use nexl_pkg::{build_lockfile, parse_manifest, DependencySpec, PackageManifest};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
@@ -39,6 +40,29 @@ enum Command {
         input: PathBuf,
     },
     Lsp,
+    Pkg {
+        #[command(subcommand)]
+        command: PkgCommand,
+    },
+}
+
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+enum PkgCommand {
+    Add {
+        #[arg(value_name = "DEP")]
+        dep: String,
+        /// Add to dev-dependencies instead of dependencies.
+        #[arg(long = "dev")]
+        dev: bool,
+        /// Explicit version requirement (if DEP does not include @version).
+        #[arg(long = "version")]
+        version: Option<String>,
+    },
+    Remove {
+        #[arg(value_name = "DEP")]
+        dep: String,
+    },
+    Lock,
 }
 
 fn main() {
@@ -72,6 +96,12 @@ fn main() {
             let rt = tokio::runtime::Runtime::new()
                 .expect("failed to create tokio runtime");
             rt.block_on(nexl_lsp::run_server());
+        }
+        Command::Pkg { command } => {
+            if let Err(message) = command_pkg(command) {
+                print_error(&message);
+                process::exit(1);
+            }
         }
     }
 }
@@ -427,6 +457,136 @@ fn command_check(input_path: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+fn command_pkg(command: PkgCommand) -> Result<(), String> {
+    match command {
+        PkgCommand::Add { dep, dev, version } => command_pkg_add(dep, version, dev),
+        PkgCommand::Remove { dep } => command_pkg_remove(dep),
+        PkgCommand::Lock => command_pkg_lock(),
+    }
+}
+
+fn command_pkg_add(dep: String, version: Option<String>, dev: bool) -> Result<(), String> {
+    let (name, version) = parse_dep_spec(&dep, version)?;
+    let manifest_path = manifest_path();
+    let mut manifest = read_manifest(&manifest_path)?;
+
+    if let Some(existing) = manifest.dependencies.get(&name) {
+        if !spec_matches(existing, &version) {
+            return Err(format!(
+                "dependency `{name}` already exists with {}",
+                spec_label(existing)
+            ));
+        }
+        return Ok(());
+    }
+
+    if let Some(existing) = manifest.dev_dependencies.get(&name) {
+        if !spec_matches(existing, &version) {
+            return Err(format!(
+                "dependency `{name}` already exists with {}",
+                spec_label(existing)
+            ));
+        }
+        if dev {
+            return Ok(());
+        }
+    }
+
+    let target = if dev {
+        &mut manifest.dev_dependencies
+    } else {
+        &mut manifest.dependencies
+    };
+    target.insert(name, DependencySpec::Version(version));
+    write_manifest(&manifest_path, &manifest)
+}
+
+fn command_pkg_remove(dep: String) -> Result<(), String> {
+    let name = dep.split_once('@').map(|(name, _)| name).unwrap_or(&dep);
+    if name.is_empty() {
+        return Err("dependency name cannot be empty".to_string());
+    }
+    let manifest_path = manifest_path();
+    let mut manifest = read_manifest(&manifest_path)?;
+    let removed = manifest.dependencies.remove(name).is_some()
+        || manifest.dev_dependencies.remove(name).is_some();
+    if !removed {
+        return Err(format!("dependency `{name}` not found"));
+    }
+    write_manifest(&manifest_path, &manifest)
+}
+
+fn command_pkg_lock() -> Result<(), String> {
+    let manifest_path = manifest_path();
+    let manifest = read_manifest(&manifest_path)?;
+    let lockfile = build_lockfile(&manifest).map_err(|e| format!("resolve error: {e}"))?;
+    let lock_path = lockfile_path();
+    write_lockfile(&lock_path, &lockfile)
+}
+
+fn manifest_path() -> PathBuf {
+    PathBuf::from("nexl.toml")
+}
+
+fn lockfile_path() -> PathBuf {
+    PathBuf::from("nexl.lock")
+}
+
+fn parse_dep_spec(dep: &str, version: Option<String>) -> Result<(String, String), String> {
+    match dep.split_once('@') {
+        Some((name, ver)) => {
+            if name.is_empty() || ver.is_empty() {
+                return Err("dependency spec must be NAME@VERSION".to_string());
+            }
+            Ok((name.to_string(), ver.to_string()))
+        }
+        None => match version {
+            Some(ver) if !dep.is_empty() => Ok((dep.to_string(), ver)),
+            _ => Err("dependency version required (use NAME@VERSION or --version)".to_string()),
+        },
+    }
+}
+
+fn spec_matches(spec: &DependencySpec, version: &str) -> bool {
+    let (existing_version, existing_registry) = normalize_spec(spec);
+    existing_registry.is_none() && existing_version == version
+}
+
+fn spec_label(spec: &DependencySpec) -> String {
+    let (version, registry) = normalize_spec(spec);
+    match registry {
+        Some(registry) => format!("{version} (registry {registry})"),
+        None => version,
+    }
+}
+
+fn normalize_spec(spec: &DependencySpec) -> (String, Option<String>) {
+    match spec {
+        DependencySpec::Version(version) => (version.clone(), None),
+        DependencySpec::Detailed(detail) => (detail.version.clone(), detail.registry.clone()),
+    }
+}
+
+fn read_manifest(path: &PathBuf) -> Result<PackageManifest, String> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    parse_manifest(&source).map_err(|e| format!("invalid manifest {}: {e}", path.display()))
+}
+
+fn write_manifest(path: &PathBuf, manifest: &PackageManifest) -> Result<(), String> {
+    let output = toml::to_string_pretty(manifest)
+        .map_err(|e| format!("cannot serialize manifest: {e}"))?;
+    std::fs::write(path, output)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+fn write_lockfile(path: &PathBuf, lockfile: &nexl_pkg::Lockfile) -> Result<(), String> {
+    let output = toml::to_string_pretty(lockfile)
+        .map_err(|e| format!("cannot serialize lockfile: {e}"))?;
+    std::fs::write(path, output)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
 fn check_top_level(
     node: &Node,
     env: nexl_infer::Env,
@@ -649,5 +809,69 @@ mod tests {
     fn parse_lsp_without_args() {
         let cli = Cli::try_parse_from(["nexl", "lsp"]).expect("parse");
         assert_eq!(cli.command, Command::Lsp);
+    }
+
+    #[test]
+    fn parse_pkg_add_with_version_in_spec() {
+        let cli = Cli::try_parse_from(["nexl", "pkg", "add", "json@^1.0.0"])
+            .expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Pkg {
+                command: PkgCommand::Add {
+                    dep: "json@^1.0.0".to_string(),
+                    dev: false,
+                    version: None,
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn parse_pkg_add_with_dev_flag() {
+        let cli = Cli::try_parse_from([
+            "nexl",
+            "pkg",
+            "add",
+            "test-utils",
+            "--dev",
+            "--version",
+            "^0.1.0",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Pkg {
+                command: PkgCommand::Add {
+                    dep: "test-utils".to_string(),
+                    dev: true,
+                    version: Some("^0.1.0".to_string()),
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn parse_pkg_remove() {
+        let cli = Cli::try_parse_from(["nexl", "pkg", "remove", "json"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Pkg {
+                command: PkgCommand::Remove {
+                    dep: "json".to_string(),
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn parse_pkg_lock() {
+        let cli = Cli::try_parse_from(["nexl", "pkg", "lock"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Pkg {
+                command: PkgCommand::Lock
+            }
+        );
     }
 }

@@ -874,9 +874,11 @@ dependencies = [
  "nexl-ir",
  "nexl-lsp",
  "nexl-native",
+ "nexl-pkg",
  "nexl-reader",
  "nexl-wasm",
  "tokio",
+ "toml",
 ]
 
 [[package]]

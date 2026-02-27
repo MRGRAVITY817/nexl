@@ -28,6 +28,7 @@ pub struct PackageSection {
     /// Semver version string.
     pub version: String,
     /// Optional description for humans.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Package prefix for module names.
     pub prefix: String,
@@ -49,6 +50,7 @@ pub struct DependencyDetail {
     /// Semver range string.
     pub version: String,
     /// Optional registry alias to resolve against.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
 }
 
@@ -59,6 +61,7 @@ pub struct RegistrySpec {
     pub url: String,
     /// Environment variable holding an auth token.
     #[serde(rename = "token-env")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token_env: Option<String>,
 }
 
@@ -76,7 +79,8 @@ pub fn parse_manifest(source: &str) -> Result<PackageManifest, ManifestError> {
 }
 
 /// The dependency bucket a manifest entry came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DependencyKind {
     /// Runtime dependency from `[dependencies]`.
     Runtime,
@@ -92,6 +96,25 @@ pub struct ResolvedDependency {
     /// Semver range string.
     pub version: String,
     /// Optional registry alias.
+    pub registry: Option<String>,
+    /// Dependency kind.
+    pub kind: DependencyKind,
+}
+
+/// A lockfile generated from a resolved manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Lockfile {
+    /// Locked dependencies keyed by name.
+    pub dependencies: BTreeMap<String, LockedDependency>,
+}
+
+/// A single locked dependency entry.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LockedDependency {
+    /// Semver range string.
+    pub version: String,
+    /// Optional registry alias.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
     /// Dependency kind.
     pub kind: DependencyKind,
@@ -138,6 +161,23 @@ pub fn resolve_dependencies(
     }
 
     Ok(resolved)
+}
+
+/// Build a lockfile from the manifest's resolved dependencies.
+pub fn build_lockfile(manifest: &PackageManifest) -> Result<Lockfile, ResolveError> {
+    let resolved = resolve_dependencies(manifest)?;
+    let mut dependencies = BTreeMap::new();
+    for dep in resolved {
+        dependencies.insert(
+            dep.name,
+            LockedDependency {
+                version: dep.version,
+                registry: dep.registry,
+                kind: dep.kind,
+            },
+        );
+    }
+    Ok(Lockfile { dependencies })
 }
 
 fn add_dependency(
@@ -388,5 +428,30 @@ json = "~1.0.0"
             ResolveError::UnknownRegistry { registry, .. } => assert_eq!(registry, "internal"),
             other => panic!("expected unknown registry error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn build_lockfile_captures_dependency_kinds() {
+        let mut manifest = base_manifest();
+        manifest.dependencies.insert(
+            "core".to_string(),
+            DependencySpec::Version("^1.0.0".to_string()),
+        );
+        manifest.dev_dependencies.insert(
+            "test-utils".to_string(),
+            DependencySpec::Version("^0.1.0".to_string()),
+        );
+
+        let lockfile = build_lockfile(&manifest).expect("lockfile build");
+        let core = lockfile
+            .dependencies
+            .get("core")
+            .expect("core entry");
+        assert_eq!(core.kind, DependencyKind::Runtime);
+        let test_utils = lockfile
+            .dependencies
+            .get("test-utils")
+            .expect("test utils entry");
+        assert_eq!(test_utils.kind, DependencyKind::Dev);
     }
 }
