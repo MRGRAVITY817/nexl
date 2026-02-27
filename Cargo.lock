@@ -939,6 +939,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexl-doc"
+version = "0.1.0"
+
+[[package]]
 name = "nexl-effects"
 version = "0.1.0"
 dependencies = [

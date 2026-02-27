@@ -100,6 +100,9 @@ nexl-pkg
 
 nexl-cli (updated)
 └── nexl-lsp (M15)
+
+nexl-doc
+(no workspace-crate dependencies — HTML generation)
 ```
 
 ## Planned (future milestones)
