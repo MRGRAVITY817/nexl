@@ -94,7 +94,9 @@ nexl-lsp
 └── dashmap (external)
 
 nexl-pkg
-└── serde (external)
+├── serde (external)
+├── toml (external)
+└── rusqlite (external)
 
 nexl-cli (updated)
 └── nexl-lsp (M15)

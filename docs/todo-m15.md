@@ -1,7 +1,6 @@
 # M15 — Advanced Toolchain
 
 ## Package Manager Foundation
-- [ ] Content-addressed definition store (SQLite-backed hash→artifact)
 
 ## Documentation
 - [ ] Create `nexl-doc` crate with HTML generation
@@ -32,3 +31,4 @@
 - [x] Implement `nexl.toml` parser (package name, version, deps, prefix)
 - [x] Implement dependency resolution (flat, no version conflicts for Stage 0)
 - [x] Wire `nexl pkg add/remove/lock` subcommands in CLI
+- [x] Content-addressed definition store (SQLite-backed hash→artifact)

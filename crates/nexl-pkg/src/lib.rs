@@ -1,7 +1,9 @@
 //! `nexl-pkg` — package manifest schema for `nexl.toml`.
 
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use thiserror::Error;
 
 /// A parsed `nexl.toml` manifest.
@@ -178,6 +180,70 @@ pub fn build_lockfile(manifest: &PackageManifest) -> Result<Lockfile, ResolveErr
         );
     }
     Ok(Lockfile { dependencies })
+}
+
+/// SQLite-backed content-addressed definition store.
+#[derive(Debug)]
+pub struct DefinitionStore {
+    conn: Connection,
+}
+
+/// Errors returned by the definition store.
+#[derive(Debug, Error)]
+pub enum StoreError {
+    /// Database error returned by SQLite.
+    #[error("database error: {0}")]
+    Database(#[from] rusqlite::Error),
+}
+
+impl DefinitionStore {
+    /// Open or create a definition store at the given path.
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        let conn = Connection::open(path)?;
+        let store = Self { conn };
+        store.init()?;
+        Ok(store)
+    }
+
+    /// Open an in-memory definition store (useful for tests).
+    pub fn open_in_memory() -> Result<Self, StoreError> {
+        let conn = Connection::open_in_memory()?;
+        let store = Self { conn };
+        store.init()?;
+        Ok(store)
+    }
+
+    /// Store an artifact by its content hash.
+    pub fn put(&self, hash: &str, artifact: &[u8]) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO artifacts (hash, artifact) VALUES (?1, ?2)",
+            params![hash, artifact],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch an artifact by its content hash.
+    pub fn get(&self, hash: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT artifact FROM artifacts WHERE hash = ?1")?;
+        let mut rows = stmt.query(params![hash])?;
+        match rows.next()? {
+            Some(row) => {
+                let data: Vec<u8> = row.get(0)?;
+                Ok(Some(data))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn init(&self) -> Result<(), StoreError> {
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS artifacts (hash TEXT PRIMARY KEY, artifact BLOB NOT NULL)",
+            [],
+        )?;
+        Ok(())
+    }
 }
 
 fn add_dependency(
@@ -453,5 +519,22 @@ json = "~1.0.0"
             .get("test-utils")
             .expect("test utils entry");
         assert_eq!(test_utils.kind, DependencyKind::Dev);
+    }
+
+    #[test]
+    fn definition_store_roundtrips_artifacts() {
+        let store = DefinitionStore::open_in_memory().expect("store open");
+        store
+            .put("hash-1", b"artifact")
+            .expect("store write");
+        let fetched = store.get("hash-1").expect("store read");
+        assert_eq!(fetched, Some(b"artifact".to_vec()));
+    }
+
+    #[test]
+    fn definition_store_missing_returns_none() {
+        let store = DefinitionStore::open_in_memory().expect("store open");
+        let fetched = store.get("missing").expect("store read");
+        assert_eq!(fetched, None);
     }
 }
