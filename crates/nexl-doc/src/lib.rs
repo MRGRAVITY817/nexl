@@ -32,6 +32,17 @@ pub struct FunctionDoc {
     pub examples: Vec<String>,
 }
 
+/// An HTML page rendered for a single module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModulePage {
+    /// Module name.
+    pub module: String,
+    /// File name for the rendered page.
+    pub filename: String,
+    /// HTML contents.
+    pub html: String,
+}
+
 /// Errors returned during documentation extraction.
 #[derive(Debug, Error)]
 pub enum DocError {
@@ -82,8 +93,29 @@ pub fn extract_module_doc(source: &str) -> Result<ModuleDoc, DocError> {
     })
 }
 
+/// Render HTML pages for a set of modules with cross-links.
+pub fn render_module_pages(modules: &[ModuleDoc]) -> Vec<ModulePage> {
+    let nav = modules
+        .iter()
+        .map(|doc| (doc.name.clone(), module_filename(&doc.name)))
+        .collect::<Vec<_>>();
+
+    modules
+        .iter()
+        .map(|doc| ModulePage {
+            module: doc.name.clone(),
+            filename: module_filename(&doc.name),
+            html: render_module_with_nav(doc, &nav),
+        })
+        .collect()
+}
+
 /// Render a module documentation page as HTML.
 pub fn render_module(doc: &ModuleDoc) -> String {
+    render_module_with_nav(doc, &[])
+}
+
+fn render_module_with_nav(doc: &ModuleDoc, nav: &[(String, String)]) -> String {
     let mut out = String::new();
     out.push_str("<!doctype html>\n");
     out.push_str("<html lang=\"en\">\n");
@@ -96,6 +128,20 @@ pub fn render_module(doc: &ModuleDoc) -> String {
     out.push_str("</head>\n");
     out.push_str("<body>\n");
     out.push_str("  <main>\n");
+    if !nav.is_empty() {
+        out.push_str("    <nav>\n");
+        out.push_str("      <h2>Modules</h2>\n");
+        out.push_str("      <ul>\n");
+        for (name, href) in nav {
+            out.push_str("        <li><a href=\"");
+            out.push_str(&escape_html(href));
+            out.push_str("\">");
+            out.push_str(&escape_html(name));
+            out.push_str("</a></li>\n");
+        }
+        out.push_str("      </ul>\n");
+        out.push_str("    </nav>\n");
+    }
     out.push_str("    <h1>");
     out.push_str(&escape_html(&doc.name));
     out.push_str("</h1>\n");
@@ -165,6 +211,18 @@ fn escape_html(text: &str) -> String {
         }
     }
     escaped
+}
+
+fn module_filename(name: &str) -> String {
+    let mut sanitized = String::with_capacity(name.len());
+    for ch in name.chars() {
+        match ch {
+            '.' | '/' => sanitized.push('-'),
+            _ => sanitized.push(ch),
+        }
+    }
+    sanitized.push_str(".html");
+    sanitized
 }
 
 struct DefnDocParts {
@@ -390,5 +448,29 @@ mod tests {
         assert_eq!(func.requires, vec!["true"]);
         assert_eq!(func.ensures, vec!["true"]);
         assert_eq!(func.examples, vec!["1"]);
+    }
+
+    #[test]
+    fn render_module_pages_include_cross_links() {
+        let modules = vec![
+            ModuleDoc {
+                name: "alpha".to_string(),
+                description: None,
+                functions: Vec::new(),
+            },
+            ModuleDoc {
+                name: "beta".to_string(),
+                description: None,
+                functions: Vec::new(),
+            },
+        ];
+
+        let pages = render_module_pages(&modules);
+        let alpha = pages
+            .iter()
+            .find(|page| page.module == "alpha")
+            .expect("alpha page");
+        assert!(alpha.html.contains("beta.html"));
+        assert!(alpha.html.contains(">beta<"));
     }
 }
