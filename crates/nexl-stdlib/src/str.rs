@@ -28,6 +28,7 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("blank?", blank),
         ("chars", chars),
         ("graphemes", graphemes),
+        ("format", str_format),
     ]
 }
 
@@ -229,6 +230,46 @@ fn graphemes(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Vec(Rc::new(grapheme_values)))
 }
 
+/// `(str/format template args...)` — positional `{}` placeholder formatting.
+fn str_format(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("`str/format` requires at least 1 argument (the template)".into());
+    }
+    let template = expect_str("str/format", &args[0])?;
+    let mut result = String::new();
+    let mut arg_idx = 1;
+    let mut chars = template.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '{' && chars.peek() == Some(&'}') {
+            chars.next(); // consume '}'
+            if arg_idx >= args.len() {
+                return Err(format!(
+                    "`str/format` has more placeholders than arguments (expected arg #{})",
+                    arg_idx
+                ));
+            }
+            result.push_str(&display_value(&args[arg_idx]));
+            arg_idx += 1;
+        } else {
+            result.push(ch);
+        }
+    }
+    Ok(Value::Str(Rc::from(result.as_str())))
+}
+
+/// Format a value for `str/format` display.
+fn display_value(v: &Value) -> String {
+    match v {
+        Value::Str(s) => s.to_string(),
+        Value::Int(n) => n.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Char(c) => c.to_string(),
+        Value::Unit => "()".to_string(),
+        other => format!("{other}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,5 +463,37 @@ mod tests {
                 Value::Str(Rc::from("i")),
             ]))
         );
+    }
+
+    #[test]
+    fn test_format_basic() {
+        let result =
+            str_format(&[Value::Str(Rc::from("Hello, {}!")), Value::Str(Rc::from("world"))])
+                .unwrap();
+        assert_eq!(result, Value::Str(Rc::from("Hello, world!")));
+    }
+
+    #[test]
+    fn test_format_multiple_args() {
+        let result = str_format(&[
+            Value::Str(Rc::from("{} + {} = {}")),
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+        ])
+        .unwrap();
+        assert_eq!(result, Value::Str(Rc::from("1 + 2 = 3")));
+    }
+
+    #[test]
+    fn test_format_no_placeholders() {
+        let result = str_format(&[Value::Str(Rc::from("hello"))]).unwrap();
+        assert_eq!(result, Value::Str(Rc::from("hello")));
+    }
+
+    #[test]
+    fn test_format_too_few_args() {
+        let result = str_format(&[Value::Str(Rc::from("{} and {}"))]);
+        assert!(result.is_err());
     }
 }

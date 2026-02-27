@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use meta::{Atom, Node, NodeKind, TryCatchForm, parse_try_form};
+use meta::{Atom, Node, NodeKind, Pattern, TryCatchForm, parse_pattern, parse_try_form};
 use nexl_runtime::{Value, value::Function};
 
 use crate::{Env, EvalError};
@@ -119,6 +119,21 @@ fn eval_list<'a>(
         }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "try" => {
             eval_try(items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "match" => {
+            eval_match(items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "deftype" => {
+            eval_deftype(items, env)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "and" => {
+            eval_and(items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "or" => {
+            eval_or(items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "cond" => {
+            eval_cond(items, env, loop_state)
         }
         _ => eval_apply(items, env, loop_state),
     }
@@ -286,6 +301,360 @@ fn eval_if<'a>(
     } else {
         eval_with_loop(&items[3], env, loop_state)
     }
+}
+
+/// `(match expr pattern1 body1 pattern2 body2 ...)`
+/// Pattern matching on values. Tries each pattern in order.
+fn eval_match<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    // (match expr pat1 body1 pat2 body2 ...)
+    if items.len() < 4 || !(items.len() - 2).is_multiple_of(2) {
+        return Err(EvalError::Arity);
+    }
+
+    let scrutinee = match eval_with_loop(&items[1], env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        recur @ EvalReturn::Recur(_) => return Ok(recur),
+    };
+
+    let arms = &items[2..];
+    for pair in arms.chunks_exact(2) {
+        let (pat_node, body_node) = (&pair[0], &pair[1]);
+        let pattern = parse_pattern(pat_node).map_err(|e| {
+            EvalError::NativeError(format!("match: {e}"))
+        })?;
+
+        let mut bindings: Vec<(Rc<str>, Value)> = Vec::new();
+        if match_pattern(&pattern, &scrutinee, &mut bindings) {
+            let arm_env = Rc::new(Env::child(Rc::clone(env)));
+            for (name, value) in bindings {
+                arm_env.define(name, value);
+            }
+            return eval_with_loop(body_node, &arm_env, loop_state);
+        }
+    }
+
+    Err(EvalError::NativeError(format!(
+        "match: no pattern matched value {scrutinee}"
+    )))
+}
+
+/// Try to match a pattern against a value, collecting bindings on success.
+fn match_pattern(
+    pattern: &Pattern,
+    value: &Value,
+    bindings: &mut Vec<(Rc<str>, Value)>,
+) -> bool {
+    match pattern {
+        Pattern::Wildcard => true,
+
+        Pattern::Var(name) => {
+            bindings.push((Rc::from(name.as_str()), value.clone()));
+            true
+        }
+
+        Pattern::Literal(atom) => match_literal(atom, value),
+
+        Pattern::Constructor { name, args } => {
+            match value {
+                Value::Adt { ctor, fields, .. } => {
+                    if ctor.as_ref() != name.as_str() {
+                        return false;
+                    }
+                    if fields.len() != args.len() {
+                        return false;
+                    }
+                    for (sub_pat, field_val) in args.iter().zip(fields.iter()) {
+                        if !match_pattern(sub_pat, field_val, bindings) {
+                            return false;
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        Pattern::Record { fields } => {
+            match value {
+                Value::Map(entries) => {
+                    for (field_name, sub_pat) in fields {
+                        let key = Value::Keyword {
+                            ns: None,
+                            name: Rc::from(field_name.as_str()),
+                        };
+                        let found = entries.iter().find(|(k, _)| *k == key);
+                        match found {
+                            Some((_, val)) => {
+                                if !match_pattern(sub_pat, val, bindings) {
+                                    return false;
+                                }
+                            }
+                            None => return false,
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        Pattern::Tuple(pats) => {
+            match value {
+                Value::Vec(items) => {
+                    if items.len() != pats.len() {
+                        return false;
+                    }
+                    for (sub_pat, item) in pats.iter().zip(items.iter()) {
+                        if !match_pattern(sub_pat, item, bindings) {
+                            return false;
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        Pattern::Or(alternatives) => {
+            for alt in alternatives {
+                let mut alt_bindings = Vec::new();
+                if match_pattern(alt, value, &mut alt_bindings) {
+                    bindings.extend(alt_bindings);
+                    return true;
+                }
+            }
+            false
+        }
+
+        Pattern::As { pattern: inner, name } => {
+            if match_pattern(inner, value, bindings) {
+                bindings.push((Rc::from(name.as_str()), value.clone()));
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// Match a literal pattern atom against a runtime value.
+fn match_literal(atom: &Atom, value: &Value) -> bool {
+    match (atom, value) {
+        (Atom::Int { value: n, .. }, Value::Int(v)) => *n as i64 == *v,
+        (Atom::Float { value: n, .. }, Value::Float(v)) => *n == *v,
+        (Atom::Bool(b), Value::Bool(v)) => b == v,
+        (Atom::Str(s), Value::Str(v)) => s.as_str() == v.as_ref(),
+        (Atom::Char(c), Value::Char(v)) => c == v,
+        (Atom::Unit, Value::Unit) => true,
+        (
+            Atom::Keyword { ns: kns, name: kname },
+            Value::Keyword { ns: vns, name: vname },
+        ) => {
+            kns.as_deref() == vns.as_deref() && kname.as_str() == vname.as_ref()
+        }
+        _ => false,
+    }
+}
+
+/// `(and e1 e2 ...)` — short-circuit boolean AND.
+/// Evaluates left to right; stops at the first `false` without evaluating the rest.
+fn eval_and<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() < 2 {
+        return Err(EvalError::Arity);
+    }
+    for expr in &items[1..] {
+        let val = match eval_with_loop(expr, env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            recur @ EvalReturn::Recur(_) => return Ok(recur),
+        };
+        match val {
+            Value::Bool(false) => return Ok(EvalReturn::Value(Value::Bool(false))),
+            Value::Bool(true) => {}
+            _ => return Err(EvalError::InvalidConditionType),
+        }
+    }
+    Ok(EvalReturn::Value(Value::Bool(true)))
+}
+
+/// `(or e1 e2 ...)` — short-circuit boolean OR.
+/// Evaluates left to right; stops at the first `true` without evaluating the rest.
+fn eval_or<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() < 2 {
+        return Err(EvalError::Arity);
+    }
+    for expr in &items[1..] {
+        let val = match eval_with_loop(expr, env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            recur @ EvalReturn::Recur(_) => return Ok(recur),
+        };
+        match val {
+            Value::Bool(true) => return Ok(EvalReturn::Value(Value::Bool(true))),
+            Value::Bool(false) => {}
+            _ => return Err(EvalError::InvalidConditionType),
+        }
+    }
+    Ok(EvalReturn::Value(Value::Bool(false)))
+}
+
+/// `(cond test1 expr1 test2 expr2 ... :else default)`
+fn eval_cond<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    // Must have at least (cond test expr)
+    let clauses = &items[1..];
+    if clauses.is_empty() || !clauses.len().is_multiple_of(2) {
+        return Err(EvalError::Arity);
+    }
+
+    for pair in clauses.chunks_exact(2) {
+        let (test_node, body_node) = (&pair[0], &pair[1]);
+
+        // Check for :else keyword — always matches
+        if let NodeKind::Atom(Atom::Keyword { ns: None, name }) = &test_node.kind
+            && name == "else"
+        {
+            return eval_with_loop(body_node, env, loop_state);
+        }
+
+        let test_val = match eval_with_loop(test_node, env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            recur @ EvalReturn::Recur(_) => return Ok(recur),
+        };
+        match test_val {
+            Value::Bool(true) => return eval_with_loop(body_node, env, loop_state),
+            Value::Bool(false) => {}
+            _ => return Err(EvalError::InvalidConditionType),
+        }
+    }
+
+    // No clause matched — return Unit
+    Ok(EvalReturn::Value(Value::Unit))
+}
+
+/// `(deftype TypeName [params...] | Ctor1 | (Ctor2 arg) ...)`
+/// Registers ADT constructors into the environment.
+fn eval_deftype(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    // (deftype Name ...)
+    if items.len() < 3 {
+        return Err(EvalError::Arity);
+    }
+
+    let type_name = match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+        _ => return Err(EvalError::InvalidBindingTarget),
+    };
+
+    // Skip optional type params [a b ...] and :derive [...]
+    let mut i = 2;
+    // Skip type params
+    if i < items.len()
+        && let NodeKind::Vector(_) = &items[i].kind
+    {
+        i += 1;
+    }
+    // Skip :derive clause
+    if i + 1 < items.len()
+        && let NodeKind::Atom(Atom::Keyword { ns: None, name }) = &items[i].kind
+        && name == "derive"
+    {
+        i += 2; // skip :derive and [Show Eq ...]
+    }
+
+    // Parse constructors: expect | Ctor | (Ctor arg...) ...
+    while i < items.len() {
+        // Expect a `|` separator
+        match &items[i].kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "|" => {
+                i += 1;
+            }
+            _ => {
+                // Could be a record type body — skip for now
+                break;
+            }
+        }
+
+        if i >= items.len() {
+            return Err(EvalError::Arity);
+        }
+
+        match &items[i].kind {
+            // Nullary constructor: `Red`
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+                let ctor_name = name.clone();
+                let value = Value::Adt {
+                    type_name: Rc::from(type_name.as_str()),
+                    ctor: Rc::from(ctor_name.as_str()),
+                    fields: Rc::new(vec![]),
+                };
+                env.define(ctor_name, value);
+            }
+            // N-ary constructor: `(Some a)` or `(Branch a left right)`
+            NodeKind::List(ctor_items) => {
+                if ctor_items.is_empty() {
+                    return Err(EvalError::Arity);
+                }
+                let ctor_name = match &ctor_items[0].kind {
+                    NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+                    _ => return Err(EvalError::InvalidBindingTarget),
+                };
+                let arity = ctor_items.len() - 1;
+
+                if arity == 0 {
+                    // Nullary in list form: (None)
+                    let value = Value::Adt {
+                        type_name: Rc::from(type_name.as_str()),
+                        ctor: Rc::from(ctor_name.as_str()),
+                        fields: Rc::new(vec![]),
+                    };
+                    env.define(ctor_name, value);
+                } else {
+                    // Create a constructor function
+                    let type_name_rc: Rc<str> = Rc::from(type_name.as_str());
+                    let ctor_name_rc: Rc<str> = Rc::from(ctor_name.as_str());
+                    let ctor_fn = Value::NativeClosure {
+                        name: Rc::clone(&ctor_name_rc),
+                        f: {
+                            let tn = Rc::clone(&type_name_rc);
+                            let cn = Rc::clone(&ctor_name_rc);
+                            let expected_arity = arity;
+                            Rc::new(move |args: &[Value]| {
+                                if args.len() != expected_arity {
+                                    return Err(format!(
+                                        "`{cn}` expects {expected_arity} argument(s), got {}",
+                                        args.len()
+                                    ));
+                                }
+                                Ok(Value::Adt {
+                                    type_name: Rc::clone(&tn),
+                                    ctor: Rc::clone(&cn),
+                                    fields: Rc::new(args.to_vec()),
+                                })
+                            })
+                        },
+                    };
+                    env.define(ctor_name, ctor_fn);
+                }
+            }
+            _ => return Err(EvalError::InvalidBindingTarget),
+        }
+        i += 1;
+    }
+
+    Ok(EvalReturn::Value(Value::Unit))
 }
 
 fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
@@ -876,8 +1245,14 @@ fn eval_apply<'a>(
     // bind rest if variadic
     if func.variadic {
         if let Some(rest_name) = &func.rest {
-            // collect but we don't yet model vectors; bind Unit placeholder
-            call_env.define(rest_name.clone(), Value::Unit);
+            let mut rest_values = Vec::with_capacity(provided.saturating_sub(required));
+            for arg_node in &items[required + 1..] {
+                match eval_with_loop(arg_node, env, loop_state)? {
+                    EvalReturn::Value(v) => rest_values.push(v),
+                    EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
+                }
+            }
+            call_env.define(rest_name.clone(), Value::Vec(Rc::new(rest_values)));
         }
     } else if provided != required {
         return Err(EvalError::Arity);
@@ -973,7 +1348,8 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
     if func.variadic
         && let Some(rest_name) = &func.rest
     {
-        call_env.define(rest_name.clone(), Value::Unit);
+        let rest_values: Vec<Value> = args[required..].to_vec();
+        call_env.define(rest_name.clone(), Value::Vec(Rc::new(rest_values)));
     }
 
     for req_expr in &func.requires {

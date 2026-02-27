@@ -4311,4 +4311,713 @@ mod tests {
         let result = eval_forms(r#"result"#, &env).unwrap();
         assert_eq!(result, option_some(Value::Int(42)));
     }
+
+    // -----------------------------------------------------------------------
+    // M19: Variadic rest args
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn variadic_rest_collects_extra_args() {
+        let env = crate::stdlib::standard_env();
+        let result =
+            eval_forms("(defn f [x & rest] rest) (f 1 2 3 4)", &env).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![int(2), int(3), int(4)]))
+        );
+    }
+
+    #[test]
+    fn variadic_rest_empty_when_no_extras() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(defn f [x & rest] rest) (f 1)", &env).unwrap();
+        assert_eq!(result, Value::Vec(Rc::new(vec![])));
+    }
+
+    #[test]
+    fn variadic_rest_works_with_apply_value() {
+        let env = crate::stdlib::standard_env();
+        // Use map with a variadic fn — map calls apply_value internally
+        let result = eval_forms(
+            "(defn my-list [& items] items) (my-list 10 20 30)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![int(10), int(20), int(30)]))
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // M19: Short-circuit and/or
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn and_short_circuits_on_false() {
+        let env = crate::stdlib::standard_env();
+        // (and false (panic "boom")) should return false without panicking
+        let result = eval_forms(r#"(and false (panic "boom"))"#, &env).unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn and_evaluates_all_true() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(and true true true)", &env).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn and_variadic_stops_at_first_false() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(and true false (panic "boom"))"#, &env).unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn or_short_circuits_on_true() {
+        let env = crate::stdlib::standard_env();
+        // (or true (panic "boom")) should return true without panicking
+        let result = eval_forms(r#"(or true (panic "boom"))"#, &env).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn or_evaluates_all_false() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(or false false false)", &env).unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn or_variadic_stops_at_first_true() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(or false true (panic "boom"))"#, &env).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn and_two_args_basic() {
+        let env = crate::stdlib::standard_env();
+        assert_eq!(eval_forms("(and true true)", &env).unwrap(), Value::Bool(true));
+        assert_eq!(eval_forms("(and true false)", &env).unwrap(), Value::Bool(false));
+        assert_eq!(eval_forms("(and false true)", &env).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn or_two_args_basic() {
+        let env = crate::stdlib::standard_env();
+        assert_eq!(eval_forms("(or false false)", &env).unwrap(), Value::Bool(false));
+        assert_eq!(eval_forms("(or true false)", &env).unwrap(), Value::Bool(true));
+        assert_eq!(eval_forms("(or false true)", &env).unwrap(), Value::Bool(true));
+    }
+
+    // -----------------------------------------------------------------------
+    // M19: cond form
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cond_first_true_branch() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(cond true 1 true 2)", &env).unwrap();
+        assert_eq!(result, int(1));
+    }
+
+    #[test]
+    fn cond_second_branch() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(cond false 1 true 2)", &env).unwrap();
+        assert_eq!(result, int(2));
+    }
+
+    #[test]
+    fn cond_else_branch() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(cond false 1 false 2 :else 3)", &env).unwrap();
+        assert_eq!(result, int(3));
+    }
+
+    #[test]
+    fn cond_no_match_returns_unit() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(cond false 1 false 2)", &env).unwrap();
+        assert_eq!(result, Value::Unit);
+    }
+
+    #[test]
+    fn cond_short_circuits() {
+        let env = crate::stdlib::standard_env();
+        // Second test should not be evaluated since first matches
+        let result = eval_forms(r#"(cond true 42 (panic "boom") 99)"#, &env).unwrap();
+        assert_eq!(result, int(42));
+    }
+
+    #[test]
+    fn variadic_rest_in_anonymous_fn() {
+        let env = crate::stdlib::standard_env();
+        let result =
+            eval_forms("((fn [& args] args) 5 6 7)", &env).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![int(5), int(6), int(7)]))
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // M19: match form
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn match_literal_int() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(match 42
+               1 "one"
+               42 "forty-two"
+               _ "other")"#,
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, Value::Str(Rc::from("forty-two")));
+    }
+
+    #[test]
+    fn match_literal_string() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(match "hello"
+               "world" 1
+               "hello" 2
+               _ 3)"#,
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(2));
+    }
+
+    #[test]
+    fn match_literal_bool() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match false true 1 false 2)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(2));
+    }
+
+    #[test]
+    fn match_literal_keyword() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match :ok :err 0 :ok 1 _ 2)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(1));
+    }
+
+    #[test]
+    fn match_wildcard() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match 999 _ 42)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(42));
+    }
+
+    #[test]
+    fn match_binding_var() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match 10 x (+ x 1))",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(11));
+    }
+
+    #[test]
+    fn match_constructor_some() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match (Some 5) (None) 0 (Some x) x)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(5));
+    }
+
+    #[test]
+    fn match_constructor_none() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match None (None) 0 (Some x) x)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(0));
+    }
+
+    #[test]
+    fn match_constructor_ok_err() {
+        let env = crate::stdlib::standard_env();
+        let ok_result = eval_forms(
+            "(match (Ok 42) (Ok v) v (Err e) 0)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(ok_result, int(42));
+
+        let err_result = eval_forms(
+            r#"(match (Err "bad") (Ok v) 0 (Err e) e)"#,
+            &env,
+        )
+        .unwrap();
+        assert_eq!(err_result, Value::Str(Rc::from("bad")));
+    }
+
+    #[test]
+    fn match_tuple_pattern() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match [1 2 3] [a b c] (+ a (+ b c)))",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(6));
+    }
+
+    #[test]
+    fn match_map_pattern() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match {:name \"alice\" :age 30} {:name n :age a} (str n \" is \" a))",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, Value::Str(Rc::from("alice is 30")));
+    }
+
+    #[test]
+    fn match_nested_constructor() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match (Some (Ok 7)) (Some (Ok v)) v (Some (Err e)) 0 (None) 0)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(7));
+    }
+
+    #[test]
+    fn match_no_match_errors() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match 42 1 \"one\" 2 \"two\")",
+            &env,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn match_unit_literal() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match unit unit 1 _ 2)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(1));
+    }
+
+    #[test]
+    fn match_or_pattern() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(match :b (| :a :b :c) 1 _ 2)",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(1));
+    }
+
+    // -----------------------------------------------------------------------
+    // M19: deftype
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deftype_nullary_constructors() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(deftype Color | Red | Green | Blue)", &env).unwrap();
+
+        let red = eval_forms("Red", &env).unwrap();
+        assert_eq!(
+            red,
+            Value::Adt {
+                type_name: Rc::from("Color"),
+                ctor: Rc::from("Red"),
+                fields: Rc::new(vec![]),
+            }
+        );
+
+        let green = eval_forms("Green", &env).unwrap();
+        assert_eq!(
+            green,
+            Value::Adt {
+                type_name: Rc::from("Color"),
+                ctor: Rc::from("Green"),
+                fields: Rc::new(vec![]),
+            }
+        );
+    }
+
+    #[test]
+    fn deftype_parameterized_constructors() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(deftype MyOption [a] | MyNone | (MySome a))", &env).unwrap();
+
+        let none = eval_forms("MyNone", &env).unwrap();
+        assert_eq!(
+            none,
+            Value::Adt {
+                type_name: Rc::from("MyOption"),
+                ctor: Rc::from("MyNone"),
+                fields: Rc::new(vec![]),
+            }
+        );
+
+        let some_val = eval_forms("(MySome 42)", &env).unwrap();
+        assert_eq!(
+            some_val,
+            Value::Adt {
+                type_name: Rc::from("MyOption"),
+                ctor: Rc::from("MySome"),
+                fields: Rc::new(vec![int(42)]),
+            }
+        );
+    }
+
+    #[test]
+    fn deftype_match_on_custom_adt() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(deftype Shape | Circle | (Rect w h))
+            (defn area [s]
+              (match s
+                (Circle) 3
+                (Rect w h) (* w h)))
+            (area (Rect 4 5))"#,
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, int(20));
+    }
+
+    #[test]
+    fn deftype_multi_arg_constructor() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(deftype Tree [a] | Leaf | (Branch a left right))", &env).unwrap();
+
+        let leaf = eval_forms("Leaf", &env).unwrap();
+        assert_eq!(
+            leaf,
+            Value::Adt {
+                type_name: Rc::from("Tree"),
+                ctor: Rc::from("Leaf"),
+                fields: Rc::new(vec![]),
+            }
+        );
+
+        let branch = eval_forms("(Branch 1 Leaf Leaf)", &env).unwrap();
+        assert_eq!(
+            branch,
+            Value::Adt {
+                type_name: Rc::from("Tree"),
+                ctor: Rc::from("Branch"),
+                fields: Rc::new(vec![
+                    int(1),
+                    Value::Adt {
+                        type_name: Rc::from("Tree"),
+                        ctor: Rc::from("Leaf"),
+                        fields: Rc::new(vec![]),
+                    },
+                    Value::Adt {
+                        type_name: Rc::from("Tree"),
+                        ctor: Rc::from("Leaf"),
+                        fields: Rc::new(vec![]),
+                    },
+                ]),
+            }
+        );
+    }
+
+    // ===================================================================
+    // M22 — Collections & Algorithms
+    // ===================================================================
+
+    // -- sort --
+    #[test]
+    fn sort_ints() {
+        assert_eq!(
+            eval_str("(sort [3 1 2])").unwrap(),
+            Value::Vec(Rc::new(vec![int(1), int(2), int(3)]))
+        );
+    }
+
+    #[test]
+    fn sort_strings() {
+        assert_eq!(
+            eval_str(r#"(sort ["banana" "apple" "cherry"])"#).unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Str(Rc::from("apple")),
+                Value::Str(Rc::from("banana")),
+                Value::Str(Rc::from("cherry")),
+            ]))
+        );
+    }
+
+    #[test]
+    fn sort_empty() {
+        assert_eq!(
+            eval_str("(sort [])").unwrap(),
+            Value::Vec(Rc::new(vec![]))
+        );
+    }
+
+    #[test]
+    fn sort_by_key() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(defn neg [x] (- 0 x))\n(sort-by neg [1 3 2])",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![int(3), int(2), int(1)]))
+        );
+    }
+
+    // -- reverse --
+    #[test]
+    fn reverse_vec() {
+        assert_eq!(
+            eval_str("(reverse [1 2 3])").unwrap(),
+            Value::Vec(Rc::new(vec![int(3), int(2), int(1)]))
+        );
+    }
+
+    #[test]
+    fn reverse_empty() {
+        assert_eq!(
+            eval_str("(reverse [])").unwrap(),
+            Value::Vec(Rc::new(vec![]))
+        );
+    }
+
+    // -- range --
+    #[test]
+    fn range_one_arg() {
+        assert_eq!(
+            eval_str("(range 5)").unwrap(),
+            Value::Vec(Rc::new(vec![int(0), int(1), int(2), int(3), int(4)]))
+        );
+    }
+
+    #[test]
+    fn range_two_args() {
+        assert_eq!(
+            eval_str("(range 2 5)").unwrap(),
+            Value::Vec(Rc::new(vec![int(2), int(3), int(4)]))
+        );
+    }
+
+    #[test]
+    fn range_three_args() {
+        assert_eq!(
+            eval_str("(range 0 10 3)").unwrap(),
+            Value::Vec(Rc::new(vec![int(0), int(3), int(6), int(9)]))
+        );
+    }
+
+    #[test]
+    fn range_zero() {
+        assert_eq!(
+            eval_str("(range 0)").unwrap(),
+            Value::Vec(Rc::new(vec![]))
+        );
+    }
+
+    // -- flat-map --
+    #[test]
+    fn flat_map_basic() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(defn dup [x] [x x])\n(flat-map dup [1 2 3])",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![int(1), int(1), int(2), int(2), int(3), int(3)]))
+        );
+    }
+
+    // -- group-by --
+    #[test]
+    fn group_by_basic() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(defn even? [x] (= (mod x 2) 0))\n(group-by even? [1 2 3 4 5])",
+            &env,
+        )
+        .unwrap();
+        // Result is a Map with keys false/true
+        match &result {
+            Value::Map(pairs) => {
+                assert_eq!(pairs.len(), 2);
+                // First group should be odd numbers (false), second even (true)
+                let (k0, v0) = &pairs[0];
+                assert_eq!(*k0, Value::Bool(false));
+                assert_eq!(
+                    *v0,
+                    Value::Vec(Rc::new(vec![int(1), int(3), int(5)]))
+                );
+                let (k1, v1) = &pairs[1];
+                assert_eq!(*k1, Value::Bool(true));
+                assert_eq!(
+                    *v1,
+                    Value::Vec(Rc::new(vec![int(2), int(4)]))
+                );
+            }
+            other => panic!("expected Map, got {other}"),
+        }
+    }
+
+    // -- zip --
+    #[test]
+    fn zip_basic() {
+        assert_eq!(
+            eval_str(r#"(zip [1 2 3] ["a" "b" "c"])"#).unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Vec(Rc::new(vec![int(1), Value::Str(Rc::from("a"))])),
+                Value::Vec(Rc::new(vec![int(2), Value::Str(Rc::from("b"))])),
+                Value::Vec(Rc::new(vec![int(3), Value::Str(Rc::from("c"))])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn zip_unequal_length() {
+        assert_eq!(
+            eval_str("(zip [1 2] [10 20 30])").unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Vec(Rc::new(vec![int(1), int(10)])),
+                Value::Vec(Rc::new(vec![int(2), int(20)])),
+            ]))
+        );
+    }
+
+    // -- take / drop --
+    #[test]
+    fn take_basic() {
+        assert_eq!(
+            eval_str("(take 2 [1 2 3 4])").unwrap(),
+            Value::Vec(Rc::new(vec![int(1), int(2)]))
+        );
+    }
+
+    #[test]
+    fn drop_basic() {
+        assert_eq!(
+            eval_str("(drop 2 [1 2 3 4])").unwrap(),
+            Value::Vec(Rc::new(vec![int(3), int(4)]))
+        );
+    }
+
+    // -- take-while / drop-while --
+    #[test]
+    fn take_while_basic() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(defn small? [x] (< x 3))\n(take-while small? [1 2 3 4 5])",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, Value::Vec(Rc::new(vec![int(1), int(2)])));
+    }
+
+    #[test]
+    fn drop_while_basic() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(defn small? [x] (< x 3))\n(drop-while small? [1 2 3 4 5])",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![int(3), int(4), int(5)]))
+        );
+    }
+
+    // -- bitwise operations --
+    #[test]
+    fn bit_and_basic() {
+        assert_eq!(eval_str("(bit-and 12 10)").unwrap(), int(8));
+    }
+
+    #[test]
+    fn bit_or_basic() {
+        assert_eq!(eval_str("(bit-or 12 10)").unwrap(), int(14));
+    }
+
+    #[test]
+    fn bit_xor_basic() {
+        assert_eq!(eval_str("(bit-xor 12 10)").unwrap(), int(6));
+    }
+
+    #[test]
+    fn bit_not_basic() {
+        assert_eq!(eval_str("(bit-not 0)").unwrap(), int(-1));
+    }
+
+    #[test]
+    fn bit_shift_left_basic() {
+        assert_eq!(eval_str("(bit-shift-left 1 4)").unwrap(), int(16));
+    }
+
+    #[test]
+    fn bit_shift_right_basic() {
+        assert_eq!(eval_str("(bit-shift-right 16 2)").unwrap(), int(4));
+    }
+
+    // -- str/format --
+    #[test]
+    fn str_format_basic() {
+        assert_eq!(
+            eval_str(r#"(str/format "Hello, {}!" "world")"#).unwrap(),
+            Value::Str(Rc::from("Hello, world!"))
+        );
+    }
+
+    #[test]
+    fn str_format_multiple() {
+        assert_eq!(
+            eval_str(r#"(str/format "{} + {} = {}" 1 2 3)"#).unwrap(),
+            Value::Str(Rc::from("1 + 2 = 3"))
+        );
+    }
+
+    #[test]
+    fn str_format_no_placeholders() {
+        assert_eq!(
+            eval_str(r#"(str/format "no placeholders")"#).unwrap(),
+            Value::Str(Rc::from("no placeholders"))
+        );
+    }
 }

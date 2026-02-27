@@ -1,22 +1,7 @@
-# Stage 0 Complete
+# Current: M22 — Collections & Algorithms
 
-All milestones (M0–M18) are complete. The Stage 0 bootstrap compiler is finished.
+**Goal:** Collections are fast enough and the stdlib has the operations real programs need.
 
-**What was built:**
-- Lexer + reader (nexl-reader)
-- Tree-walk evaluator (nexl-eval) with standard library (nexl-stdlib)
-- Bidirectional type inference + effect row inference (nexl-infer)
-- IR lowering with optimization passes (nexl-ir)
-- WASM code generation (nexl-wasm) with GC backend option
-- Native code generation (nexl-native)
-- Macro system (nexl-macros)
-- Language server (nexl-lsp)
-- Package manager (nexl-pkg) with content-addressed definition store
-- Documentation generator (nexl-doc)
-- CLI with build, run, repl, check, sandbox, audit, doc, lsp, pkg commands
-- Structured REPL protocol for AI agent / IDE integration
-- Kernel subset documented for Stage 1 self-hosting
+Part of Stage 1 (M19–M22): Production-Capable Evaluator.
 
-**Next:** Write the Stage 1 compiler in the Nexl kernel subset.
-See `docs/kernel-subset.md` for the kernel subset specification.
-See `examples/kernel-bootstrap.nxl` for the bootstrap proof-of-concept.
+See `docs/todo-m22.md` for the task checklist.

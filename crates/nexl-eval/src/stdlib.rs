@@ -42,10 +42,8 @@ pub fn standard_env() -> Rc<Env> {
     env.define("<=", native("<=", le));
     env.define(">=", native(">=", ge));
 
-    // Logic
+    // Logic (and/or are special forms for short-circuit evaluation)
     env.define("not", native("not", not));
-    env.define("and", native("and", and));
-    env.define("or", native("or", or));
 
     // String
     env.define("str", native("str", str_fn));
@@ -69,6 +67,25 @@ pub fn standard_env() -> Rc<Env> {
     env.define("map", native("map", map_fn));
     env.define("filter", native("filter", filter_fn));
     env.define("reduce", native("reduce", reduce_fn));
+    env.define("sort", native("sort", sort_fn));
+    env.define("sort-by", native("sort-by", sort_by_fn));
+    env.define("reverse", native("reverse", reverse_fn));
+    env.define("range", native("range", range_fn));
+    env.define("flat-map", native("flat-map", flat_map_fn));
+    env.define("group-by", native("group-by", group_by_fn));
+    env.define("zip", native("zip", zip_fn));
+    env.define("take", native("take", take_fn));
+    env.define("drop", native("drop", drop_fn));
+    env.define("take-while", native("take-while", take_while_fn));
+    env.define("drop-while", native("drop-while", drop_while_fn));
+
+    // Bitwise operations
+    env.define("bit-and", native("bit-and", bit_and));
+    env.define("bit-or", native("bit-or", bit_or));
+    env.define("bit-xor", native("bit-xor", bit_xor));
+    env.define("bit-not", native("bit-not", bit_not));
+    env.define("bit-shift-left", native("bit-shift-left", bit_shift_left));
+    env.define("bit-shift-right", native("bit-shift-right", bit_shift_right));
 
     // Register §11.1 stdlib modules as qualified module aliases
     register_stdlib_modules(&env);
@@ -388,25 +405,6 @@ fn not(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-/// `(and a b)` — strict (eager) boolean AND.
-fn and(args: &[Value]) -> Result<Value, String> {
-    let (a, b) = two_args("and", args)?;
-    match (a, b) {
-        (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(*x && *y)),
-        (Value::Bool(_), other) => Err(type_mismatch("and", "Bool", other)),
-        (other, _) => Err(type_mismatch("and", "Bool", other)),
-    }
-}
-
-/// `(or a b)` — strict (eager) boolean OR.
-fn or(args: &[Value]) -> Result<Value, String> {
-    let (a, b) = two_args("or", args)?;
-    match (a, b) {
-        (Value::Bool(x), Value::Bool(y)) => Ok(Value::Bool(*x || *y)),
-        (Value::Bool(_), other) => Err(type_mismatch("or", "Bool", other)),
-        (other, _) => Err(type_mismatch("or", "Bool", other)),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // String
@@ -878,6 +876,333 @@ fn reduce_fn(args: &[Value]) -> Result<Value, String> {
             other => Err(format!("`reduce` expected Option constructor, got {other}")),
         },
         other => Err(type_mismatch("reduce", "Vec, Map, Set, or Option", other)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sort / Reverse
+// ---------------------------------------------------------------------------
+
+/// `(sort coll)` — stable sort a Vec using default comparison.
+fn sort_fn(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("sort", args)?;
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("sort", "Vec", coll));
+    };
+    let mut sorted: Vec<Value> = items.as_ref().clone();
+    let mut err: Option<String> = None;
+    sorted.sort_by(|a, b| match compare_values(a, b) {
+        Ok(ord) => ord,
+        Err(e) => {
+            if err.is_none() {
+                err = Some(e);
+            }
+            std::cmp::Ordering::Equal
+        }
+    });
+    if let Some(e) = err {
+        return Err(e);
+    }
+    Ok(Value::Vec(Rc::new(sorted)))
+}
+
+/// `(sort-by f coll)` — stable sort by key function.
+fn sort_by_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, coll) = two_args("sort-by", args)?;
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("sort-by", "Vec", coll));
+    };
+    // Pre-compute keys
+    let mut keyed: Vec<(Value, Value)> = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        let key = call1(func, item.clone())?;
+        keyed.push((key, item.clone()));
+    }
+    let mut err: Option<String> = None;
+    keyed.sort_by(|(ka, _), (kb, _)| match compare_values(ka, kb) {
+        Ok(ord) => ord,
+        Err(e) => {
+            if err.is_none() {
+                err = Some(e);
+            }
+            std::cmp::Ordering::Equal
+        }
+    });
+    if let Some(e) = err {
+        return Err(e);
+    }
+    Ok(Value::Vec(Rc::new(
+        keyed.into_iter().map(|(_, v)| v).collect(),
+    )))
+}
+
+/// Compare two values for ordering. Only works for Int, Float, Str.
+fn compare_values(a: &Value, b: &Value) -> Result<std::cmp::Ordering, String> {
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => Ok(x.cmp(y)),
+        (Value::Float(x), Value::Float(y)) => Ok(x.total_cmp(y)),
+        (Value::Str(x), Value::Str(y)) => Ok(x.cmp(y)),
+        _ => Err(format!(
+            "`sort` cannot compare {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
+    }
+}
+
+/// `(reverse coll)` — reverse a Vec.
+fn reverse_fn(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("reverse", args)?;
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("reverse", "Vec", coll));
+    };
+    let mut reversed: Vec<Value> = items.as_ref().clone();
+    reversed.reverse();
+    Ok(Value::Vec(Rc::new(reversed)))
+}
+
+// ---------------------------------------------------------------------------
+// Range
+// ---------------------------------------------------------------------------
+
+/// `(range n)`, `(range start end)`, or `(range start end step)`.
+fn range_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Int(n)] => {
+            let items: Vec<Value> = (0..*n).map(Value::Int).collect();
+            Ok(Value::Vec(Rc::new(items)))
+        }
+        [Value::Int(start), Value::Int(end)] => {
+            let items: Vec<Value> = (*start..*end).map(Value::Int).collect();
+            Ok(Value::Vec(Rc::new(items)))
+        }
+        [Value::Int(start), Value::Int(end), Value::Int(step)] => {
+            if *step == 0 {
+                return Err("`range` step cannot be zero".into());
+            }
+            let mut items = Vec::new();
+            let mut i = *start;
+            if *step > 0 {
+                while i < *end {
+                    items.push(Value::Int(i));
+                    i += step;
+                }
+            } else {
+                while i > *end {
+                    items.push(Value::Int(i));
+                    i += step;
+                }
+            }
+            Ok(Value::Vec(Rc::new(items)))
+        }
+        _ => Err("`range` requires 1, 2, or 3 Int arguments".into()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Flat-map, Group-by, Zip
+// ---------------------------------------------------------------------------
+
+/// `(flat-map f coll)` — map then flatten one level.
+fn flat_map_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, coll) = two_args("flat-map", args)?;
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("flat-map", "Vec", coll));
+    };
+    let mut result = Vec::new();
+    for item in items.iter() {
+        let mapped = call1(func, item.clone())?;
+        match mapped {
+            Value::Vec(inner) => result.extend(inner.iter().cloned()),
+            other => result.push(other),
+        }
+    }
+    Ok(Value::Vec(Rc::new(result)))
+}
+
+/// `(group-by f coll)` — group elements by key function, returns Map.
+fn group_by_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, coll) = two_args("group-by", args)?;
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("group-by", "Vec", coll));
+    };
+    // Use a Vec of pairs to preserve insertion order.
+    let mut groups: Vec<(Value, Vec<Value>)> = Vec::new();
+    for item in items.iter() {
+        let key = call1(func, item.clone())?;
+        if let Some(group) = groups.iter_mut().find(|(k, _)| k == &key) {
+            group.1.push(item.clone());
+        } else {
+            groups.push((key, vec![item.clone()]));
+        }
+    }
+    let pairs: Vec<(Value, Value)> = groups
+        .into_iter()
+        .map(|(k, vs)| (k, Value::Vec(Rc::new(vs))))
+        .collect();
+    Ok(Value::Map(Rc::new(pairs)))
+}
+
+/// `(zip a b)` — zip two Vecs into a Vec of two-element Vecs.
+fn zip_fn(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("zip", args)?;
+    let Value::Vec(va) = a else {
+        return Err(type_mismatch("zip", "Vec", a));
+    };
+    let Value::Vec(vb) = b else {
+        return Err(type_mismatch("zip", "Vec", b));
+    };
+    let result: Vec<Value> = va
+        .iter()
+        .zip(vb.iter())
+        .map(|(x, y)| Value::Vec(Rc::new(vec![x.clone(), y.clone()])))
+        .collect();
+    Ok(Value::Vec(Rc::new(result)))
+}
+
+// ---------------------------------------------------------------------------
+// Take / Drop
+// ---------------------------------------------------------------------------
+
+/// `(take n coll)` — take first n elements.
+fn take_fn(args: &[Value]) -> Result<Value, String> {
+    let (n, coll) = two_args("take", args)?;
+    let Value::Int(n) = n else {
+        return Err(type_mismatch("take", "Int", n));
+    };
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("take", "Vec", coll));
+    };
+    let n = (*n).max(0) as usize;
+    Ok(Value::Vec(Rc::new(items.iter().take(n).cloned().collect())))
+}
+
+/// `(drop n coll)` — drop first n elements.
+fn drop_fn(args: &[Value]) -> Result<Value, String> {
+    let (n, coll) = two_args("drop", args)?;
+    let Value::Int(n) = n else {
+        return Err(type_mismatch("drop", "Int", n));
+    };
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("drop", "Vec", coll));
+    };
+    let n = (*n).max(0) as usize;
+    Ok(Value::Vec(Rc::new(items.iter().skip(n).cloned().collect())))
+}
+
+/// `(take-while pred coll)` — take while predicate is true.
+fn take_while_fn(args: &[Value]) -> Result<Value, String> {
+    let (pred, coll) = two_args("take-while", args)?;
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("take-while", "Vec", coll));
+    };
+    let mut result = Vec::new();
+    for item in items.iter() {
+        let keep = expect_bool("take-while", call1(pred, item.clone())?)?;
+        if !keep {
+            break;
+        }
+        result.push(item.clone());
+    }
+    Ok(Value::Vec(Rc::new(result)))
+}
+
+/// `(drop-while pred coll)` — drop while predicate is true.
+fn drop_while_fn(args: &[Value]) -> Result<Value, String> {
+    let (pred, coll) = two_args("drop-while", args)?;
+    let Value::Vec(items) = coll else {
+        return Err(type_mismatch("drop-while", "Vec", coll));
+    };
+    let mut dropping = true;
+    let mut result = Vec::new();
+    for item in items.iter() {
+        if dropping {
+            let drop = expect_bool("drop-while", call1(pred, item.clone())?)?;
+            if drop {
+                continue;
+            }
+            dropping = false;
+        }
+        result.push(item.clone());
+    }
+    Ok(Value::Vec(Rc::new(result)))
+}
+
+// ---------------------------------------------------------------------------
+// Bitwise operations
+// ---------------------------------------------------------------------------
+
+/// `(bit-and a b)` — bitwise AND.
+fn bit_and(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("bit-and", args)?;
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x & y)),
+        _ => Err(format!(
+            "`bit-and` requires two Int arguments, got {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
+    }
+}
+
+/// `(bit-or a b)` — bitwise OR.
+fn bit_or(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("bit-or", args)?;
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x | y)),
+        _ => Err(format!(
+            "`bit-or` requires two Int arguments, got {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
+    }
+}
+
+/// `(bit-xor a b)` — bitwise XOR.
+fn bit_xor(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("bit-xor", args)?;
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x ^ y)),
+        _ => Err(format!(
+            "`bit-xor` requires two Int arguments, got {} and {}",
+            a.type_name(),
+            b.type_name()
+        )),
+    }
+}
+
+/// `(bit-not x)` — bitwise NOT.
+fn bit_not(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("bit-not", args)?;
+    match v {
+        Value::Int(x) => Ok(Value::Int(!x)),
+        _ => Err(type_mismatch("bit-not", "Int", v)),
+    }
+}
+
+/// `(bit-shift-left x n)` — shift left by n bits.
+fn bit_shift_left(args: &[Value]) -> Result<Value, String> {
+    let (x, n) = two_args("bit-shift-left", args)?;
+    match (x, n) {
+        (Value::Int(x), Value::Int(n)) => Ok(Value::Int(x << n)),
+        _ => Err(format!(
+            "`bit-shift-left` requires two Int arguments, got {} and {}",
+            x.type_name(),
+            n.type_name()
+        )),
+    }
+}
+
+/// `(bit-shift-right x n)` — arithmetic shift right by n bits.
+fn bit_shift_right(args: &[Value]) -> Result<Value, String> {
+    let (x, n) = two_args("bit-shift-right", args)?;
+    match (x, n) {
+        (Value::Int(x), Value::Int(n)) => Ok(Value::Int(x >> n)),
+        _ => Err(format!(
+            "`bit-shift-right` requires two Int arguments, got {} and {}",
+            x.type_name(),
+            n.type_name()
+        )),
     }
 }
 

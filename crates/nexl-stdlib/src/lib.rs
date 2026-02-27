@@ -14,6 +14,7 @@ pub mod log;
 pub mod math;
 pub mod net;
 pub mod str;
+pub mod sys;
 pub mod test;
 pub mod time;
 
@@ -41,6 +42,7 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("test", test::entries()),
         ("net", net::entries()),
         ("async", async_mod::entries()),
+        ("sys", sys::entries()),
     ]
 }
 
@@ -77,7 +79,7 @@ mod tests {
             names,
             vec![
                 "core", "str", "math", "conv", "io", "json", "time", "crypto", "log", "test",
-                "net", "async"
+                "net", "async", "sys"
             ]
         );
     }

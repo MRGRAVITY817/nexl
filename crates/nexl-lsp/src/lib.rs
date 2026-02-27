@@ -61,6 +61,14 @@ fn type_check_diagnostics(nodes: &[Node], source: &str) -> Vec<Diagnostic> {
     let mut env = Env::new();
     let mut state = InferState::new();
     for node in nodes {
+        // Skip module infrastructure and type definition forms — they are
+        // structural declarations, not expressions the type checker handles.
+        if list_head_is(node, "module")
+            || list_head_is(node, "import")
+            || list_head_is(node, "deftype")
+        {
+            continue;
+        }
         let result = if list_head_is(node, "def") {
             match nexl_infer::infer_def(node, &env, &mut state) {
                 Ok((_name, _ty, new_env)) => {
@@ -301,8 +309,8 @@ fn stdlib_doc(name: &str) -> Option<&'static str> {
         ">=" => "`(>= a b)` — Greater-than-or-equal on Int or Float.",
         // ── logic ───────────────────────────────────────────────────
         "not" => "`(not x)` — Boolean negation.",
-        "and" => "`(and a b)` — Strict (eager) boolean AND.",
-        "or" => "`(or a b)` — Strict (eager) boolean OR.",
+        "and" => "`(and a b ...)` — Short-circuit boolean AND. Stops at first falsy.",
+        "or" => "`(or a b ...)` — Short-circuit boolean OR. Stops at first truthy.",
         // ── string / collection ─────────────────────────────────────
         "str" => "`(str args...)` — Convert each argument to its display string and concatenate.",
         "count" => "`(count coll)` — Number of elements in a collection or string.",
@@ -326,6 +334,24 @@ fn stdlib_doc(name: &str) -> Option<&'static str> {
         "map" => "`(map f coll)` — Apply f to each element, return new collection.",
         "filter" => "`(filter pred coll)` — Keep elements where pred returns true.",
         "reduce" => "`(reduce f init coll)` — Reduce collection with accumulator.",
+        "sort" => "`(sort vec)` — Stable sort using default comparison (Int, Float, Str).",
+        "sort-by" => "`(sort-by f vec)` — Stable sort by key function.",
+        "reverse" => "`(reverse vec)` — Reverse a vector.",
+        "range" => "`(range n)` or `(range start end)` or `(range start end step)` — Generate integer range.",
+        "flat-map" => "`(flat-map f vec)` — Map then flatten one level.",
+        "group-by" => "`(group-by f vec)` — Group elements by key function, returns Map.",
+        "zip" => "`(zip a b)` — Zip two Vecs into a Vec of 2-element Vecs.",
+        "take" => "`(take n vec)` — Take first n elements.",
+        "drop" => "`(drop n vec)` — Drop first n elements.",
+        "take-while" => "`(take-while pred vec)` — Take while predicate is true.",
+        "drop-while" => "`(drop-while pred vec)` — Drop while predicate is true.",
+        // ── bitwise ─────────────────────────────────────────────────
+        "bit-and" => "`(bit-and a b)` — Bitwise AND of two integers.",
+        "bit-or" => "`(bit-or a b)` — Bitwise OR of two integers.",
+        "bit-xor" => "`(bit-xor a b)` — Bitwise XOR of two integers.",
+        "bit-not" => "`(bit-not x)` — Bitwise NOT of an integer.",
+        "bit-shift-left" => "`(bit-shift-left x n)` — Shift left by n bits.",
+        "bit-shift-right" => "`(bit-shift-right x n)` — Arithmetic shift right by n bits.",
         // ── option/result constructors ──────────────────────────────
         "Some" => "`(Some val)` — Wrap a value in an Option.",
         "None" => "`None` — The absent Option value.",
@@ -347,6 +373,7 @@ fn stdlib_doc(name: &str) -> Option<&'static str> {
         "str/graphemes" => "`(str/graphemes s)` — Return Vec of Str (grapheme clusters).",
         "str/trim-start" => "`(str/trim-start s)` — Remove leading whitespace.",
         "str/trim-end" => "`(str/trim-end s)` — Remove trailing whitespace.",
+        "str/format" => "`(str/format template args...)` — Positional `{}` placeholder formatting.",
         // ── math module ─────────────────────────────────────────────
         "math/abs" => "`(math/abs x)` — Absolute value (works for Int and Float).",
         "math/floor" => "`(math/floor x)` — Floor (returns Float).",

@@ -17,9 +17,13 @@ pub fn entries() -> Vec<StdlibEntry> {
             io_println as fn(&[Value]) -> Result<Value, String>,
         ),
         ("print", io_print),
+        ("read-line", read_line),
         ("read-file", read_file),
         ("write-file", write_file),
         ("path-join", path_join),
+        ("file-exists?", file_exists),
+        ("read-dir", read_dir),
+        ("delete-file", delete_file),
     ]
 }
 
@@ -108,6 +112,91 @@ fn write_file(args: &[Value]) -> Result<Value, String> {
             ctor: Rc::from("Err"),
             fields: Rc::new(vec![Value::Str(Rc::from(e.to_string().as_str()))]),
         }),
+    }
+}
+
+/// `(io/read-line)` — read one line from stdin. Returns (Result Str Str).
+fn read_line(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::Console)?;
+    if !args.is_empty() {
+        return Err(format!(
+            "`io/read-line` requires 0 arguments, got {}",
+            args.len()
+        ));
+    }
+    let mut line = String::new();
+    match std::io::stdin().read_line(&mut line) {
+        Ok(0) => Ok(result_err("eof")),
+        Ok(_) => {
+            // Strip trailing newline
+            if line.ends_with('\n') {
+                line.pop();
+                if line.ends_with('\r') {
+                    line.pop();
+                }
+            }
+            Ok(result_ok(Value::Str(Rc::from(line.as_str()))))
+        }
+        Err(e) => Ok(result_err(&e.to_string())),
+    }
+}
+
+/// `(io/file-exists? path)` — check if path exists. Returns Bool.
+fn file_exists(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::FileSystem)?;
+    let v = one_arg("file-exists?", args)?;
+    let path = expect_str("file-exists?", v)?;
+    Ok(Value::Bool(std::path::Path::new(path.as_ref()).exists()))
+}
+
+/// `(io/read-dir path)` — list directory contents. Returns (Result (Vec Str) Str).
+fn read_dir(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::FileSystem)?;
+    let v = one_arg("read-dir", args)?;
+    let path = expect_str("read-dir", v)?;
+    match std::fs::read_dir(path.as_ref()) {
+        Ok(entries) => {
+            let mut names = Vec::new();
+            for entry in entries {
+                match entry {
+                    Ok(e) => names.push(Value::Str(Rc::from(
+                        e.file_name().to_string_lossy().as_ref(),
+                    ))),
+                    Err(e) => return Ok(result_err(&e.to_string())),
+                }
+            }
+            Ok(result_ok(Value::Vec(Rc::new(names))))
+        }
+        Err(e) => Ok(result_err(&e.to_string())),
+    }
+}
+
+/// `(io/delete-file path)` — delete a file. Returns (Result Unit Str).
+fn delete_file(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::FileSystem)?;
+    let v = one_arg("delete-file", args)?;
+    let path = expect_str("delete-file", v)?;
+    match std::fs::remove_file(path.as_ref()) {
+        Ok(()) => Ok(result_ok(Value::Unit)),
+        Err(e) => Ok(result_err(&e.to_string())),
+    }
+}
+
+/// Helper: create (Ok value) ADT.
+fn result_ok(value: Value) -> Value {
+    Value::Adt {
+        type_name: Rc::from("Result"),
+        ctor: Rc::from("Ok"),
+        fields: Rc::new(vec![value]),
+    }
+}
+
+/// Helper: create (Err msg) ADT.
+fn result_err(msg: &str) -> Value {
+    Value::Adt {
+        type_name: Rc::from("Result"),
+        ctor: Rc::from("Err"),
+        fields: Rc::new(vec![Value::Str(Rc::from(msg))]),
     }
 }
 

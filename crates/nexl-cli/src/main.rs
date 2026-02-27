@@ -15,7 +15,7 @@ use nexl_pkg::{
     serialize_manifest,
 };
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 #[derive(Debug, Parser, PartialEq, Eq)]
@@ -45,6 +45,9 @@ enum Command {
     Run {
         #[arg(value_name = "FILE")]
         input: PathBuf,
+        /// Arguments to pass to the program via sys/args
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
     },
     Repl {
         /// Use structured JSON protocol mode (§14.3) instead of interactive REPL.
@@ -152,7 +155,8 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Run { input } => {
+        Command::Run { input, args } => {
+            nexl_runtime::sys::set_program_args(args);
             if let Err(message) = command_run(input) {
                 print_error(&message);
                 process::exit(1);
@@ -323,6 +327,117 @@ fn command_build(
     Ok(())
 }
 
+/// Walk up from `start` looking for a `project.nexl` file.
+/// Returns the directory containing it, or `None`.
+fn find_project_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if dir.join("project.nexl").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Check if the first form in parsed nodes is a `(module ...)` declaration.
+fn has_module_decl(nodes: &[Node]) -> bool {
+    matches!(
+        nodes.first(),
+        Some(Node {
+            kind: NodeKind::List(items),
+            ..
+        }) if matches!(
+            items.first(),
+            Some(Node {
+                kind: NodeKind::Atom(Atom::Symbol { ns: None, name }),
+                ..
+            }) if name == "module"
+        )
+    )
+}
+
+/// Discover and load all modules transitively starting from the entry file.
+///
+/// Returns the loaded `ModuleSource` values ready for `eval_modules`.
+fn discover_and_load_modules(
+    entry_path: &Path,
+) -> Result<Vec<nexl_eval::modules::ModuleSource>, String> {
+    use std::collections::{HashSet, VecDeque};
+
+    let entry_path = entry_path
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve {:?}: {e}", entry_path))?;
+
+    // Find project root and read manifest for prefix
+    let project_root = find_project_root(&entry_path)
+        .ok_or("no project.nexl found; multi-file modules require a project manifest")?;
+
+    let manifest_source = std::fs::read_to_string(project_root.join("project.nexl"))
+        .map_err(|e| format!("cannot read project.nexl: {e}"))?;
+    let manifest = parse_manifest(&manifest_source)
+        .map_err(|e| format!("invalid project.nexl: {e}"))?;
+    let prefix = &manifest.package.prefix;
+
+    // Parse entry file
+    let entry_source = std::fs::read_to_string(&entry_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", entry_path))?;
+    let entry_nodes = nexl_reader::read(&entry_source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| {
+            format_reader_report(*diag, &entry_source, &entry_path.display().to_string())
+        })?;
+    let entry_module = nexl_eval::modules::parse_module_source(&entry_nodes)
+        .map_err(|e| format!("module parse error: {e}"))?;
+
+    // BFS to discover all imported modules
+    let mut loaded: Vec<nexl_eval::modules::ModuleSource> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<nexl_eval::modules::ModuleSource> = VecDeque::new();
+
+    seen.insert(entry_module.decl.name.clone());
+    queue.push_back(entry_module);
+
+    while let Some(module) = queue.pop_front() {
+        for import in &module.imports {
+            if seen.contains(&import.module_path) {
+                continue;
+            }
+            seen.insert(import.module_path.clone());
+
+            let rel_path =
+                nexl_modules::module_name_to_path(&import.module_path, prefix).map_err(|e| {
+                    format!(
+                        "cannot resolve module `{}`: {e}",
+                        import.module_path
+                    )
+                })?;
+            let abs_path = project_root.join(&rel_path);
+
+            let source = std::fs::read_to_string(&abs_path).map_err(|e| {
+                format!(
+                    "cannot read module `{}` at {:?}: {e}",
+                    import.module_path, abs_path
+                )
+            })?;
+            let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
+                format_reader_report(*diag, &source, &abs_path.display().to_string())
+            })?;
+            let dep_module = nexl_eval::modules::parse_module_source(&nodes)
+                .map_err(|e| format!("module parse error in `{}`: {e}", import.module_path))?;
+
+            queue.push_back(dep_module);
+        }
+        loaded.push(module);
+    }
+
+    Ok(loaded)
+}
+
 fn command_run(input_path: PathBuf) -> Result<(), String> {
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
@@ -330,6 +445,14 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
     let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
         .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
 
+    if has_module_decl(&nodes) {
+        // Multi-file module mode
+        let modules = discover_and_load_modules(&input_path)?;
+        nexl_eval::modules::eval_modules(modules).map_err(|e| format!("eval error: {e}"))?;
+        return Ok(());
+    }
+
+    // Single-file fallback
     let env = nexl_eval::stdlib::standard_env();
     for node in &nodes {
         nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
@@ -1146,6 +1269,7 @@ mod tests {
             cli.command,
             Command::Run {
                 input: PathBuf::from("main.nexl"),
+                args: vec![],
             }
         );
     }
@@ -1671,6 +1795,179 @@ mod tests {
         assert!(
             last_result.is_some(),
             "kernel-bootstrap should produce a result"
+        );
+    }
+
+    // --- M21: Multi-file module loading tests ---
+
+    #[test]
+    fn find_project_root_finds_manifest() {
+        let root = write_temp_dir("proj_root");
+        let sub = root.join("src").join("app");
+        std::fs::create_dir_all(&sub).expect("create subdirs");
+        std::fs::write(
+            root.join("project.nexl"),
+            "(project :name \"demo\" :version \"0.1.0\" :prefix \"demo\")",
+        )
+        .expect("write manifest");
+
+        let found = find_project_root(&sub);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(found, Some(root));
+    }
+
+    #[test]
+    fn find_project_root_none_when_missing() {
+        let dir = write_temp_dir("no_manifest");
+        let found = find_project_root(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        // The temp dir has no project.nexl anywhere up the tree (well, it might
+        // find one in the real filesystem, but /tmp shouldn't have one).
+        // We just verify the function doesn't panic and returns a path or None.
+        // In a controlled env without project.nexl in /tmp, this is None.
+        assert!(found.is_none(), "expected None in temp dir without manifest");
+    }
+
+    #[test]
+    fn has_module_decl_true() {
+        let nodes = nexl_reader::read(
+            "(module demo :exports [f])\n(defn f [x] x)",
+            meta::FileId::SYNTHETIC,
+        )
+        .expect("parse");
+        assert!(has_module_decl(&nodes));
+    }
+
+    #[test]
+    fn has_module_decl_false() {
+        let nodes =
+            nexl_reader::read("(def x 1)\n(+ x 2)", meta::FileId::SYNTHETIC).expect("parse");
+        assert!(!has_module_decl(&nodes));
+    }
+
+    #[test]
+    fn discover_modules_loads_transitive_deps() {
+        // Create a project structure:
+        // root/project.nexl
+        // root/demo/app.nxl     — imports demo.util
+        // root/demo/util.nxl    — imports demo.math
+        // root/demo/math.nxl    — no imports
+        let root = write_temp_dir("discover");
+        let demo = root.join("demo");
+        std::fs::create_dir_all(&demo).expect("create demo dir");
+        std::fs::write(
+            root.join("project.nexl"),
+            "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            demo.join("app.nxl"),
+            "(module demo.app :exports [main])\n(import demo.util :refer [add1])\n(defn main [] (add1 41))",
+        )
+        .expect("write app");
+        std::fs::write(
+            demo.join("util.nxl"),
+            "(module demo.util :exports [add1])\n(import demo.math :refer [inc])\n(defn add1 [x] (inc x))",
+        )
+        .expect("write util");
+        std::fs::write(
+            demo.join("math.nxl"),
+            "(module demo.math :exports [inc])\n(defn inc [x] (+ x 1))",
+        )
+        .expect("write math");
+
+        let entry = demo.join("app.nxl");
+        let modules = discover_and_load_modules(&entry).expect("discover");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let names: Vec<&str> = modules.iter().map(|m| m.decl.name.as_str()).collect();
+        assert!(names.contains(&"demo.app"), "should contain app: {names:?}");
+        assert!(
+            names.contains(&"demo.util"),
+            "should contain util: {names:?}"
+        );
+        assert!(
+            names.contains(&"demo.math"),
+            "should contain math: {names:?}"
+        );
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn discover_modules_circular_error() {
+        let root = write_temp_dir("circular");
+        let demo = root.join("demo");
+        std::fs::create_dir_all(&demo).expect("create demo dir");
+        std::fs::write(
+            root.join("project.nexl"),
+            "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            demo.join("a.nxl"),
+            "(module demo.a :exports [x])\n(import demo.b :refer [y])\n(def x 1)",
+        )
+        .expect("write a");
+        std::fs::write(
+            demo.join("b.nxl"),
+            "(module demo.b :exports [y])\n(import demo.a :refer [x])\n(def y 2)",
+        )
+        .expect("write b");
+
+        let entry = demo.join("a.nxl");
+        let modules = discover_and_load_modules(&entry).expect("discover should succeed");
+        // eval_modules should detect the cycle
+        let result = nexl_eval::modules::eval_modules(modules);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(result.is_err(), "should detect circular dependency");
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("circular") || err.contains("cycle"),
+            "error should mention cycle: {err}"
+        );
+    }
+
+    #[test]
+    fn command_run_multifile() {
+        // Create a two-module project that evaluates successfully.
+        let root = write_temp_dir("run_multi");
+        let demo = root.join("demo");
+        std::fs::create_dir_all(&demo).expect("create demo dir");
+        std::fs::write(
+            root.join("project.nexl"),
+            "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            demo.join("app.nxl"),
+            "(module demo.app)\n(import demo.lib :refer [double])\n(double 21)",
+        )
+        .expect("write app");
+        std::fs::write(
+            demo.join("lib.nxl"),
+            "(module demo.lib :exports [double])\n(defn double [x] (* x 2))",
+        )
+        .expect("write lib");
+
+        let entry = demo.join("app.nxl");
+        let result = command_run(entry);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            result.is_ok(),
+            "multi-file run should succeed: {result:?}"
+        );
+    }
+
+    #[test]
+    fn command_run_singlefile_fallback() {
+        // A plain script without (module ...) should still work.
+        let path = write_temp_file("(+ 40 2)", "run_single");
+        let result = command_run(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            result.is_ok(),
+            "single-file run should succeed: {result:?}"
         );
     }
 }
