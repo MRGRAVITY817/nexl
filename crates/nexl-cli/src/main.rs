@@ -8,7 +8,10 @@
 use clap::{Parser, Subcommand};
 use meta::{Atom, Node, NodeKind};
 use nexl_doc::{extract_module_doc, render_module_pages};
-use nexl_pkg::{build_lockfile, parse_manifest, DependencySpec, PackageManifest};
+use nexl_pkg::{
+    build_lockfile, parse_manifest, serialize_lockfile, serialize_manifest, DependencySpec,
+    PackageManifest,
+};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
@@ -554,7 +557,7 @@ fn command_pkg_lock() -> Result<(), String> {
 }
 
 fn manifest_path() -> PathBuf {
-    PathBuf::from("nexl.toml")
+    PathBuf::from("project.nexl")
 }
 
 fn lockfile_path() -> PathBuf {
@@ -603,15 +606,13 @@ fn read_manifest(path: &PathBuf) -> Result<PackageManifest, String> {
 }
 
 fn write_manifest(path: &PathBuf, manifest: &PackageManifest) -> Result<(), String> {
-    let output = toml::to_string_pretty(manifest)
-        .map_err(|e| format!("cannot serialize manifest: {e}"))?;
+    let output = serialize_manifest(manifest);
     std::fs::write(path, output)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 fn write_lockfile(path: &PathBuf, lockfile: &nexl_pkg::Lockfile) -> Result<(), String> {
-    let output = toml::to_string_pretty(lockfile)
-        .map_err(|e| format!("cannot serialize lockfile: {e}"))?;
+    let output = serialize_lockfile(lockfile);
     std::fs::write(path, output)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))
 }

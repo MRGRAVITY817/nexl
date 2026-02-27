@@ -19,4 +19,3 @@ nexl-pkg = { path = "../nexl-pkg" }
 nexl-doc = { path = "../nexl-doc" }
 tokio = { version = "1", features = ["full"] }
 meta = { package = "nexl-ast", path = "../nexl-ast" }
-toml = "0.8"
