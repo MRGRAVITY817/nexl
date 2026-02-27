@@ -239,6 +239,9 @@ impl PrettyPrinter {
             Some("match") => {
                 self.write_match_form(items, out, indent, column);
             }
+            Some("module") => {
+                self.write_module_form(items, out, indent, column);
+            }
             _ => {
                 self.write_call_form(items, out, indent, column);
             }
@@ -432,18 +435,28 @@ impl PrettyPrinter {
                 push_indent(out, body_indent);
                 let test_len = self.flat_len(test).min(40);
                 self.write_node_indented(test, out, body_indent, body_indent);
-                if use_alignment {
-                    for _ in test_len..max_test_width {
-                        out.push(' ');
-                    }
-                }
-                out.push(' ');
                 let result_col = if use_alignment {
                     body_indent + max_test_width + 1
                 } else {
                     body_indent + test_len + 1
                 };
-                self.write_node_indented(result, out, body_indent, result_col);
+                let result_len = self.flat_len(result);
+                let fits_inline = result_len != usize::MAX
+                    && result_col + result_len <= self.config.max_line_width;
+                if !fits_inline && is_compound(&result.kind) {
+                    let arm_indent = body_indent + self.config.indent_width;
+                    out.push('\n');
+                    push_indent(out, arm_indent);
+                    self.write_node_indented(result, out, arm_indent, arm_indent);
+                } else {
+                    if use_alignment {
+                        for _ in test_len..max_test_width {
+                            out.push(' ');
+                        }
+                    }
+                    out.push(' ');
+                    self.write_node_indented(result, out, body_indent, result_col);
+                }
             }
         } else {
             // No alignment: just pairs on separate lines
@@ -452,9 +465,20 @@ impl PrettyPrinter {
                 push_indent(out, body_indent);
                 self.write_node_indented(&chunk[0], out, body_indent, body_indent);
                 if chunk.len() > 1 {
-                    out.push(' ');
-                    let col = body_indent + self.flat_len(&chunk[0]).min(40) + 1;
-                    self.write_node_indented(&chunk[1], out, body_indent, col);
+                    let test_len = self.flat_len(&chunk[0]).min(40);
+                    let result_col = body_indent + test_len + 1;
+                    let result_len = self.flat_len(&chunk[1]);
+                    let fits_inline = result_len != usize::MAX
+                        && result_col + result_len <= self.config.max_line_width;
+                    if !fits_inline && is_compound(&chunk[1].kind) {
+                        let arm_indent = body_indent + self.config.indent_width;
+                        out.push('\n');
+                        push_indent(out, arm_indent);
+                        self.write_node_indented(&chunk[1], out, arm_indent, arm_indent);
+                    } else {
+                        out.push(' ');
+                        self.write_node_indented(&chunk[1], out, body_indent, result_col);
+                    }
                 }
             }
         }
@@ -506,18 +530,28 @@ impl PrettyPrinter {
                 push_indent(out, body_indent);
                 let pat_len = self.flat_len(pat).min(40);
                 self.write_node_indented(pat, out, body_indent, body_indent);
-                if use_alignment {
-                    for _ in pat_len..max_pat_width {
-                        out.push(' ');
-                    }
-                }
-                out.push(' ');
                 let body_col = if use_alignment {
                     body_indent + max_pat_width + 1
                 } else {
                     body_indent + pat_len + 1
                 };
-                self.write_node_indented(body, out, body_indent, body_col);
+                let body_len = self.flat_len(body);
+                let fits_inline = body_len != usize::MAX
+                    && body_col + body_len <= self.config.max_line_width;
+                if !fits_inline && is_compound(&body.kind) {
+                    let arm_indent = body_indent + self.config.indent_width;
+                    out.push('\n');
+                    push_indent(out, arm_indent);
+                    self.write_node_indented(body, out, arm_indent, arm_indent);
+                } else {
+                    if use_alignment {
+                        for _ in pat_len..max_pat_width {
+                            out.push(' ');
+                        }
+                    }
+                    out.push(' ');
+                    self.write_node_indented(body, out, body_indent, body_col);
+                }
             }
         } else {
             for chunk in items[2..].chunks(2) {
@@ -525,12 +559,76 @@ impl PrettyPrinter {
                 push_indent(out, body_indent);
                 self.write_node_indented(&chunk[0], out, body_indent, body_indent);
                 if chunk.len() > 1 {
-                    out.push(' ');
-                    let col = body_indent + self.flat_len(&chunk[0]).min(40) + 1;
-                    self.write_node_indented(&chunk[1], out, body_indent, col);
+                    let pat_len = self.flat_len(&chunk[0]).min(40);
+                    let body_col = body_indent + pat_len + 1;
+                    let body_len = self.flat_len(&chunk[1]);
+                    let fits_inline = body_len != usize::MAX
+                        && body_col + body_len <= self.config.max_line_width;
+                    if !fits_inline && is_compound(&chunk[1].kind) {
+                        let arm_indent = body_indent + self.config.indent_width;
+                        out.push('\n');
+                        push_indent(out, arm_indent);
+                        self.write_node_indented(&chunk[1], out, arm_indent, arm_indent);
+                    } else {
+                        out.push(' ');
+                        self.write_node_indented(&chunk[1], out, body_indent, body_col);
+                    }
                 }
             }
         }
+        out.push(')');
+    }
+
+    /// Module form: `(module name :key val :key val ...)`
+    ///
+    /// Keyword-value pairs are written together on each line. For `:imports`
+    /// values the outer vector is broken so each inner import spec gets its
+    /// own line, aligned under the first `[`.
+    fn write_module_form(
+        &self,
+        items: &[Node],
+        out: &mut String,
+        indent: usize,
+        _column: usize,
+    ) {
+        let body_indent = indent + self.config.indent_width;
+        out.push('(');
+
+        // "module" on first line
+        self.write_node_indented(&items[0], out, indent + 1, indent + 1);
+
+        // name on same line
+        if items.len() > 1 {
+            out.push(' ');
+            let name_col = indent + 1 + self.flat_len(&items[0]).min(40) + 1;
+            self.write_node_indented(&items[1], out, body_indent, name_col);
+        }
+
+        // Remaining items are keyword-value pairs
+        let mut i = 2;
+        while i + 1 < items.len() {
+            out.push('\n');
+            if items[i].leading_comments.is_empty() {
+                push_indent(out, body_indent);
+            }
+            // keyword
+            self.write_node_indented(&items[i], out, body_indent, body_indent);
+            out.push(' ');
+            let val_col = body_indent + self.flat_len(&items[i]).min(40) + 1;
+            // value
+            self.write_node_indented(&items[i + 1], out, body_indent, val_col);
+            i += 2;
+        }
+
+        // Trailing unpaired item (shouldn't happen in well-formed code)
+        if i < items.len() {
+            out.push('\n');
+            if items[i].leading_comments.is_empty() {
+                push_indent(out, body_indent);
+            }
+            self.write_node_indented(&items[i], out, body_indent, body_indent);
+        }
+
         out.push(')');
     }
 
@@ -934,6 +1032,8 @@ fn needs_multiline_list(items: &[Node]) -> bool {
             let leading = body_form_leading_count(name, items);
             items[leading..].iter().any(|item| is_compound(&item.kind))
         }
+        // module: force multi-line when keyword-value pairs are present.
+        "module" => items.len() > 2,
         // if/cond/match: force multi-line when any branch is compound.
         "if" | "cond" | "match" => {
             items.len() > 2 && items[2..].iter().any(|item| is_compound(&item.kind))
@@ -952,7 +1052,6 @@ fn is_body_indent_form(name: &str) -> bool {
             | "do"
             | "when"
             | "unless"
-            | "module"
             | "deftype"
             | "defeffect"
             | "defprotocol"
@@ -1009,8 +1108,6 @@ fn body_form_leading_count(head: &str, items: &[Node]) -> usize {
         }
         // (def name value) — usually fits on one line, but if not: head + name
         "def" => 2.min(items.len()),
-        // (module name :key val ...) — head + name
-        "module" => 2.min(items.len()),
         // (handle body :effect handler) — just head on first line
         "handle" | "try" => 1.min(items.len()),
         // (import ...) — head
@@ -1972,7 +2069,153 @@ mod tests {
         assert_eq!(pp().print_file(&[]), "");
     }
 
-    // ── 67. set_multiline ───────────────────────────────────────────────
+    // ── 67. module_form_imports_multiline ────────────────────────────────
+    #[test]
+    fn module_form_imports_multiline() {
+        // 3 import specs → each on own line, aligned under first [
+        let node = list(vec![
+            sym("module"),
+            sym("todo.app"),
+            kw("imports"),
+            vec_node(vec![
+                vec_node(vec![sym("todo.model"), kw("as"), sym("model")]),
+                vec_node(vec![sym("todo.storage"), kw("as"), sym("store")]),
+                vec_node(vec![sym("todo.display"), kw("as"), sym("ui")]),
+            ]),
+        ]);
+        let expected = "\
+(module todo.app
+  :imports [[todo.model :as model]
+            [todo.storage :as store]
+            [todo.display :as ui]])
+";
+        assert_eq!(pp().print_file(&[node]), expected);
+    }
+
+    // ── 68. module_form_imports_and_exports ─────────────────────────────
+    #[test]
+    fn module_form_imports_and_exports() {
+        let node = list(vec![
+            sym("module"),
+            sym("my.app"),
+            kw("imports"),
+            vec_node(vec![
+                vec_node(vec![sym("lib.a"), kw("as"), sym("a")]),
+                vec_node(vec![sym("lib.b"), kw("as"), sym("b")]),
+            ]),
+            kw("exports"),
+            vec_node(vec![sym("run"), sym("init")]),
+        ]);
+        let expected = "\
+(module my.app
+  :imports [[lib.a :as a] [lib.b :as b]]
+  :exports [run init])
+";
+        assert_eq!(pp().print_file(&[node]), expected);
+    }
+
+    // ── 69. module_form_single_import_compact ────────────────────────────
+    #[test]
+    fn module_form_single_import_compact() {
+        // 1 import spec → stays compact on same line as :imports
+        let node = list(vec![
+            sym("module"),
+            sym("my.app"),
+            kw("imports"),
+            vec_node(vec![vec_node(vec![sym("lib.a"), kw("as"), sym("a")])]),
+        ]);
+        let expected = "(module my.app\n  :imports [[lib.a :as a]])\n";
+        assert_eq!(pp().print_file(&[node]), expected);
+    }
+
+    // ── 70. match_compound_body_breaks ──────────────────────────────────
+    #[test]
+    fn match_compound_body_breaks() {
+        // When a match arm body is compound and overflows, it drops to its
+        // own indented line so sub-forms don't appear LEFT of the body.
+        let node = list(vec![
+            sym("match"),
+            sym("x"),
+            kw("a"),
+            list(vec![
+                sym("let"),
+                vec_node(vec![sym("y"), list(vec![sym("compute"), sym("x")])]),
+                list(vec![sym("process"), sym("y")]),
+            ]),
+            kw("b"),
+            int(1),
+        ]);
+        let pp_val = PrettyPrinter::new(PrintConfig {
+            max_line_width: 25,
+            ..PrintConfig::default()
+        });
+        let out = pp_val.print_file(&[node]);
+        let expected = "\
+(match x
+  :a
+    (let [y (compute x)]
+      (process y))
+  :b 1)
+";
+        assert_eq!(out, expected);
+    }
+
+    // ── 71. match_simple_body_inline ────────────────────────────────────
+    #[test]
+    fn match_simple_body_inline() {
+        // Non-compound / short bodies stay inline with their pattern.
+        let node = list(vec![
+            sym("match"),
+            sym("dir"),
+            kw("north"),
+            int(1),
+            kw("south"),
+            int(2),
+        ]);
+        let pp_val = PrettyPrinter::new(PrintConfig {
+            max_line_width: 25,
+            ..PrintConfig::default()
+        });
+        let out = pp_val.print_file(&[node]);
+        let expected = "\
+(match dir
+  :north 1
+  :south 2)
+";
+        assert_eq!(out, expected);
+    }
+
+    // ── 72. cond_compound_body_breaks ──────────────────────────────────
+    #[test]
+    fn cond_compound_body_breaks() {
+        let node = list(vec![
+            sym("cond"),
+            list(vec![sym(">"), sym("x"), int(0)]),
+            list(vec![
+                sym("do"),
+                list(vec![sym("log"), str_node("positive")]),
+                sym("x"),
+            ]),
+            kw("else"),
+            int(0),
+        ]);
+        let pp_val = PrettyPrinter::new(PrintConfig {
+            max_line_width: 30,
+            ..PrintConfig::default()
+        });
+        let out = pp_val.print_file(&[node]);
+        let expected = "\
+(cond
+  (> x 0)
+    (do
+      (log \"positive\")
+      x)
+  :else 0)
+";
+        assert_eq!(out, expected);
+    }
+
+    // ── 73. set_multiline ───────────────────────────────────────────────
     #[test]
     fn set_multiline() {
         let node = Node::new(
