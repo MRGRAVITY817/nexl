@@ -152,6 +152,8 @@ pub fn synth(node: &Node, env: &Env, state: &mut InferState) -> Result<Type, Typ
         NodeKind::Map(entries) => synth_map_literal(entries, env, state),
         NodeKind::Set(items) => synth_set_literal(items, env, state),
         NodeKind::Deref(inner) => synth_deref(inner, env, state),
+        // #_ discarded forms are not evaluated — skip type-checking entirely.
+        NodeKind::Discard(_) => Ok(Type::Unit),
         _ => unimplemented!("synth: {:?}", node.kind),
     };
     // Attach this node's span to any error that doesn't already carry one.

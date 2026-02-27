@@ -119,7 +119,7 @@ impl PrettyPrinter {
             }
             NodeKind::Quote(inner) => self.flat_len(inner).saturating_add(1),
             NodeKind::Deref(inner) => self.flat_len(inner).saturating_add(1),
-            NodeKind::Discard(inner) => self.flat_len(inner).saturating_add(3),
+            NodeKind::Discard(inner) => self.flat_len(inner).saturating_add(2),
             NodeKind::Quasiquote(inner) => self.flat_len(inner).saturating_add(1),
             NodeKind::Unquote(inner) => self.flat_len(inner).saturating_add(1),
             NodeKind::UnquoteSplice(inner) => self.flat_len(inner).saturating_add(2),
@@ -198,8 +198,8 @@ impl PrettyPrinter {
                 self.write_node_indented(inner, out, indent, column + 1);
             }
             NodeKind::Discard(inner) => {
-                out.push_str("#_ ");
-                self.write_node_indented(inner, out, indent, column + 3);
+                out.push_str("#_");
+                self.write_node_indented(inner, out, indent, column + 2);
             }
             NodeKind::Quasiquote(inner) => {
                 out.push('`');
@@ -734,7 +734,7 @@ impl PrettyPrinter {
                 self.write_node(inner, out);
             }
             NodeKind::Discard(inner) => {
-                out.push_str("#_ ");
+                out.push_str("#_");
                 self.write_node(inner, out);
             }
             NodeKind::Quasiquote(inner) => {
@@ -1478,7 +1478,7 @@ mod tests {
             name: "x".to_string(),
         });
         let node = Node::new(NodeKind::Discard(Box::new(x)), sp());
-        assert_eq!(pp().print(&node), "#_ x");
+        assert_eq!(pp().print(&node), "#_x");
     }
 
     // ── 36. print_leading_comment ─────────────────────────────────────────

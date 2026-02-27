@@ -40,6 +40,8 @@ fn eval_with_loop<'a>(
         NodeKind::Vector(items) => eval_vector(items, env, loop_state),
         NodeKind::Map(entries) => eval_map(entries, env, loop_state),
         NodeKind::Set(items) => eval_set(items, env, loop_state),
+        // #_ discarded forms are not evaluated.
+        NodeKind::Discard(_) => Ok(EvalReturn::Value(Value::Unit)),
         _ => todo!("non-atom evaluation not yet implemented"),
     }
 }
