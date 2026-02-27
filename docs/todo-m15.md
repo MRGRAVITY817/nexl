@@ -5,9 +5,9 @@
 ## Documentation
 
 ## Sandbox
-- [ ] Implement `nexl sandbox` with `--allow-*` flags
-- [ ] Map CLI flags to effect capabilities in evaluator
-- [ ] Deny uncovered effects at runtime (Stage 0: runtime check)
+- [x] Implement `nexl sandbox` with `--allow-*` flags
+- [x] Map CLI flags to effect capabilities in evaluator
+- [x] Deny uncovered effects at runtime (Stage 0: runtime check)
 
 ## Audit
 - [ ] Implement `nexl audit` — scan for FFI trust boundaries (`defextern`)

@@ -43,6 +43,7 @@ fn expect_str<'a>(op: &str, v: &'a Value) -> Result<&'a Rc<str>, String> {
 
 /// `(io/println s)` — print string with newline.
 fn io_println(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::Console)?;
     let v = one_arg("println", args)?;
     match v {
         Value::Str(s) => println!("{s}"),
@@ -53,6 +54,7 @@ fn io_println(args: &[Value]) -> Result<Value, String> {
 
 /// `(io/print s)` — print string without newline.
 fn io_print(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::Console)?;
     let v = one_arg("print", args)?;
     match v {
         Value::Str(s) => print!("{s}"),
@@ -63,6 +65,7 @@ fn io_print(args: &[Value]) -> Result<Value, String> {
 
 /// `(io/read-file path)` — read file contents as Str. Returns (Result Str Str).
 fn read_file(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::FileSystem)?;
     let v = one_arg("read-file", args)?;
     let path = expect_str("read-file", v)?;
     match std::fs::read_to_string(path.as_ref()) {
@@ -81,6 +84,7 @@ fn read_file(args: &[Value]) -> Result<Value, String> {
 
 /// `(io/write-file path content)` — write string to file. Returns (Result Unit Str).
 fn write_file(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::FileSystem)?;
     let (path, content) = two_args("write-file", args)?;
     let path = expect_str("write-file", path)?;
     let content = expect_str("write-file", content)?;

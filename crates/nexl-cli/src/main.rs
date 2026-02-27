@@ -50,6 +50,34 @@ enum Command {
         output: Option<PathBuf>,
     },
     Lsp,
+    Sandbox {
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+        /// Allow console I/O (stdout, stderr).
+        #[arg(long = "allow-console")]
+        allow_console: bool,
+        /// Allow file-system access.
+        #[arg(long = "allow-fs")]
+        allow_fs: bool,
+        /// Allow network access.
+        #[arg(long = "allow-net")]
+        allow_net: bool,
+        /// Allow wall-clock time access.
+        #[arg(long = "allow-time")]
+        allow_time: bool,
+        /// Allow random number generation.
+        #[arg(long = "allow-random")]
+        allow_random: bool,
+        /// Allow concurrency primitives.
+        #[arg(long = "allow-concurrent")]
+        allow_concurrent: bool,
+        /// Allow unsafe FFI operations.
+        #[arg(long = "allow-unsafe")]
+        allow_unsafe: bool,
+        /// Allow all capabilities (unrestricted).
+        #[arg(long = "allow-all")]
+        allow_all: bool,
+    },
     Pkg {
         #[command(subcommand)]
         command: PkgCommand,
@@ -112,6 +140,32 @@ fn main() {
             let rt = tokio::runtime::Runtime::new()
                 .expect("failed to create tokio runtime");
             rt.block_on(nexl_lsp::run_server());
+        }
+        Command::Sandbox {
+            input,
+            allow_console,
+            allow_fs,
+            allow_net,
+            allow_time,
+            allow_random,
+            allow_concurrent,
+            allow_unsafe,
+            allow_all,
+        } => {
+            if let Err(message) = command_sandbox(
+                input,
+                allow_console,
+                allow_fs,
+                allow_net,
+                allow_time,
+                allow_random,
+                allow_concurrent,
+                allow_unsafe,
+                allow_all,
+            ) {
+                print_error(&message);
+                process::exit(1);
+            }
         }
         Command::Pkg { command } => {
             if let Err(message) = command_pkg(command) {
@@ -194,6 +248,53 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn command_sandbox(
+    input_path: PathBuf,
+    allow_console: bool,
+    allow_fs: bool,
+    allow_net: bool,
+    allow_time: bool,
+    allow_random: bool,
+    allow_concurrent: bool,
+    allow_unsafe: bool,
+    allow_all: bool,
+) -> Result<(), String> {
+    use nexl_runtime::sandbox::{Capability, SandboxPolicy};
+    use std::collections::HashSet;
+
+    let policy = if allow_all {
+        SandboxPolicy::unrestricted()
+    } else {
+        let mut caps = HashSet::new();
+        if allow_console {
+            caps.insert(Capability::Console);
+        }
+        if allow_fs {
+            caps.insert(Capability::FileSystem);
+        }
+        if allow_net {
+            caps.insert(Capability::Net);
+        }
+        if allow_time {
+            caps.insert(Capability::Time);
+        }
+        if allow_random {
+            caps.insert(Capability::Random);
+        }
+        if allow_concurrent {
+            caps.insert(Capability::Concurrent);
+        }
+        if allow_unsafe {
+            caps.insert(Capability::Unsafe);
+        }
+        SandboxPolicy::sandbox(caps)
+    };
+
+    nexl_runtime::sandbox::set_policy(policy);
+    command_run(input_path)
 }
 
 fn repl_loop<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()> {
@@ -954,5 +1055,103 @@ mod tests {
         let _ = std::fs::remove_dir_all(&out_dir);
         assert!(result.is_ok(), "doc command should succeed, got: {result:?}");
         assert!(html_exists, "doc command should write html output");
+    }
+
+    #[test]
+    fn parse_sandbox_no_flags() {
+        let cli = Cli::try_parse_from(["nexl", "sandbox", "app.nexl"]).expect("parse");
+        match cli.command {
+            Command::Sandbox {
+                input,
+                allow_console,
+                allow_fs,
+                allow_all,
+                ..
+            } => {
+                assert_eq!(input, PathBuf::from("app.nexl"));
+                assert!(!allow_console);
+                assert!(!allow_fs);
+                assert!(!allow_all);
+            }
+            other => panic!("expected Sandbox, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_sandbox_with_flags() {
+        let cli = Cli::try_parse_from([
+            "nexl",
+            "sandbox",
+            "app.nexl",
+            "--allow-console",
+            "--allow-fs",
+            "--allow-time",
+        ])
+        .expect("parse");
+        match cli.command {
+            Command::Sandbox {
+                allow_console,
+                allow_fs,
+                allow_time,
+                allow_net,
+                ..
+            } => {
+                assert!(allow_console);
+                assert!(allow_fs);
+                assert!(allow_time);
+                assert!(!allow_net);
+            }
+            other => panic!("expected Sandbox, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sandbox_denies_console_by_default() {
+        let source = r#"(io/println "hello")"#;
+        let path = write_temp_file(source, "sandbox_deny");
+        let result = command_sandbox(
+            path.clone(),
+            false, false, false, false, false, false, false, false,
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_err(), "sandbox should deny console");
+        let err = result.unwrap_err();
+        assert!(err.contains("Console"), "error should mention Console: {err}");
+    }
+
+    #[test]
+    fn sandbox_allows_granted_capability() {
+        let source = r#"(io/println "hello")"#;
+        let path = write_temp_file(source, "sandbox_allow");
+        let result = command_sandbox(
+            path.clone(),
+            true, false, false, false, false, false, false, false,
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "sandbox should allow console: {result:?}");
+    }
+
+    #[test]
+    fn sandbox_allow_all_permits_everything() {
+        let source = r#"(io/println "hello")"#;
+        let path = write_temp_file(source, "sandbox_all");
+        let result = command_sandbox(
+            path.clone(),
+            false, false, false, false, false, false, false, true,
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "sandbox --allow-all should permit: {result:?}");
+    }
+
+    #[test]
+    fn sandbox_pure_code_runs_without_flags() {
+        let source = "(+ 1 2)";
+        let path = write_temp_file(source, "sandbox_pure");
+        let result = command_sandbox(
+            path.clone(),
+            false, false, false, false, false, false, false, false,
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "pure code should run in sandbox: {result:?}");
     }
 }

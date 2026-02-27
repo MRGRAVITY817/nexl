@@ -18,6 +18,7 @@ pub fn entries() -> Vec<StdlibEntry> {
 
 /// `(async/sleep ms)` — pause execution for `ms` milliseconds.
 fn sleep(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::Concurrent)?;
     match args {
         [Value::Int(ms)] => {
             if *ms < 0 {

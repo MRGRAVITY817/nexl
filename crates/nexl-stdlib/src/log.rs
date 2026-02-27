@@ -37,6 +37,7 @@ fn error(args: &[Value]) -> Result<Value, String> {
 }
 
 fn log_at_level(level: &str, args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::Console)?;
     if args.is_empty() {
         return Err(format!("`log/{level}` requires at least 1 argument"));
     }

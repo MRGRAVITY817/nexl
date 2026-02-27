@@ -16,6 +16,7 @@ pub fn entries() -> Vec<StdlibEntry> {
 
 /// `(time/now)` — current time as Unix milliseconds (Int).
 fn now(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::Time)?;
     if !args.is_empty() {
         return Err(format!("`time/now` takes no arguments, got {}", args.len()));
     }

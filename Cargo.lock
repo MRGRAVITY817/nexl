@@ -934,6 +934,7 @@ dependencies = [
  "nexl-native",
  "nexl-pkg",
  "nexl-reader",
+ "nexl-runtime",
  "nexl-wasm",
  "tokio",
 ]
