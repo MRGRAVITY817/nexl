@@ -10,9 +10,9 @@
   - Fall back to single-file mode when no `(module ...)` is present
 
 - [x] 2. Project root discovery
-  - Walk up from entry file looking for `project.nxl`
-  - Use `project.nxl` directory as the source root
-  - Default to entry file's directory if no `project.nxl` found
+  - Walk up from entry file looking for `project.nx`
+  - Use `project.nx` directory as the source root
+  - Default to entry file's directory if no `project.nx` found
 
 - [x] 3. Circular dependency detection
   - Error with clear message showing the cycle

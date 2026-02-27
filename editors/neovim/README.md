@@ -50,7 +50,7 @@ This provides:
 
 ```lua
 vim.api.nvim_create_autocmd('BufWritePre', {
-  pattern = '*.nxl',
+  pattern = '*.nx',
   callback = function()
     vim.lsp.buf.format({ async = false })
   end,
@@ -75,7 +75,7 @@ require('nvim-treesitter.configs').setup({
 
 | File | Purpose |
 |---|---|
-| `ftdetect/nexl.vim` | Detect `.nxl` files as `filetype=nexl` |
+| `ftdetect/nexl.vim` | Detect `.nx` files as `filetype=nexl` |
 | `ftplugin/nexl.vim` | Indent, comment, and keyword settings |
 | `syntax/nexl.vim` | Regex-based syntax highlighting |
 | `lsp.lua` | nvim-lspconfig server definition |

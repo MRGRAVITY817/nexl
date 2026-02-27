@@ -32,4 +32,4 @@
 - [ ] Content-addressed definitions (§8.4 — depends on M18)
 - [ ] Semantic versioning enforcement (§8.5 — depends on package manager, M15)
 - [ ] Test submodules (§8.10 — depends on `nexl test` command, M9)
-- [ ] `project.nxl` full support (defer to M9/M15; basic path mapping only here)
+- [ ] `project.nx` full support (defer to M9/M15; basic path mapping only here)

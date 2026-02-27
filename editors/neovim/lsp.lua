@@ -13,7 +13,7 @@ return {
   default_config = {
     cmd = { 'nexl', 'lsp' },
     filetypes = { 'nexl' },
-    root_dir = util.root_pattern('project.nxl', '.git'),
+    root_dir = util.root_pattern('project.nx', '.git'),
     single_file_support = true,
     settings = {},
   },
@@ -22,12 +22,12 @@ return {
 https://github.com/nexl-lang/nexl
 
 Nexl language server providing diagnostics, hover, go-to-definition,
-completion, and formatting for `.nxl` files.
+completion, and formatting for `.nx` files.
 
 Install the `nexl` binary and ensure it is on your PATH.
 ]],
     default_config = {
-      root_dir = [[root_pattern("project.nxl", ".git")]],
+      root_dir = [[root_pattern("project.nx", ".git")]],
     },
   },
 }

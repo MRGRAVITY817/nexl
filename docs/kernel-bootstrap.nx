@@ -1,4 +1,4 @@
-;; kernel-bootstrap.nxl — Stage 0 → Stage 1 bootstrap proof-of-concept
+;; kernel-bootstrap.nx — Stage 0 → Stage 1 bootstrap proof-of-concept
 ;;
 ;; Demonstrates that the kernel subset of Nexl is sufficient to write
 ;; compiler infrastructure. Implements character classification and

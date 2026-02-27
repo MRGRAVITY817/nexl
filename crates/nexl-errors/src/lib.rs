@@ -268,7 +268,7 @@ mod tests {
         let src = "hello world";
         let span = Span::new(FileId(0), 6, 5); // "world"
         let mut d = Diagnostic::new(Severity::Error, "unexpected word");
-        d.attach_source(NamedSource::new("test.nxl", src.to_string()));
+        d.attach_source(NamedSource::new("test.nx", src.to_string()));
         d.push_label(Label::new(span, "this word"));
         let report = miette::Report::new(d);
         let rendered = format!("{report:?}");

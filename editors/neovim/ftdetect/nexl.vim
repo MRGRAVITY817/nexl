@@ -1,1 +1,1 @@
-autocmd BufRead,BufNewFile *.nxl set filetype=nexl
+autocmd BufRead,BufNewFile *.nx set filetype=nexl

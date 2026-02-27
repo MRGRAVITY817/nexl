@@ -1774,49 +1774,49 @@ mod tests {
 
     #[test]
     fn parse_example_01_basics() {
-        let src = include_str!("../../../examples/01-basics.nxl");
-        read(src, fid()).expect("01-basics.nxl should parse without errors");
+        let src = include_str!("../../../examples/01-basics.nx");
+        read(src, fid()).expect("01-basics.nx should parse without errors");
     }
 
     #[test]
     fn parse_example_02_adts() {
-        let src = include_str!("../../../examples/02-adts-and-patterns.nxl");
-        read(src, fid()).expect("02-adts-and-patterns.nxl should parse without errors");
+        let src = include_str!("../../../examples/02-adts-and-patterns.nx");
+        read(src, fid()).expect("02-adts-and-patterns.nx should parse without errors");
     }
 
     #[test]
     fn parse_example_03_effects() {
-        let src = include_str!("../../../examples/03-effects.nxl");
-        read(src, fid()).expect("03-effects.nxl should parse without errors");
+        let src = include_str!("../../../examples/03-effects.nx");
+        read(src, fid()).expect("03-effects.nx should parse without errors");
     }
 
     #[test]
     fn parse_example_04_protocols() {
-        let src = include_str!("../../../examples/04-protocols.nxl");
-        read(src, fid()).expect("04-protocols.nxl should parse without errors");
+        let src = include_str!("../../../examples/04-protocols.nx");
+        read(src, fid()).expect("04-protocols.nx should parse without errors");
     }
 
     #[test]
     fn parse_example_05_concurrency() {
-        let src = include_str!("../../../examples/05-concurrency.nxl");
-        read(src, fid()).expect("05-concurrency.nxl should parse without errors");
+        let src = include_str!("../../../examples/05-concurrency.nx");
+        read(src, fid()).expect("05-concurrency.nx should parse without errors");
     }
 
     #[test]
     fn parse_example_06_macros() {
-        let src = include_str!("../../../examples/06-macros.nxl");
-        read(src, fid()).expect("06-macros.nxl should parse without errors");
+        let src = include_str!("../../../examples/06-macros.nx");
+        read(src, fid()).expect("06-macros.nx should parse without errors");
     }
 
     #[test]
     fn parse_example_07_http_server() {
-        let src = include_str!("../../../examples/07-http-server.nxl");
-        read(src, fid()).expect("07-http-server.nxl should parse without errors");
+        let src = include_str!("../../../examples/07-http-server.nx");
+        read(src, fid()).expect("07-http-server.nx should parse without errors");
     }
 
     #[test]
     fn parse_example_08_inference() {
-        let src = include_str!("../../../examples/08-inference.nxl");
-        read(src, fid()).expect("08-inference.nxl should parse without errors");
+        let src = include_str!("../../../examples/08-inference.nx");
+        read(src, fid()).expect("08-inference.nx should parse without errors");
     }
 }

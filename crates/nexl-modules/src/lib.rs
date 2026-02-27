@@ -15,8 +15,8 @@ pub enum ModulePathError {
     /// The module name is not a valid dotted name.
     #[error("module `{module}` is not a valid dotted name")]
     InvalidModuleName { module: String },
-    /// The module path does not end with `.nxl`.
-    #[error("module path `{path}` must end with .nxl")]
+    /// The module path does not end with `.nx`.
+    #[error("module path `{path}` must end with .nx")]
     MissingExtension { path: String },
     /// The module path does not start with the package prefix directory.
     #[error("module path `{path}` does not start with prefix `{prefix}`")]
@@ -138,7 +138,7 @@ pub fn build_module_graph(modules: &[ModuleInfo]) -> Result<ModuleGraph, ModuleG
     Ok(ModuleGraph { edges })
 }
 
-/// Convert a module name (e.g. `my-app.server`) to a `.nxl` file path.
+/// Convert a module name (e.g. `my-app.server`) to a `.nx` file path.
 pub fn module_name_to_path(module: &str, prefix: &str) -> Result<PathBuf, ModulePathError> {
     let parts = split_module_name(module)?;
     if !has_prefix(module, prefix) {
@@ -151,15 +151,15 @@ pub fn module_name_to_path(module: &str, prefix: &str) -> Result<PathBuf, Module
     for part in parts {
         path.push(part);
     }
-    path.set_extension("nxl");
+    path.set_extension("nx");
     Ok(path)
 }
 
-/// Convert a `.nxl` file path back to a module name.
+/// Convert a `.nx` file path back to a module name.
 pub fn path_to_module_name(path: &Path, prefix: &str) -> Result<String, ModulePathError> {
     let path_str = path.to_string_lossy().into_owned();
     let ext = path.extension().and_then(|s| s.to_str());
-    if ext != Some("nxl") {
+    if ext != Some("nx") {
         return Err(ModulePathError::MissingExtension { path: path_str });
     }
 
@@ -232,13 +232,13 @@ mod tests {
     #[test]
     fn module_name_to_path_basic() {
         let path = module_name_to_path("my-app.server", "my-app").expect("map failed");
-        assert_eq!(path, PathBuf::from("my-app/server.nxl"));
+        assert_eq!(path, PathBuf::from("my-app/server.nx"));
     }
 
     #[test]
     fn path_to_module_name_basic() {
         let name =
-            path_to_module_name(Path::new("my-app/server.nxl"), "my-app").expect("map failed");
+            path_to_module_name(Path::new("my-app/server.nx"), "my-app").expect("map failed");
         assert_eq!(name, "my-app.server");
     }
 

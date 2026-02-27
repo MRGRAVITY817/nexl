@@ -11,7 +11,7 @@ handling, and I/O.
 
 ## 1. Hello, World
 
-Create a file called `hello.nxl`:
+Create a file called `hello.nx`:
 
 ```clojure
 (io/println "Hello, world!")
@@ -20,7 +20,7 @@ Create a file called `hello.nxl`:
 Run it:
 
 ```
-$ nexl run hello.nxl
+$ nexl run hello.nx
 Hello, world!
 ```
 
@@ -591,10 +591,10 @@ a `Result` — `(Ok value)` on success or `(Err message)` on invalid JSON.
 ## 17. Putting It All Together
 
 Here's a complete program that reads a file, processes its lines, and prints
-a summary. Save this as `wordcount.nxl`:
+a summary. Save this as `wordcount.nx`:
 
 ```clojure
-;; wordcount.nxl — count words in a file
+;; wordcount.nx — count words in a file
 
 (defn count-words [text]
   (let [lines (str/split text "\n")
@@ -626,7 +626,7 @@ and several words
 Then run **from that directory**:
 
 ```
-$ nexl run wordcount.nxl
+$ nexl run wordcount.nx
 sample.txt: 6 lines, 19 words
 ```
 

@@ -29,7 +29,7 @@ See `docs/crate-map.md` for the full dependency graph.
 - `nexl-native` — Native code generation
 - `nexl-cli` — The `nexl` binary (run, repl, sandbox, audit, lsp, pkg, doc)
 - `nexl-lsp` — Language server (diagnostics, hover, go-to-def, completions)
-- `nexl-pkg` — Package manager (project.nxl, dependency resolution, definition store)
+- `nexl-pkg` — Package manager (project.nx, dependency resolution, definition store)
 - `nexl-doc` — Documentation generator (HTML output)
 
 ## Commands

@@ -49,7 +49,7 @@
 ### Test Suite
 - [x] Unit tests for each token type
 - [x] Unit tests for reader (nested structures, edge cases)
-- [x] Parse every `examples/*.nxl` file without errors
+- [x] Parse every `examples/*.nx` file without errors
 - [x] Golden tests for error messages (malformed input)
 
 ## Blocked

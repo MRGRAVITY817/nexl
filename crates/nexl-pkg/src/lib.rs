@@ -1,4 +1,4 @@
-//! `nexl-pkg` — package manifest schema for `project.nxl` (EDN format).
+//! `nexl-pkg` — package manifest schema for `project.nx` (EDN format).
 
 use meta::{Atom, Node, NodeKind};
 use rusqlite::{Connection, params};
@@ -12,7 +12,7 @@ use thiserror::Error;
 // Types
 // ---------------------------------------------------------------------------
 
-/// A parsed `project.nxl` manifest.
+/// A parsed `project.nx` manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageManifest {
     /// Package metadata.
@@ -29,7 +29,7 @@ pub struct PackageManifest {
     pub profiles: BTreeMap<String, ProfileConfig>,
 }
 
-/// The `:package` section in `project.nxl`.
+/// The `:package` section in `project.nx`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageSection {
     /// Package name.
@@ -206,7 +206,7 @@ pub struct LockedDependency {
 // Errors
 // ---------------------------------------------------------------------------
 
-/// Errors returned when parsing a `project.nxl` manifest.
+/// Errors returned when parsing a `project.nx` manifest.
 #[derive(Debug, Error)]
 pub enum ManifestError {
     /// The manifest source could not be parsed as EDN.
@@ -229,7 +229,7 @@ pub enum ManifestError {
 // EDN Parser
 // ---------------------------------------------------------------------------
 
-/// Parse a `project.nxl` manifest (EDN format) into its schema representation.
+/// Parse a `project.nx` manifest (EDN format) into its schema representation.
 pub fn parse_manifest(source: &str) -> Result<PackageManifest, ManifestError> {
     let nodes = nexl_reader::read(source, meta::FileId::SYNTHETIC)
         .map_err(|e| ManifestError::Parse(e.to_string()))?;

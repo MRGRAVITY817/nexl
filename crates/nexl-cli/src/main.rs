@@ -327,7 +327,7 @@ fn command_build(
     Ok(())
 }
 
-/// Walk up from `start` looking for a `project.nxl` file.
+/// Walk up from `start` looking for a `project.nx` file.
 /// Returns the directory containing it, or `None`.
 fn find_project_root(start: &Path) -> Option<PathBuf> {
     let mut dir = if start.is_file() {
@@ -336,7 +336,7 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
         start.to_path_buf()
     };
     loop {
-        if dir.join("project.nxl").is_file() {
+        if dir.join("project.nx").is_file() {
             return Some(dir);
         }
         if !dir.pop() {
@@ -376,12 +376,12 @@ fn discover_and_load_modules(
 
     // Find project root and read manifest for prefix
     let project_root = find_project_root(&entry_path)
-        .ok_or("no project.nxl found; multi-file modules require a project manifest")?;
+        .ok_or("no project.nx found; multi-file modules require a project manifest")?;
 
-    let manifest_source = std::fs::read_to_string(project_root.join("project.nxl"))
-        .map_err(|e| format!("cannot read project.nxl: {e}"))?;
+    let manifest_source = std::fs::read_to_string(project_root.join("project.nx"))
+        .map_err(|e| format!("cannot read project.nx: {e}"))?;
     let manifest = parse_manifest(&manifest_source)
-        .map_err(|e| format!("invalid project.nxl: {e}"))?;
+        .map_err(|e| format!("invalid project.nx: {e}"))?;
     let prefix = &manifest.package.prefix;
     let source_root = project_root.join(&manifest.package.source_dir);
 
@@ -1083,7 +1083,7 @@ fn command_pkg_lock() -> Result<(), String> {
 }
 
 fn manifest_path() -> PathBuf {
-    PathBuf::from("project.nxl")
+    PathBuf::from("project.nx")
 }
 
 fn lockfile_path() -> PathBuf {
@@ -1366,9 +1366,9 @@ mod tests {
         let source = "(";
         let diag =
             nexl_reader::read(source, meta::FileId::SYNTHETIC).expect_err("expected parse error");
-        let report = format_reader_report(*diag, source, "test.nxl");
+        let report = format_reader_report(*diag, source, "test.nx");
         assert!(report.contains("unclosed `(`"));
-        assert!(report.contains("test.nxl"));
+        assert!(report.contains("test.nx"));
         assert!(report.contains('('));
     }
 
@@ -1766,24 +1766,24 @@ mod tests {
     #[test]
     fn kernel_bootstrap_parses_successfully() {
         // Verify Stage 0 can parse the kernel-subset bootstrap POC.
-        let source = include_str!("../../../docs/kernel-bootstrap.nxl");
+        let source = include_str!("../../../docs/kernel-bootstrap.nx");
         let nodes = nexl_reader::read(source, meta::FileId::SYNTHETIC);
         assert!(
             nodes.is_ok(),
-            "kernel-bootstrap.nxl must parse: {:?}",
+            "kernel-bootstrap.nx must parse: {:?}",
             nodes.err()
         );
         let nodes = nodes.unwrap();
         assert!(
             !nodes.is_empty(),
-            "kernel-bootstrap.nxl should contain definitions"
+            "kernel-bootstrap.nx should contain definitions"
         );
     }
 
     #[test]
     fn kernel_bootstrap_evaluates() {
         // Verify Stage 0 evaluator can run the kernel-subset bootstrap POC.
-        let source = include_str!("../../../docs/kernel-bootstrap.nxl");
+        let source = include_str!("../../../docs/kernel-bootstrap.nx");
         let nodes = nexl_reader::read(source, meta::FileId::SYNTHETIC).expect("parse");
         let env = nexl_eval::stdlib::standard_env();
         let mut last_result = None;
@@ -1807,7 +1807,7 @@ mod tests {
         let sub = root.join("src").join("app");
         std::fs::create_dir_all(&sub).expect("create subdirs");
         std::fs::write(
-            root.join("project.nxl"),
+            root.join("project.nx"),
             "(project :name \"demo\" :version \"0.1.0\" :prefix \"demo\")",
         )
         .expect("write manifest");
@@ -1822,10 +1822,10 @@ mod tests {
         let dir = write_temp_dir("no_manifest");
         let found = find_project_root(&dir);
         let _ = std::fs::remove_dir_all(&dir);
-        // The temp dir has no project.nxl anywhere up the tree (well, it might
+        // The temp dir has no project.nx anywhere up the tree (well, it might
         // find one in the real filesystem, but /tmp shouldn't have one).
         // We just verify the function doesn't panic and returns a path or None.
-        // In a controlled env without project.nxl in /tmp, this is None.
+        // In a controlled env without project.nx in /tmp, this is None.
         assert!(found.is_none(), "expected None in temp dir without manifest");
     }
 
@@ -1849,35 +1849,35 @@ mod tests {
     #[test]
     fn discover_modules_loads_transitive_deps() {
         // Create a project structure:
-        // root/project.nxl
-        // root/demo/app.nxl     — imports demo.util
-        // root/demo/util.nxl    — imports demo.math
-        // root/demo/math.nxl    — no imports
+        // root/project.nx
+        // root/demo/app.nx     — imports demo.util
+        // root/demo/util.nx    — imports demo.math
+        // root/demo/math.nx    — no imports
         let root = write_temp_dir("discover");
         let demo = root.join("demo");
         std::fs::create_dir_all(&demo).expect("create demo dir");
         std::fs::write(
-            root.join("project.nxl"),
+            root.join("project.nx"),
             "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
         )
         .expect("write manifest");
         std::fs::write(
-            demo.join("app.nxl"),
+            demo.join("app.nx"),
             "(module demo.app :exports [main])\n(import demo.util :refer [add1])\n(defn main [] (add1 41))",
         )
         .expect("write app");
         std::fs::write(
-            demo.join("util.nxl"),
+            demo.join("util.nx"),
             "(module demo.util :exports [add1])\n(import demo.math :refer [inc])\n(defn add1 [x] (inc x))",
         )
         .expect("write util");
         std::fs::write(
-            demo.join("math.nxl"),
+            demo.join("math.nx"),
             "(module demo.math :exports [inc])\n(defn inc [x] (+ x 1))",
         )
         .expect("write math");
 
-        let entry = demo.join("app.nxl");
+        let entry = demo.join("app.nx");
         let modules = discover_and_load_modules(&entry).expect("discover");
         let _ = std::fs::remove_dir_all(&root);
 
@@ -1900,22 +1900,22 @@ mod tests {
         let demo = root.join("demo");
         std::fs::create_dir_all(&demo).expect("create demo dir");
         std::fs::write(
-            root.join("project.nxl"),
+            root.join("project.nx"),
             "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
         )
         .expect("write manifest");
         std::fs::write(
-            demo.join("a.nxl"),
+            demo.join("a.nx"),
             "(module demo.a :exports [x])\n(import demo.b :refer [y])\n(def x 1)",
         )
         .expect("write a");
         std::fs::write(
-            demo.join("b.nxl"),
+            demo.join("b.nx"),
             "(module demo.b :exports [y])\n(import demo.a :refer [x])\n(def y 2)",
         )
         .expect("write b");
 
-        let entry = demo.join("a.nxl");
+        let entry = demo.join("a.nx");
         let modules = discover_and_load_modules(&entry).expect("discover should succeed");
         // eval_modules should detect the cycle
         let result = nexl_eval::modules::eval_modules(modules);
@@ -1936,22 +1936,22 @@ mod tests {
         let demo = root.join("demo");
         std::fs::create_dir_all(&demo).expect("create demo dir");
         std::fs::write(
-            root.join("project.nxl"),
+            root.join("project.nx"),
             "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
         )
         .expect("write manifest");
         std::fs::write(
-            demo.join("app.nxl"),
+            demo.join("app.nx"),
             "(module demo.app)\n(import demo.lib :refer [double])\n(double 21)",
         )
         .expect("write app");
         std::fs::write(
-            demo.join("lib.nxl"),
+            demo.join("lib.nx"),
             "(module demo.lib :exports [double])\n(defn double [x] (* x 2))",
         )
         .expect("write lib");
 
-        let entry = demo.join("app.nxl");
+        let entry = demo.join("app.nx");
         let result = command_run(entry);
         let _ = std::fs::remove_dir_all(&root);
         assert!(
@@ -1967,22 +1967,22 @@ mod tests {
         let src_demo = root.join("src").join("demo");
         std::fs::create_dir_all(&src_demo).expect("create src/demo dir");
         std::fs::write(
-            root.join("project.nxl"),
+            root.join("project.nx"),
             "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\" :source-dir \"src\"}}",
         )
         .expect("write manifest");
         std::fs::write(
-            src_demo.join("app.nxl"),
+            src_demo.join("app.nx"),
             "(module demo.app)\n(import demo.lib :refer [double])\n(double 21)",
         )
         .expect("write app");
         std::fs::write(
-            src_demo.join("lib.nxl"),
+            src_demo.join("lib.nx"),
             "(module demo.lib :exports [double])\n(defn double [x] (* x 2))",
         )
         .expect("write lib");
 
-        let entry = src_demo.join("app.nxl");
+        let entry = src_demo.join("app.nx");
         let result = command_run(entry);
         let _ = std::fs::remove_dir_all(&root);
         assert!(

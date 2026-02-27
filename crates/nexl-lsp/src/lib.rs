@@ -46,9 +46,9 @@ impl Backend {
 }
 
 fn collect_diagnostics(uri: &Url, source: &str) -> Vec<Diagnostic> {
-    // Skip type-checking for project.nxl manifest files — they contain
+    // Skip type-checking for project.nx manifest files — they contain
     // pure data (heterogeneous maps) that would produce false type errors.
-    if uri.path().ends_with("project.nxl") {
+    if uri.path().ends_with("project.nx") {
         return Vec::new();
     }
     match nexl_reader::read(source, FileId(0)) {
