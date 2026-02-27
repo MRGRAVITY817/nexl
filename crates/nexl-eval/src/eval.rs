@@ -83,7 +83,7 @@ fn eval_list<'a>(
     let head = &items[0];
     match &head.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "def" => eval_def(items, env),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => eval_let(items, env),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => eval_let(items, env, loop_state),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => {
             eval_do(items, env, loop_state)
         }
@@ -206,7 +206,11 @@ fn eval_def(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     Ok(EvalReturn::Value(Value::Unit))
 }
 
-fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+fn eval_let<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
     if items.len() < 3 {
         return Err(EvalError::Arity);
     }
@@ -248,12 +252,12 @@ fn eval_let(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         child_env.define(name, value);
     }
 
-    // Body expressions.
+    // Body expressions — propagate loop_state so recur works inside let.
     let mut last = Value::Unit;
     for expr in &items[2..] {
-        match eval_with_loop(expr, &child_env, None)? {
+        match eval_with_loop(expr, &child_env, loop_state)? {
             EvalReturn::Value(v) => last = v,
-            EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
+            recur @ EvalReturn::Recur(_) => return Ok(recur),
         }
     }
     Ok(EvalReturn::Value(last))

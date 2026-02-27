@@ -419,6 +419,7 @@ fn str_fn(args: &[Value]) -> Result<Value, String> {
     for v in args {
         match v {
             Value::Str(s) => out.push_str(s),
+            Value::Char(c) => out.push(*c),
             other => out.push_str(&other.to_string()),
         }
     }
