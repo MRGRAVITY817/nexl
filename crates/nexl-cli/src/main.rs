@@ -78,6 +78,10 @@ enum Command {
         #[arg(long = "allow-all")]
         allow_all: bool,
     },
+    Audit {
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+    },
     Pkg {
         #[command(subcommand)]
         command: PkgCommand,
@@ -163,6 +167,12 @@ fn main() {
                 allow_unsafe,
                 allow_all,
             ) {
+                print_error(&message);
+                process::exit(1);
+            }
+        }
+        Command::Audit { input } => {
+            if let Err(message) = command_audit(input) {
                 print_error(&message);
                 process::exit(1);
             }
@@ -588,6 +598,167 @@ fn command_doc(input_path: PathBuf, output_override: Option<PathBuf>) -> Result<
             .map_err(|e| format!("cannot write {:?}: {e}", path))?;
     }
     Ok(())
+}
+
+fn command_audit(input_path: PathBuf) -> Result<(), String> {
+    let source = std::fs::read_to_string(&input_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
+
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
+        format_reader_report(*diag, &source, &input_path.display().to_string())
+    })?;
+
+    let filename = input_path.display().to_string();
+    let mut ffi_entries: Vec<AuditEntry> = Vec::new();
+    let mut module_effects: Vec<String> = Vec::new();
+
+    for node in &nodes {
+        let NodeKind::List(items) = &node.kind else {
+            continue;
+        };
+        let Some(head) = items.first() else {
+            continue;
+        };
+
+        match symbol_name(head) {
+            Some("defextern") => {
+                if let Some(entry) = parse_defextern_entry(items, &source, node) {
+                    ffi_entries.push(entry);
+                }
+            }
+            Some("module") => {
+                // Extract :performs from module declaration
+                for (i, item) in items.iter().enumerate() {
+                    if keyword_name_ref(item) == Some("performs")
+                        && let Some(effects_node) = items.get(i + 1)
+                        && let NodeKind::Vector(effects) = &effects_node.kind
+                    {
+                        for eff in effects {
+                            if let Some(name) = symbol_name(eff) {
+                                module_effects.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Print report
+    println!("== FFI Trust Boundaries ({filename}) ==");
+    if ffi_entries.is_empty() {
+        println!("  (none)");
+    } else {
+        for entry in &ffi_entries {
+            let line = byte_offset_to_line(&source, entry.offset);
+            let mut flags = Vec::new();
+            if entry.is_unsafe {
+                flags.push("UNSAFE".to_string());
+            }
+            if !entry.performs.is_empty() {
+                flags.push(format!("performs [{}]", entry.performs.join(", ")));
+            }
+            if flags.is_empty() {
+                flags.push("pure (declared)".to_string());
+            }
+            println!("  {}:{} defextern {} — {}", filename, line, entry.name, flags.join(", "));
+            if entry.is_unsafe {
+                println!("    ⚠ requires Unsafe capability");
+            }
+        }
+    }
+    println!();
+
+    // Module effects summary
+    println!("== Module Effects ==");
+    if module_effects.is_empty() && ffi_entries.is_empty() {
+        println!("  (none declared)");
+    } else {
+        let mut all_effects: Vec<String> = module_effects;
+        for entry in &ffi_entries {
+            for eff in &entry.performs {
+                if !all_effects.contains(eff) {
+                    all_effects.push(eff.clone());
+                }
+            }
+            if entry.is_unsafe && !all_effects.iter().any(|e| e == "Unsafe") {
+                all_effects.push("Unsafe".to_string());
+            }
+        }
+        all_effects.sort();
+        all_effects.dedup();
+        if all_effects.is_empty() {
+            println!("  (none declared)");
+        } else {
+            println!("  {}: {}", filename, all_effects.join(", "));
+        }
+    }
+
+    Ok(())
+}
+
+struct AuditEntry {
+    name: String,
+    performs: Vec<String>,
+    is_unsafe: bool,
+    offset: usize,
+}
+
+fn parse_defextern_entry(items: &[Node], _source: &str, node: &Node) -> Option<AuditEntry> {
+    // (defextern name : type "c-name" [:performs [...]] [:unsafe])
+    let name = items.get(1).and_then(symbol_name)?;
+    let mut performs = Vec::new();
+    let mut is_unsafe = false;
+
+    for (i, item) in items.iter().enumerate() {
+        match keyword_name_ref(item) {
+            Some("performs") => {
+                if let Some(effects_node) = items.get(i + 1)
+                    && let NodeKind::Vector(effects) = &effects_node.kind
+                {
+                    for eff in effects {
+                        if let Some(eff_name) = symbol_name(eff) {
+                            performs.push(eff_name.to_string());
+                        }
+                    }
+                }
+            }
+            Some("unsafe") => {
+                is_unsafe = true;
+            }
+            _ => {}
+        }
+    }
+
+    Some(AuditEntry {
+        name: name.to_string(),
+        performs,
+        is_unsafe,
+        offset: node.span.start as usize,
+    })
+}
+
+fn symbol_name(node: &Node) -> Option<&str> {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+fn keyword_name_ref(node: &Node) -> Option<&str> {
+    match &node.kind {
+        NodeKind::Atom(Atom::Keyword { ns: None, name }) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+fn byte_offset_to_line(source: &str, offset: usize) -> usize {
+    source[..offset.min(source.len())]
+        .chars()
+        .filter(|c| *c == '\n')
+        .count()
+        + 1
 }
 
 fn command_pkg(command: PkgCommand) -> Result<(), String> {
@@ -1153,5 +1324,48 @@ mod tests {
         );
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "pure code should run in sandbox: {result:?}");
+    }
+
+    #[test]
+    fn parse_audit_with_input() {
+        let cli = Cli::try_parse_from(["nexl", "audit", "main.nexl"]).expect("parse");
+        match cli.command {
+            Command::Audit { input } => assert_eq!(input, PathBuf::from("main.nexl")),
+            other => panic!("expected Audit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn audit_reports_defextern() {
+        let source = r#"
+(defextern puts : (Fn [Str] -> Int) "puts" :performs [Console])
+(defextern malloc : (Fn [Int] -> Int) "malloc" :unsafe)
+(defextern sin : (Fn [Float] -> Float) "sin")
+"#;
+        let path = write_temp_file(source, "audit_ffi");
+        let result = command_audit(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "audit should succeed: {result:?}");
+    }
+
+    #[test]
+    fn audit_no_ffi_succeeds() {
+        let source = "(def x 1)";
+        let path = write_temp_file(source, "audit_clean");
+        let result = command_audit(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "audit should succeed with no FFI: {result:?}");
+    }
+
+    #[test]
+    fn audit_reports_module_effects() {
+        let source = r#"
+(module demo :exports [f] :performs [Console FileSystem])
+(defn f [x] x)
+"#;
+        let path = write_temp_file(source, "audit_effects");
+        let result = command_audit(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "audit should succeed: {result:?}");
     }
 }

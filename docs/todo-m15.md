@@ -10,8 +10,8 @@
 - [x] Deny uncovered effects at runtime (Stage 0: runtime check)
 
 ## Audit
-- [ ] Implement `nexl audit` — scan for FFI trust boundaries (`defextern`)
-- [ ] Report which effects each dependency performs (transitive)
+- [x] Implement `nexl audit` — scan for FFI trust boundaries (`defextern`)
+- [x] Report which effects each dependency performs (transitive)
 
 ## Blocked
 - [ ] (none)
