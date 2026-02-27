@@ -31,8 +31,14 @@ fn now(args: &[Value]) -> Result<Value, String> {
 fn millis(args: &[Value]) -> Result<Value, String> {
     match args {
         [Value::Int(n)] => Ok(Value::Int(*n)),
-        [other] => Err(format!("`time/millis` expected Int, got {}", other.type_name())),
-        _ => Err(format!("`time/millis` requires exactly 1 argument, got {}", args.len())),
+        [other] => Err(format!(
+            "`time/millis` expected Int, got {}",
+            other.type_name()
+        )),
+        _ => Err(format!(
+            "`time/millis` requires exactly 1 argument, got {}",
+            args.len()
+        )),
     }
 }
 

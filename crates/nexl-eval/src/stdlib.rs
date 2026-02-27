@@ -602,11 +602,7 @@ fn remove(args: &[Value]) -> Result<Value, String> {
             Ok(Value::Map(Rc::new(next)))
         }
         Value::Set(items) => {
-            let next: Vec<Value> = items
-                .iter()
-                .filter(|item| *item != key)
-                .cloned()
-                .collect();
+            let next: Vec<Value> = items.iter().filter(|item| *item != key).cloned().collect();
             Ok(Value::Set(Rc::new(next)))
         }
         other => Err(type_mismatch("remove", "Map or Set", other)),
@@ -775,9 +771,9 @@ fn map_fn(args: &[Value]) -> Result<Value, String> {
         } if type_name.as_ref() == "Option" => match ctor.as_ref() {
             "None" => Ok(option_none()),
             "Some" => {
-                let value = fields.first().ok_or_else(|| {
-                    "`map` expected Option.Some with 1 field, got 0".to_string()
-                })?;
+                let value = fields
+                    .first()
+                    .ok_or_else(|| "`map` expected Option.Some with 1 field, got 0".to_string())?;
                 let mapped = call1(func, value.clone())?;
                 Ok(option_some(mapped))
             }

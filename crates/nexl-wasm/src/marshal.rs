@@ -86,11 +86,7 @@ pub fn c_type_name(ty: &Type) -> Result<&'static str, MarshalError> {
 ///
 /// For example, `("add_ints", [Int, Int], Int)` produces:
 /// `"int64_t add_ints(int64_t p0, int64_t p1)"`.
-pub fn c_function_decl(
-    name: &str,
-    params: &[Type],
-    ret: &Type,
-) -> Result<String, MarshalError> {
+pub fn c_function_decl(name: &str, params: &[Type], ret: &Type) -> Result<String, MarshalError> {
     let ret_type = c_type_name(ret)?;
     let mut param_strs = Vec::with_capacity(params.len());
     for (i, p) in params.iter().enumerate() {
@@ -108,25 +104,46 @@ mod tests {
 
     #[test]
     fn test_marshal_strategy_int() {
-        assert_eq!(marshal_strategy(&Type::Int).unwrap(), MarshalStrategy::Direct);
-        assert_eq!(marshal_strategy(&Type::Int64).unwrap(), MarshalStrategy::Direct);
-        assert_eq!(marshal_strategy(&Type::Int32).unwrap(), MarshalStrategy::Direct);
+        assert_eq!(
+            marshal_strategy(&Type::Int).unwrap(),
+            MarshalStrategy::Direct
+        );
+        assert_eq!(
+            marshal_strategy(&Type::Int64).unwrap(),
+            MarshalStrategy::Direct
+        );
+        assert_eq!(
+            marshal_strategy(&Type::Int32).unwrap(),
+            MarshalStrategy::Direct
+        );
     }
 
     // ── Test 2 ──
 
     #[test]
     fn test_marshal_strategy_float() {
-        assert_eq!(marshal_strategy(&Type::Float).unwrap(), MarshalStrategy::Direct);
-        assert_eq!(marshal_strategy(&Type::F64).unwrap(), MarshalStrategy::Direct);
-        assert_eq!(marshal_strategy(&Type::F32).unwrap(), MarshalStrategy::Direct);
+        assert_eq!(
+            marshal_strategy(&Type::Float).unwrap(),
+            MarshalStrategy::Direct
+        );
+        assert_eq!(
+            marshal_strategy(&Type::F64).unwrap(),
+            MarshalStrategy::Direct
+        );
+        assert_eq!(
+            marshal_strategy(&Type::F32).unwrap(),
+            MarshalStrategy::Direct
+        );
     }
 
     // ── Test 3 ──
 
     #[test]
     fn test_marshal_strategy_bool() {
-        assert_eq!(marshal_strategy(&Type::Bool).unwrap(), MarshalStrategy::Direct);
+        assert_eq!(
+            marshal_strategy(&Type::Bool).unwrap(),
+            MarshalStrategy::Direct
+        );
     }
 
     // ── Test 4 ──
@@ -140,17 +157,29 @@ mod tests {
 
     #[test]
     fn test_marshal_strategy_unit() {
-        assert_eq!(marshal_strategy(&Type::Unit).unwrap(), MarshalStrategy::Void);
+        assert_eq!(
+            marshal_strategy(&Type::Unit).unwrap(),
+            MarshalStrategy::Void
+        );
     }
 
     // ── Test 6 ──
 
     #[test]
     fn test_marshal_strategy_sub_word() {
-        assert_eq!(marshal_strategy(&Type::Int8).unwrap(), MarshalStrategy::Widen);
-        assert_eq!(marshal_strategy(&Type::Int16).unwrap(), MarshalStrategy::Widen);
+        assert_eq!(
+            marshal_strategy(&Type::Int8).unwrap(),
+            MarshalStrategy::Widen
+        );
+        assert_eq!(
+            marshal_strategy(&Type::Int16).unwrap(),
+            MarshalStrategy::Widen
+        );
         assert_eq!(marshal_strategy(&Type::U8).unwrap(), MarshalStrategy::Widen);
-        assert_eq!(marshal_strategy(&Type::U16).unwrap(), MarshalStrategy::Widen);
+        assert_eq!(
+            marshal_strategy(&Type::U16).unwrap(),
+            MarshalStrategy::Widen
+        );
     }
 
     // ── Test 7 ──

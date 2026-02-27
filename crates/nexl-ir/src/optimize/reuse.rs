@@ -80,7 +80,8 @@ fn analyze_block_reuse(block: &Block, ops: &mut Vec<ReuseOp>) {
     for (i, bind) in block.binds.iter().enumerate() {
         // Mark producers whose last use is before this binding index as dead.
         for (&var, &last_idx) in &last_uses {
-            if last_idx < i && tuple_producers.contains_key(&var) && !used_producers.contains(&var) {
+            if last_idx < i && tuple_producers.contains_key(&var) && !used_producers.contains(&var)
+            {
                 dead_producers.push((var, tuple_producers[&var]));
                 used_producers.insert(var);
             }
@@ -146,13 +147,19 @@ fn for_each_var_in_rhs(rhs: &Rhs, f: &mut dyn FnMut(VarId)) {
         Rhs::Atom(a) => for_each_var_in_atom(a, f),
         Rhs::Call { func, args } => {
             for_each_var_in_atom(func, f);
-            for a in args { for_each_var_in_atom(a, f); }
+            for a in args {
+                for_each_var_in_atom(a, f);
+            }
         }
         Rhs::MakeClosure { captures, .. } => {
-            for (_, a) in captures { for_each_var_in_atom(a, f); }
+            for (_, a) in captures {
+                for_each_var_in_atom(a, f);
+            }
         }
         Rhs::MakeTuple { fields, .. } => {
-            for a in fields { for_each_var_in_atom(a, f); }
+            for a in fields {
+                for_each_var_in_atom(a, f);
+            }
         }
         Rhs::Project { base, .. } => for_each_var_in_atom(base, f),
     }
@@ -161,26 +168,38 @@ fn for_each_var_in_rhs(rhs: &Rhs, f: &mut dyn FnMut(VarId)) {
 fn for_each_var_in_tail(tail: &Tail, f: &mut dyn FnMut(VarId)) {
     match tail {
         Tail::Return(a) => for_each_var_in_atom(a, f),
-        Tail::If { cond, then_block, else_block } => {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
             for_each_var_in_atom(cond, f);
             for_each_var_in_block(then_block, f);
             for_each_var_in_block(else_block, f);
         }
         Tail::TailCall { func, args } => {
             for_each_var_in_atom(func, f);
-            for a in args { for_each_var_in_atom(a, f); }
+            for a in args {
+                for_each_var_in_atom(a, f);
+            }
         }
         Tail::Match { scrutinee, arms } => {
             for_each_var_in_atom(scrutinee, f);
-            for arm in arms { for_each_var_in_block(&arm.body, f); }
+            for arm in arms {
+                for_each_var_in_block(&arm.body, f);
+            }
         }
         Tail::Panic(a) => for_each_var_in_atom(a, f),
         Tail::Loop { vars, body } => {
-            for (_, a) in vars { for_each_var_in_atom(a, f); }
+            for (_, a) in vars {
+                for_each_var_in_atom(a, f);
+            }
             for_each_var_in_block(body, f);
         }
         Tail::Recur { args } => {
-            for a in args { for_each_var_in_atom(a, f); }
+            for a in args {
+                for_each_var_in_atom(a, f);
+            }
         }
     }
 }
@@ -194,7 +213,11 @@ fn for_each_var_in_block(block: &Block, f: &mut dyn FnMut(VarId)) {
 
 fn analyze_tail_reuse(tail: &Tail, ops: &mut Vec<ReuseOp>) {
     match tail {
-        Tail::If { then_block, else_block, .. } => {
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             analyze_block_reuse(then_block, ops);
             analyze_block_reuse(else_block, ops);
         }

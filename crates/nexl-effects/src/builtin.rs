@@ -229,7 +229,11 @@ mod tests {
         let concurrent = registry.get("Concurrent").unwrap();
         assert_eq!(concurrent.operations.len(), 3);
 
-        let op_names: Vec<&str> = concurrent.operations.iter().map(|o| o.name.as_str()).collect();
+        let op_names: Vec<&str> = concurrent
+            .operations
+            .iter()
+            .map(|o| o.name.as_str())
+            .collect();
         assert_eq!(op_names, vec!["fork", "join", "race"]);
 
         // fork takes a thunk and returns (Task a)
@@ -411,6 +415,9 @@ mod tests {
         let registry = BuiltinEffects::new();
         assert!(registry.get("NonExistent").is_none());
         assert!(registry.get("").is_none());
-        assert!(registry.get("concurrent").is_none(), "lookup is case-sensitive");
+        assert!(
+            registry.get("concurrent").is_none(),
+            "lookup is case-sensitive"
+        );
     }
 }

@@ -117,7 +117,10 @@ impl DupDropPass {
     /// Annotate `module` with dup/drop operations.
     pub fn run(&self, module: &Module) -> RcAnnotatedModule {
         let funcs = module.funcs.iter().map(|f| self.annotate_func(f)).collect();
-        RcAnnotatedModule { name: module.name.clone(), funcs }
+        RcAnnotatedModule {
+            name: module.name.clone(),
+            funcs,
+        }
     }
 
     fn annotate_func(&self, func: &FuncDef) -> RcAnnotatedFunc {
@@ -163,7 +166,10 @@ fn annotate_block(block: &Block) -> RcAnnotatedBlock {
         }
     }
 
-    RcAnnotatedBlock { steps, tail: Box::new(block.tail.as_ref().clone()) }
+    RcAnnotatedBlock {
+        steps,
+        tail: Box::new(block.tail.as_ref().clone()),
+    }
 }
 
 /// Returns `true` if `rhs` directly allocates a new heap value.
@@ -253,7 +259,10 @@ fn analyze_block_for_reuse(block: &RcAnnotatedBlock, map: &mut ReuseMap) {
         match step {
             RcStep::Rc(RcOp::Drop { var }) => {
                 if let Some(&n) = slot_counts.get(var) {
-                    available.push(ReuseToken { dropped_var: *var, slot_count: n });
+                    available.push(ReuseToken {
+                        dropped_var: *var,
+                        slot_count: n,
+                    });
                 }
             }
             RcStep::Bind(bind) => {
@@ -312,9 +321,14 @@ mod tests {
     // ─── 5. RcStep::Bind wraps LetBind ────────────────────────────────────
     #[test]
     fn rc_step_bind() {
-        let bind = LetBind { var: VarId(2), rhs: Rhs::Atom(Atom::Int(42)) };
+        let bind = LetBind {
+            var: VarId(2),
+            rhs: Rhs::Atom(Atom::Int(42)),
+        };
         let step = RcStep::Bind(bind);
-        let RcStep::Bind(b) = step else { panic!("expected RcStep::Bind") };
+        let RcStep::Bind(b) = step else {
+            panic!("expected RcStep::Bind")
+        };
         assert_eq!(b.var, VarId(2));
         assert!(matches!(b.rhs, Rhs::Atom(Atom::Int(42))));
     }
@@ -333,15 +347,26 @@ mod tests {
     // ─── helpers for pass tests ───────────────────────────────────────────
 
     fn make_block(binds: Vec<LetBind>, tail: Tail) -> Block {
-        Block { binds, tail: Box::new(tail) }
+        Block {
+            binds,
+            tail: Box::new(tail),
+        }
     }
 
     fn make_func(block: Block) -> FuncDef {
-        FuncDef { id: FuncId(0), name: Some("f".to_string()), params: vec![], body: block }
+        FuncDef {
+            id: FuncId(0),
+            name: Some("f".to_string()),
+            params: vec![],
+            body: block,
+        }
     }
 
     fn make_module(block: Block) -> Module {
-        Module { name: "test".to_string(), funcs: vec![make_func(block)] }
+        Module {
+            name: "test".to_string(),
+            funcs: vec![make_func(block)],
+        }
     }
 
     // ─── 7. No RC ops for int-only binds ─────────────────────────────────
@@ -350,7 +375,10 @@ mod tests {
         // Block: x = Int(42); Return(Var(x)) — no heap allocations
         let x = VarId(0);
         let block = make_block(
-            vec![LetBind { var: x, rhs: Rhs::Atom(Atom::Int(42)) }],
+            vec![LetBind {
+                var: x,
+                rhs: Rhs::Atom(Atom::Int(42)),
+            }],
             Tail::Return(Atom::Var(x)),
         );
         let m = make_module(block);
@@ -367,7 +395,13 @@ mod tests {
         // Block: v = MakeTuple("None", []); Return(Int(0)) — v is heap, not returned
         let v = VarId(0);
         let block = make_block(
-            vec![LetBind { var: v, rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] } }],
+            vec![LetBind {
+                var: v,
+                rhs: Rhs::MakeTuple {
+                    ctor: "None".to_string(),
+                    fields: vec![],
+                },
+            }],
             Tail::Return(Atom::Int(0)),
         );
         let m = make_module(block);
@@ -387,7 +421,10 @@ mod tests {
         let block = make_block(
             vec![LetBind {
                 var: v,
-                rhs: Rhs::MakeTuple { ctor: "Some".to_string(), fields: vec![Atom::Int(1)] },
+                rhs: Rhs::MakeTuple {
+                    ctor: "Some".to_string(),
+                    fields: vec![Atom::Int(1)],
+                },
             }],
             Tail::Return(Atom::Var(v)),
         );
@@ -402,7 +439,10 @@ mod tests {
     // ─── helper: manually build an RcAnnotatedBlock ───────────────────────
 
     fn make_annotated_block(steps: Vec<RcStep>, tail: Tail) -> RcAnnotatedBlock {
-        RcAnnotatedBlock { steps, tail: Box::new(tail) }
+        RcAnnotatedBlock {
+            steps,
+            tail: Box::new(tail),
+        }
     }
 
     fn make_annotated_module(block: RcAnnotatedBlock) -> RcAnnotatedModule {
@@ -429,12 +469,18 @@ mod tests {
             vec![
                 RcStep::Bind(LetBind {
                     var: v1,
-                    rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] },
+                    rhs: Rhs::MakeTuple {
+                        ctor: "None".to_string(),
+                        fields: vec![],
+                    },
                 }),
                 RcStep::Rc(RcOp::Drop { var: v1 }),
                 RcStep::Bind(LetBind {
                     var: v2,
-                    rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] },
+                    rhs: Rhs::MakeTuple {
+                        ctor: "None".to_string(),
+                        fields: vec![],
+                    },
                 }),
             ],
             Tail::Return(Atom::Var(v2)),
@@ -465,7 +511,10 @@ mod tests {
                 RcStep::Rc(RcOp::Drop { var: v1 }),
                 RcStep::Bind(LetBind {
                     var: v2,
-                    rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] },
+                    rhs: Rhs::MakeTuple {
+                        ctor: "None".to_string(),
+                        fields: vec![],
+                    },
                 }),
             ],
             Tail::Return(Atom::Var(v2)),
@@ -483,7 +532,10 @@ mod tests {
         let block = make_annotated_block(
             vec![RcStep::Bind(LetBind {
                 var: v1,
-                rhs: Rhs::MakeTuple { ctor: "None".to_string(), fields: vec![] },
+                rhs: Rhs::MakeTuple {
+                    ctor: "None".to_string(),
+                    fields: vec![],
+                },
             })],
             Tail::Return(Atom::Var(v1)),
         );

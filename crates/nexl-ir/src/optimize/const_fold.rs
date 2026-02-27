@@ -39,10 +39,7 @@ fn fold_block(block: &Block) -> Block {
                 // Don't emit this binding — it's been propagated.
             }
             _ => {
-                new_binds.push(LetBind {
-                    var: bind.var,
-                    rhs,
-                });
+                new_binds.push(LetBind { var: bind.var, rhs });
             }
         }
     }
@@ -58,7 +55,13 @@ fn fold_block(block: &Block) -> Block {
 fn is_propagatable(atom: &Atom) -> bool {
     matches!(
         atom,
-        Atom::Int(_) | Atom::Float(_) | Atom::Bool(_) | Atom::Unit | Atom::Str(_) | Atom::FuncRef(_) | Atom::Var(_)
+        Atom::Int(_)
+            | Atom::Float(_)
+            | Atom::Bool(_)
+            | Atom::Unit
+            | Atom::Str(_)
+            | Atom::FuncRef(_)
+            | Atom::Var(_)
     )
 }
 
@@ -66,7 +69,11 @@ fn is_propagatable(atom: &Atom) -> bool {
 fn fold_tail(tail: &Tail) -> Tail {
     match tail {
         // Constant conditional: if true → then, if false → else.
-        Tail::If { cond: Atom::Bool(true), then_block, .. } => {
+        Tail::If {
+            cond: Atom::Bool(true),
+            then_block,
+            ..
+        } => {
             // Flatten: the then_block's binds become part of the outer block,
             // but since we return a Tail, we wrap it as a single-arm thing.
             // Actually, we need to return a Tail. The then_block has its own
@@ -101,7 +108,11 @@ fn fold_tail(tail: &Tail) -> Tail {
                 }
             }
         }
-        Tail::If { cond: Atom::Bool(false), else_block, .. } => {
+        Tail::If {
+            cond: Atom::Bool(false),
+            else_block,
+            ..
+        } => {
             let folded = fold_block(else_block);
             if folded.binds.is_empty() {
                 *folded.tail
@@ -116,7 +127,11 @@ fn fold_tail(tail: &Tail) -> Tail {
                 }
             }
         }
-        Tail::If { cond, then_block, else_block } => Tail::If {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => Tail::If {
             cond: cond.clone(),
             then_block: fold_block(then_block),
             else_block: fold_block(else_block),
@@ -177,7 +192,11 @@ fn apply_subst_rhs(rhs: &Rhs, subst: &HashMap<VarId, Atom>) -> Rhs {
 fn apply_subst_tail(tail: &Tail, subst: &HashMap<VarId, Atom>) -> Tail {
     match tail {
         Tail::Return(a) => Tail::Return(apply_subst_atom(a, subst)),
-        Tail::If { cond, then_block, else_block } => Tail::If {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => Tail::If {
             cond: apply_subst_atom(cond, subst),
             then_block: apply_subst_block(then_block, subst),
             else_block: apply_subst_block(else_block, subst),
@@ -221,10 +240,7 @@ fn apply_subst_block(block: &Block, outer_subst: &HashMap<VarId, Atom>) -> Block
                 subst.insert(bind.var, atom.clone());
             }
             _ => {
-                new_binds.push(LetBind {
-                    var: bind.var,
-                    rhs,
-                });
+                new_binds.push(LetBind { var: bind.var, rhs });
             }
         }
     }
@@ -299,9 +315,18 @@ mod tests {
         // let %0 = 7; let %1 = %0; let %2 = %1; return %2  →  return 7
         let block = Block {
             binds: vec![
-                LetBind { var: VarId(0), rhs: Rhs::Atom(Atom::Int(7)) },
-                LetBind { var: VarId(1), rhs: Rhs::Atom(Atom::Var(VarId(0))) },
-                LetBind { var: VarId(2), rhs: Rhs::Atom(Atom::Var(VarId(1))) },
+                LetBind {
+                    var: VarId(0),
+                    rhs: Rhs::Atom(Atom::Int(7)),
+                },
+                LetBind {
+                    var: VarId(1),
+                    rhs: Rhs::Atom(Atom::Var(VarId(0))),
+                },
+                LetBind {
+                    var: VarId(2),
+                    rhs: Rhs::Atom(Atom::Var(VarId(1))),
+                },
             ],
             tail: Box::new(Tail::Return(Atom::Var(VarId(2)))),
         };
@@ -398,7 +423,10 @@ mod tests {
         };
         let result = fold_constants(&module);
         assert!(result.funcs[0].body.binds.is_empty());
-        assert!(matches!(*result.funcs[0].body.tail, Tail::Return(Atom::Int(42))));
+        assert!(matches!(
+            *result.funcs[0].body.tail,
+            Tail::Return(Atom::Int(42))
+        ));
     }
 
     #[test]

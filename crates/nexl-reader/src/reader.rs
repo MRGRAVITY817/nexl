@@ -1,15 +1,6 @@
 use nexl_ast::{
-    Atom,
-    Comment,
-    FileId,
-    ImportDecl,
-    ImportKind,
-    ModuleDecl,
-    Node,
-    NodeKind,
-    Span,
-    parse_import_decl,
-    parse_module_decl,
+    Atom, Comment, FileId, ImportDecl, ImportKind, ModuleDecl, Node, NodeKind, Span,
+    parse_import_decl, parse_module_decl,
 };
 use nexl_errors::{Diagnostic, Label, Severity, codes};
 
@@ -40,7 +31,10 @@ pub fn read(src: &str, file_id: FileId) -> Result<Vec<Node>, Box<Diagnostic>> {
 pub fn read_module_decl(src: &str, file_id: FileId) -> Result<ModuleDecl, Box<Diagnostic>> {
     let nodes = read(src, file_id)?;
     let first = nodes.first().ok_or_else(|| {
-        let mut d = Diagnostic::new(Severity::Error, "expected a module declaration at top of file");
+        let mut d = Diagnostic::new(
+            Severity::Error,
+            "expected a module declaration at top of file",
+        );
         d.push_label(Label::new(
             Span::point(file_id, 0),
             "module form expected here",
@@ -50,7 +44,10 @@ pub fn read_module_decl(src: &str, file_id: FileId) -> Result<ModuleDecl, Box<Di
     })?;
 
     let NodeKind::List(items) = &first.kind else {
-        return Err(expected_module_decl(first.span, "first form is not a `module` declaration"));
+        return Err(expected_module_decl(
+            first.span,
+            "first form is not a `module` declaration",
+        ));
     };
 
     let head = items
@@ -80,7 +77,10 @@ pub fn read_module_decl(src: &str, file_id: FileId) -> Result<ModuleDecl, Box<Di
 }
 
 fn expected_module_decl(span: Span, label: &str) -> Box<Diagnostic> {
-    let mut d = Diagnostic::new(Severity::Error, "expected a module declaration at top of file");
+    let mut d = Diagnostic::new(
+        Severity::Error,
+        "expected a module declaration at top of file",
+    );
     d.push_label(Label::new(span, label));
     d.set_help("add a `(module <name> ...)` form as the first form in the file");
     Box::new(d)
@@ -100,7 +100,10 @@ pub fn read_import_decl(src: &str, file_id: FileId) -> Result<ImportDecl, Box<Di
     })?;
 
     let NodeKind::List(items) = &first.kind else {
-        return Err(expected_import_decl(first.span, "first form is not an `import` declaration"));
+        return Err(expected_import_decl(
+            first.span,
+            "first form is not an `import` declaration",
+        ));
     };
 
     let head = items
@@ -301,13 +304,7 @@ impl<'src> Reader<'src> {
                 text,
                 text_span,
             } => {
-                let head = Node::atom(
-                    Atom::Symbol {
-                        ns: None,
-                        name,
-                    },
-                    tok.span,
-                );
+                let head = Node::atom(Atom::Symbol { ns: None, name }, tok.span);
                 let text_node = Node::atom(Atom::Str(text), text_span);
                 let loc_node = make_src_loc(text_span);
                 Ok(Node::new(
@@ -1048,10 +1045,7 @@ mod tests {
         let NodeKind::Atom(Atom::Str(text)) = &items[1].kind else {
             panic!("expected Str");
         };
-        assert_eq!(
-            text,
-            "SELECT name FROM users WHERE id = {user-id}"
-        );
+        assert_eq!(text, "SELECT name FROM users WHERE id = {user-id}");
         let NodeKind::Map(pairs) = &items[2].kind else {
             panic!("expected map loc");
         };
@@ -1521,8 +1515,7 @@ mod tests {
     // ── 18. import_decl_alias ───────────────────────────────────────────────
     #[test]
     fn import_decl_alias() {
-        let decl = read_import_decl("(import my-lib.http :as http)", fid())
-            .expect("parse failed");
+        let decl = read_import_decl("(import my-lib.http :as http)", fid()).expect("parse failed");
         assert_eq!(decl.module_path, "my-lib.http");
         assert_eq!(decl.kind, ImportKind::Alias("http".to_string()));
     }

@@ -41,21 +41,33 @@ pub fn entries() -> Vec<StdlibEntry> {
 fn one_arg<'a>(op: &str, args: &'a [Value]) -> Result<&'a Value, String> {
     match args {
         [a] => Ok(a),
-        _ => Err(format!("`math/{op}` requires exactly 1 argument, got {}", args.len())),
+        _ => Err(format!(
+            "`math/{op}` requires exactly 1 argument, got {}",
+            args.len()
+        )),
     }
 }
 
 fn two_args<'a>(op: &str, args: &'a [Value]) -> Result<(&'a Value, &'a Value), String> {
     match args {
         [a, b] => Ok((a, b)),
-        _ => Err(format!("`math/{op}` requires exactly 2 arguments, got {}", args.len())),
+        _ => Err(format!(
+            "`math/{op}` requires exactly 2 arguments, got {}",
+            args.len()
+        )),
     }
 }
 
-fn three_args<'a>(op: &str, args: &'a [Value]) -> Result<(&'a Value, &'a Value, &'a Value), String> {
+fn three_args<'a>(
+    op: &str,
+    args: &'a [Value],
+) -> Result<(&'a Value, &'a Value, &'a Value), String> {
     match args {
         [a, b, c] => Ok((a, b, c)),
-        _ => Err(format!("`math/{op}` requires exactly 3 arguments, got {}", args.len())),
+        _ => Err(format!(
+            "`math/{op}` requires exactly 3 arguments, got {}",
+            args.len()
+        )),
     }
 }
 
@@ -63,7 +75,10 @@ fn as_float(op: &str, v: &Value) -> Result<f64, String> {
     match v {
         Value::Float(n) => Ok(*n),
         Value::Int(n) => Ok(*n as f64),
-        other => Err(format!("`math/{op}` expected Float or Int, got {}", other.type_name())),
+        other => Err(format!(
+            "`math/{op}` expected Float or Int, got {}",
+            other.type_name()
+        )),
     }
 }
 
@@ -77,7 +92,10 @@ fn abs(args: &[Value]) -> Result<Value, String> {
     match v {
         Value::Int(n) => Ok(Value::Int(n.wrapping_abs())),
         Value::Float(n) => Ok(Value::Float(n.abs())),
-        other => Err(format!("`math/abs` expected Int or Float, got {}", other.type_name())),
+        other => Err(format!(
+            "`math/abs` expected Int or Float, got {}",
+            other.type_name()
+        )),
     }
 }
 
@@ -261,7 +279,10 @@ mod tests {
 
     #[test]
     fn test_pow() {
-        assert_eq!(pow(&[Value::Float(2.0), Value::Float(3.0)]).unwrap(), Value::Float(8.0));
+        assert_eq!(
+            pow(&[Value::Float(2.0), Value::Float(3.0)]).unwrap(),
+            Value::Float(8.0)
+        );
     }
 
     #[test]

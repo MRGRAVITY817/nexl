@@ -403,8 +403,7 @@ pub fn protocol_loop<R: BufRead, W: Write>(input: R, mut output: W) -> io::Resul
             Ok(req) => req,
             Err(e) => {
                 let resp = Response::simple_error(&format!("invalid JSON: {e}"));
-                serde_json::to_writer(&mut output, &resp)
-                    .map_err(io::Error::other)?;
+                serde_json::to_writer(&mut output, &resp).map_err(io::Error::other)?;
                 writeln!(output)?;
                 output.flush()?;
                 continue;
@@ -412,8 +411,7 @@ pub fn protocol_loop<R: BufRead, W: Write>(input: R, mut output: W) -> io::Resul
         };
 
         let response = handler.handle(&request);
-        serde_json::to_writer(&mut output, &response)
-            .map_err(io::Error::other)?;
+        serde_json::to_writer(&mut output, &response).map_err(io::Error::other)?;
         writeln!(output)?;
         output.flush()?;
     }
@@ -472,10 +470,7 @@ mod tests {
     #[test]
     fn deps_returns_sorted_symbols() {
         let mut handler = ProtocolHandler::new();
-        let resp = handle_json(
-            &mut handler,
-            r#"{"op": "deps", "code": "(+ x (* y z))"}"#,
-        );
+        let resp = handle_json(&mut handler, r#"{"op": "deps", "code": "(+ x (* y z))"}"#);
         assert_eq!(resp.status, "ok");
         let deps = resp.deps.unwrap();
         assert!(deps.contains(&"x".to_string()));
@@ -488,10 +483,7 @@ mod tests {
     #[test]
     fn expand_returns_parsed_form() {
         let mut handler = ProtocolHandler::new();
-        let resp = handle_json(
-            &mut handler,
-            r#"{"op": "expand", "code": "(+ 1 2)"}"#,
-        );
+        let resp = handle_json(&mut handler, r#"{"op": "expand", "code": "(+ 1 2)"}"#);
         assert_eq!(resp.status, "ok");
         assert!(resp.expansion.is_some());
     }

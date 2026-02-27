@@ -69,7 +69,8 @@ impl ResourceTracker {
     pub fn close(&mut self, name: &str) -> Result<(), ResourceLifecycleError> {
         match self.resources.get(name) {
             Some(ResourceState::Live) => {
-                self.resources.insert(name.to_string(), ResourceState::Closed);
+                self.resources
+                    .insert(name.to_string(), ResourceState::Closed);
                 Ok(())
             }
             Some(ResourceState::Closed) => Err(ResourceLifecycleError::DoubleFree {
@@ -113,9 +114,7 @@ impl ResourceTracker {
         names.sort(); // deterministic ordering
         for name in names {
             if self.resources[name] == ResourceState::Live {
-                errors.push(ResourceLifecycleError::Leaked {
-                    name: name.clone(),
-                });
+                errors.push(ResourceLifecycleError::Leaked { name: name.clone() });
             }
         }
         errors

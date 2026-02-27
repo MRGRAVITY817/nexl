@@ -104,8 +104,8 @@ impl Compiler {
         let isa = host_isa();
         let libcall_names: Box<dyn Fn(codegen::ir::LibCall) -> String + Send + Sync> =
             Box::new(|lc| lc.to_string());
-        let builder = ObjectBuilder::new(isa, "nexl_module", libcall_names)
-            .expect("valid object builder");
+        let builder =
+            ObjectBuilder::new(isa, "nexl_module", libcall_names).expect("valid object builder");
         let mut module = ObjectModule::new(builder);
         // Declare the runtime allocator: nexl_alloc(size_bytes: i64) -> i64
         let mut alloc_sig = module.make_signature();
@@ -172,10 +172,7 @@ impl Compiler {
         alloc_func: Option<FuncId>,
     ) -> Result<(), CompileError> {
         let sig = build_signature(&self.module, func_def);
-        self.ctx.func = Function::with_name_signature(
-            codegen::ir::UserFuncName::default(),
-            sig,
-        );
+        self.ctx.func = Function::with_name_signature(codegen::ir::UserFuncName::default(), sig);
 
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.func_builder_ctx);
         let entry_block = builder.create_block();
@@ -241,7 +238,15 @@ fn translate_block(
         var_map.insert(bind.var, var);
     }
 
-    translate_tail(&block.tail, module, builder, var_map, next_var, func_ids, alloc_func);
+    translate_tail(
+        &block.tail,
+        module,
+        builder,
+        var_map,
+        next_var,
+        func_ids,
+        alloc_func,
+    );
 }
 
 /// Translate an atom to a Cranelift value.
@@ -324,10 +329,7 @@ fn translate_rhs(
                 }
             }
         }
-        nexl_ir::Rhs::MakeClosure {
-            func_id,
-            captures,
-        } => {
+        nexl_ir::Rhs::MakeClosure { func_id, captures } => {
             let layout = crate::closure::ClosureLayout::new(captures.len());
             let size = layout.size_bytes() as i64;
 
@@ -341,7 +343,9 @@ fn translate_rhs(
             // Store header.
             let header = value::HeapHeader::new(value::HeapTag::Closure, layout.field_count());
             let header_val = builder.ins().iconst(I64, header.raw() as i64);
-            builder.ins().store(codegen::ir::MemFlags::new(), header_val, ptr, 0);
+            builder
+                .ins()
+                .store(codegen::ir::MemFlags::new(), header_val, ptr, 0);
 
             // Initialize refcount to 1 (Perceus: freshly allocated = unique).
             let rc_val = builder.ins().iconst(I64, crate::rc::INITIAL_RC);
@@ -354,16 +358,22 @@ fn translate_rhs(
 
             // Store code pointer (func_id as integer placeholder).
             let code_ptr = builder.ins().iconst(I64, func_id.0 as i64);
-            builder
-                .ins()
-                .store(codegen::ir::MemFlags::new(), code_ptr, ptr, layout.code_ptr_offset() as i32);
+            builder.ins().store(
+                codegen::ir::MemFlags::new(),
+                code_ptr,
+                ptr,
+                layout.code_ptr_offset() as i32,
+            );
 
             // Store arity (number of params of the target function — not available here,
             // so store capture count as a proxy; the real arity comes from the func signature).
             let arity_val = builder.ins().iconst(I64, captures.len() as i64);
-            builder
-                .ins()
-                .store(codegen::ir::MemFlags::new(), arity_val, ptr, layout.arity_offset() as i32);
+            builder.ins().store(
+                codegen::ir::MemFlags::new(),
+                arity_val,
+                ptr,
+                layout.arity_offset() as i32,
+            );
 
             // Store captured values.
             for (i, (_cap_var, cap_atom)) in captures.iter().enumerate() {
@@ -414,15 +424,12 @@ fn translate_tail(
         } => {
             let cond_val = translate_atom(cond, builder, var_map);
             // Compare tagged bool against `true` encoding (0xA).
-            let true_val =
-                builder
-                    .ins()
-                    .iconst(I64, value::NativeValue::bool(true).raw() as i64);
-            let cmp = builder.ins().icmp(
-                codegen::ir::condcodes::IntCC::Equal,
-                cond_val,
-                true_val,
-            );
+            let true_val = builder
+                .ins()
+                .iconst(I64, value::NativeValue::bool(true).raw() as i64);
+            let cmp = builder
+                .ins()
+                .icmp(codegen::ir::condcodes::IntCC::Equal, cond_val, true_val);
 
             let then_bb = builder.create_block();
             let else_bb = builder.create_block();
@@ -431,11 +438,15 @@ fn translate_tail(
 
             builder.switch_to_block(then_bb);
             builder.seal_block(then_bb);
-            translate_block(then_block, module, builder, var_map, next_var, func_ids, alloc_func);
+            translate_block(
+                then_block, module, builder, var_map, next_var, func_ids, alloc_func,
+            );
 
             builder.switch_to_block(else_bb);
             builder.seal_block(else_bb);
-            translate_block(else_block, module, builder, var_map, next_var, func_ids, alloc_func);
+            translate_block(
+                else_block, module, builder, var_map, next_var, func_ids, alloc_func,
+            );
         }
         nexl_ir::Tail::TailCall { func, args } => {
             // Use Cranelift's return_call for true tail call optimization (spec §13.6).
@@ -548,7 +559,9 @@ fn translate_block_for_loop(
             builder.ins().jump(loop_bb, &[]);
         }
         other => {
-            translate_tail(other, module, builder, var_map, next_var, func_ids, alloc_func);
+            translate_tail(
+                other, module, builder, var_map, next_var, func_ids, alloc_func,
+            );
         }
     }
 }
@@ -591,7 +604,10 @@ mod tests {
     #[test]
     fn test_compile_return_int() {
         // fn f0() { return 42 }
-        let ir = make_module("test", vec![return_func(0, "f0", vec![], nexl_ir::Atom::Int(42))]);
+        let ir = make_module(
+            "test",
+            vec![return_func(0, "f0", vec![], nexl_ir::Atom::Int(42))],
+        );
         let mut compiler = Compiler::new();
         compiler.compile_module(&ir).expect("compilation succeeds");
     }
@@ -641,7 +657,12 @@ mod tests {
         let ir = make_module(
             "test",
             vec![
-                return_func(0, "f0", vec![nexl_ir::VarId(0)], nexl_ir::Atom::Var(nexl_ir::VarId(0))),
+                return_func(
+                    0,
+                    "f0",
+                    vec![nexl_ir::VarId(0)],
+                    nexl_ir::Atom::Var(nexl_ir::VarId(0)),
+                ),
                 nexl_ir::FuncDef {
                     id: nexl_ir::FuncId(1),
                     name: Some("f1".to_string()),
@@ -654,7 +675,9 @@ mod tests {
                                 args: vec![nexl_ir::Atom::Int(42)],
                             },
                         }],
-                        tail: Box::new(nexl_ir::Tail::Return(nexl_ir::Atom::Var(nexl_ir::VarId(0)))),
+                        tail: Box::new(nexl_ir::Tail::Return(nexl_ir::Atom::Var(nexl_ir::VarId(
+                            0,
+                        )))),
                     },
                 },
             ],
@@ -721,7 +744,12 @@ mod tests {
         let ir = make_module(
             "test",
             vec![
-                return_func(0, "f0", vec![nexl_ir::VarId(0)], nexl_ir::Atom::Var(nexl_ir::VarId(0))),
+                return_func(
+                    0,
+                    "f0",
+                    vec![nexl_ir::VarId(0)],
+                    nexl_ir::Atom::Var(nexl_ir::VarId(0)),
+                ),
                 nexl_ir::FuncDef {
                     id: nexl_ir::FuncId(1),
                     name: Some("f1".to_string()),
@@ -734,7 +762,9 @@ mod tests {
                                 captures: vec![(nexl_ir::VarId(10), nexl_ir::Atom::Int(42))],
                             },
                         }],
-                        tail: Box::new(nexl_ir::Tail::Return(nexl_ir::Atom::Var(nexl_ir::VarId(0)))),
+                        tail: Box::new(nexl_ir::Tail::Return(nexl_ir::Atom::Var(nexl_ir::VarId(
+                            0,
+                        )))),
                     },
                 },
             ],
@@ -774,10 +804,7 @@ mod tests {
 
         if cfg!(target_os = "macos") {
             // Mach-O magic: 0xFEEDFACF (64-bit) or 0xCFFAEDFE (little-endian)
-            assert!(
-                bytes.len() >= 4,
-                "object file too small for Mach-O header"
-            );
+            assert!(bytes.len() >= 4, "object file too small for Mach-O header");
             let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             assert!(
                 magic == 0xFEED_FACF || magic == 0xCFFA_EDFE,

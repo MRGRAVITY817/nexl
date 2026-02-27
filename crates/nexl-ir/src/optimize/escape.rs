@@ -62,7 +62,11 @@ fn collect_heap_vars(block: &Block, out: &mut HashSet<VarId>) {
 
 fn collect_heap_vars_tail(tail: &Tail, out: &mut HashSet<VarId>) {
     match tail {
-        Tail::If { then_block, else_block, .. } => {
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_heap_vars(then_block, out);
             collect_heap_vars(else_block, out);
         }
@@ -128,7 +132,11 @@ fn collect_escaping_tail(tail: &Tail, escaping: &mut HashSet<VarId>) {
                 mark_if_var(a, escaping);
             }
         }
-        Tail::If { then_block, else_block, .. } => {
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_escaping_block(then_block, escaping);
             collect_escaping_block(else_block, escaping);
         }

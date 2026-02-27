@@ -357,11 +357,7 @@ mod tests {
         assert_eq!(decl.exports, None);
         assert_eq!(
             decl.performs,
-            Some(vec![
-                "Net".to_string(),
-                "IO".to_string(),
-                "Log".to_string(),
-            ])
+            Some(vec!["Net".to_string(), "IO".to_string(), "Log".to_string(),])
         );
     }
 
@@ -445,11 +441,7 @@ mod tests {
         assert_eq!(decl.module_path, "foo.bar");
         assert_eq!(
             decl.kind,
-            ImportKind::Refer(vec![
-                "a".to_string(),
-                "b".to_string(),
-                "c".to_string(),
-            ])
+            ImportKind::Refer(vec!["a".to_string(), "b".to_string(), "c".to_string(),])
         );
     }
 

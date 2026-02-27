@@ -11,7 +11,10 @@ use crate::StdlibEntry;
 /// Return all `core` module function entries.
 pub fn entries() -> Vec<StdlibEntry> {
     vec![
-        ("identity", identity as fn(&[Value]) -> Result<Value, String>),
+        (
+            "identity",
+            identity as fn(&[Value]) -> Result<Value, String>,
+        ),
         ("comp", comp),
         ("partial", partial),
         ("constantly", constantly),

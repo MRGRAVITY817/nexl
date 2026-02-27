@@ -57,7 +57,11 @@ fn collect_ctor_shapes_block(block: &Block, shapes: &mut HashMap<String, usize>)
 
 fn collect_ctor_shapes_tail(tail: &Tail, shapes: &mut HashMap<String, usize>) {
     match tail {
-        Tail::If { then_block, else_block, .. } => {
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_ctor_shapes_block(then_block, shapes);
             collect_ctor_shapes_block(else_block, shapes);
         }
@@ -93,7 +97,11 @@ fn collect_closure_shapes_block(block: &Block, sizes: &mut HashSet<usize>) {
 
 fn collect_closure_shapes_tail(tail: &Tail, sizes: &mut HashSet<usize>) {
     match tail {
-        Tail::If { then_block, else_block, .. } => {
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_closure_shapes_block(then_block, sizes);
             collect_closure_shapes_block(else_block, sizes);
         }
@@ -208,10 +216,7 @@ mod tests {
                         var: VarId(1),
                         rhs: Rhs::MakeClosure {
                             func_id: FuncId(2),
-                            captures: vec![
-                                (VarId(10), Atom::Int(1)),
-                                (VarId(11), Atom::Int(2)),
-                            ],
+                            captures: vec![(VarId(10), Atom::Int(1)), (VarId(11), Atom::Int(2))],
                         },
                     },
                 ],

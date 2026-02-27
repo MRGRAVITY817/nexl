@@ -72,7 +72,10 @@ impl Expander {
             MacroKind::Builtin(BuiltinMacro::Unless),
         );
         macros.insert("cond".to_string(), MacroKind::Builtin(BuiltinMacro::Cond));
-        macros.insert("->".to_string(), MacroKind::Builtin(BuiltinMacro::ThreadFirst));
+        macros.insert(
+            "->".to_string(),
+            MacroKind::Builtin(BuiltinMacro::ThreadFirst),
+        );
         macros.insert(
             "->>".to_string(),
             MacroKind::Builtin(BuiltinMacro::ThreadLast),
@@ -194,7 +197,9 @@ fn parse_defmacro(node: &Node) -> Result<Option<(String, MacroKind)>, MacroError
         return Ok(None);
     }
     if items.len() < 4 {
-        return Err(MacroError::Message("defmacro requires name, params, body".to_string()));
+        return Err(MacroError::Message(
+            "defmacro requires name, params, body".to_string(),
+        ));
     }
     let name = symbol_name(&items[1])
         .ok_or_else(|| MacroError::Message("defmacro name must be a symbol".to_string()))?
@@ -204,7 +209,7 @@ fn parse_defmacro(node: &Node) -> Result<Option<(String, MacroKind)>, MacroError
         _ => {
             return Err(MacroError::Message(
                 "defmacro params must be a vector".to_string(),
-            ))
+            ));
         }
     };
     let (args, rest) = parse_params(params)?;
@@ -261,7 +266,7 @@ fn parse_defmacro_elab(node: &Node) -> Result<Option<(String, MacroKind)>, Macro
         _ => {
             return Err(MacroError::Message(
                 "defmacro-elab params must be a vector".to_string(),
-            ))
+            ));
         }
     };
     let (args, rest) = parse_params_typed(params)?;
@@ -322,9 +327,8 @@ fn parse_defreader_text(node: &Node) -> Result<Option<(String, MacroKind)>, Macr
             "defreader-text requires tag, params, body".to_string(),
         ));
     }
-    let raw_tag = symbol_name(&items[1]).ok_or_else(|| {
-        MacroError::Message("defreader-text tag must be a symbol".to_string())
-    })?;
+    let raw_tag = symbol_name(&items[1])
+        .ok_or_else(|| MacroError::Message("defreader-text tag must be a symbol".to_string()))?;
     let tag = raw_tag
         .strip_prefix('#')
         .ok_or_else(|| MacroError::Message("defreader-text tag must start with #".to_string()))?;
@@ -339,7 +343,7 @@ fn parse_defreader_text(node: &Node) -> Result<Option<(String, MacroKind)>, Macr
         _ => {
             return Err(MacroError::Message(
                 "defreader-text params must be a vector".to_string(),
-            ))
+            ));
         }
     };
     let (args, rest) = parse_params_typed(params)?;
@@ -427,9 +431,9 @@ fn parse_params(params: &[Node]) -> Result<(Vec<String>, Option<String>), MacroE
     while let Some(param) = iter.next() {
         match &param.kind {
             NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "&" => {
-                let rest_node = iter
-                    .next()
-                    .ok_or_else(|| MacroError::Message("expected rest param after &".to_string()))?;
+                let rest_node = iter.next().ok_or_else(|| {
+                    MacroError::Message("expected rest param after &".to_string())
+                })?;
                 let rest_name = symbol_name(rest_node)
                     .ok_or_else(|| MacroError::Message("rest param must be a symbol".to_string()))?
                     .to_string();
@@ -444,7 +448,7 @@ fn parse_params(params: &[Node]) -> Result<(Vec<String>, Option<String>), MacroE
             _ => {
                 return Err(MacroError::Message(
                     "macro params must be symbols".to_string(),
-                ))
+                ));
             }
         }
     }
@@ -499,7 +503,7 @@ fn parse_params_typed(params: &[Node]) -> Result<(Vec<String>, Option<String>), 
             _ => {
                 return Err(MacroError::Message(
                     "macro params must be symbols".to_string(),
-                ))
+                ));
             }
         }
     }
@@ -512,10 +516,14 @@ fn expand_macro_call(def: &ProcMacro, call: &Node) -> Result<Node, MacroError> {
     };
     let args = &items[1..];
     if args.len() < def.params.len() {
-        return Err(MacroError::Message("macro call has too few arguments".to_string()));
+        return Err(MacroError::Message(
+            "macro call has too few arguments".to_string(),
+        ));
     }
     if def.rest.is_none() && args.len() > def.params.len() {
-        return Err(MacroError::Message("macro call has too many arguments".to_string()));
+        return Err(MacroError::Message(
+            "macro call has too many arguments".to_string(),
+        ));
     }
 
     let intro_scope = Scope::fresh();
@@ -534,7 +542,9 @@ fn expand_macro_call(def: &ProcMacro, call: &Node) -> Result<Node, MacroError> {
     }
     bindings.insert(
         "&form".to_string(),
-        MacroBinding::One(SyntaxObj::new(call.clone(), ScopeSet::new()).add_scope_deep(intro_scope)),
+        MacroBinding::One(
+            SyntaxObj::new(call.clone(), ScopeSet::new()).add_scope_deep(intro_scope),
+        ),
     );
 
     let mut ctx = ExpansionCtx::new(bindings);
@@ -609,7 +619,10 @@ fn expand_builtin_macro(def: BuiltinMacro, call: &Node) -> Result<Node, MacroErr
     Ok(flipped.node)
 }
 
-fn parse_syntax_pattern(name: &str, pattern: &Node) -> Result<(Vec<String>, Option<String>), MacroError> {
+fn parse_syntax_pattern(
+    name: &str,
+    pattern: &Node,
+) -> Result<(Vec<String>, Option<String>), MacroError> {
     let NodeKind::List(items) = &pattern.kind else {
         return Err(MacroError::Message(
             "defmacro-syntax pattern must be a list".to_string(),
@@ -620,8 +633,9 @@ fn parse_syntax_pattern(name: &str, pattern: &Node) -> Result<(Vec<String>, Opti
             "defmacro-syntax pattern cannot be empty".to_string(),
         ));
     };
-    let head_name = symbol_name(head)
-        .ok_or_else(|| MacroError::Message("defmacro-syntax pattern head must be symbol".to_string()))?;
+    let head_name = symbol_name(head).ok_or_else(|| {
+        MacroError::Message("defmacro-syntax pattern head must be symbol".to_string())
+    })?;
     if head_name != name {
         return Err(MacroError::Message(
             "defmacro-syntax pattern head must match macro name".to_string(),
@@ -724,7 +738,7 @@ fn eval_macro_body(node: &Node, ctx: &mut ExpansionCtx) -> Result<SyntaxObj, Mac
                 NodeOrSplice::Splice(_) => {
                     return Err(MacroError::Message(
                         "top-level unquote-splice is not allowed".to_string(),
-                    ))
+                    ));
                 }
             };
             Ok(SyntaxObj::new(node, ScopeSet::new()))
@@ -758,7 +772,7 @@ fn expand_quasiquote(
                 NodeOrSplice::Splice(_) => {
                     return Err(MacroError::Message(
                         "unquote-splice not allowed inside quasiquote".to_string(),
-                    ))
+                    ));
                 }
             };
             Ok(NodeOrSplice::Node(Node::new(
@@ -776,7 +790,7 @@ fn expand_quasiquote(
                     NodeOrSplice::Splice(_) => {
                         return Err(MacroError::Message(
                             "unquote-splice not allowed inside nested unquote".to_string(),
-                        ))
+                        ));
                     }
                 };
                 Ok(NodeOrSplice::Node(Node::new(
@@ -795,7 +809,7 @@ fn expand_quasiquote(
                     NodeOrSplice::Splice(_) => {
                         return Err(MacroError::Message(
                             "unquote-splice not allowed inside nested unquote-splice".to_string(),
-                        ))
+                        ));
                     }
                 };
                 Ok(NodeOrSplice::Node(Node::new(
@@ -812,7 +826,10 @@ fn expand_quasiquote(
                     NodeOrSplice::Splice(nodes) => out.extend(nodes),
                 }
             }
-            Ok(NodeOrSplice::Node(Node::new(NodeKind::List(out), node.span)))
+            Ok(NodeOrSplice::Node(Node::new(
+                NodeKind::List(out),
+                node.span,
+            )))
         }
         NodeKind::Vector(items) => {
             let mut out = Vec::new();
@@ -822,7 +839,10 @@ fn expand_quasiquote(
                     NodeOrSplice::Splice(nodes) => out.extend(nodes),
                 }
             }
-            Ok(NodeOrSplice::Node(Node::new(NodeKind::Vector(out), node.span)))
+            Ok(NodeOrSplice::Node(Node::new(
+                NodeKind::Vector(out),
+                node.span,
+            )))
         }
         NodeKind::Map(pairs) => {
             let mut out = Vec::with_capacity(pairs.len());
@@ -832,7 +852,7 @@ fn expand_quasiquote(
                     NodeOrSplice::Splice(_) => {
                         return Err(MacroError::Message(
                             "unquote-splice not allowed in map keys".to_string(),
-                        ))
+                        ));
                     }
                 };
                 let value = match expand_quasiquote(v, depth, ctx)? {
@@ -840,7 +860,7 @@ fn expand_quasiquote(
                     NodeOrSplice::Splice(_) => {
                         return Err(MacroError::Message(
                             "unquote-splice not allowed in map values".to_string(),
-                        ))
+                        ));
                     }
                 };
                 out.push((key, value));
@@ -855,7 +875,7 @@ fn expand_quasiquote(
                     NodeOrSplice::Splice(_) => {
                         return Err(MacroError::Message(
                             "unquote-splice not allowed in sets".to_string(),
-                        ))
+                        ));
                     }
                 }
             }
@@ -953,21 +973,14 @@ impl Gensym {
 
 fn expand_when(args: &[SyntaxObj]) -> Result<Node, MacroError> {
     if args.is_empty() {
-        return Err(MacroError::Message(
-            "when requires a condition".to_string(),
-        ));
+        return Err(MacroError::Message("when requires a condition".to_string()));
     }
     let cond = args[0].node.clone();
     let body = &args[1..];
     let then_branch = if body.is_empty() {
         unit_node()
     } else {
-        make_do(
-            &body
-                .iter()
-                .map(|stx| stx.node.clone())
-                .collect::<Vec<_>>(),
-        )
+        make_do(&body.iter().map(|stx| stx.node.clone()).collect::<Vec<_>>())
     };
     Ok(list_node(vec![
         symbol_node("if"),
@@ -988,12 +1001,7 @@ fn expand_unless(args: &[SyntaxObj]) -> Result<Node, MacroError> {
     let then_branch = if body.is_empty() {
         unit_node()
     } else {
-        make_do(
-            &body
-                .iter()
-                .map(|stx| stx.node.clone())
-                .collect::<Vec<_>>(),
-        )
+        make_do(&body.iter().map(|stx| stx.node.clone()).collect::<Vec<_>>())
     };
     let not_cond = list_node(vec![symbol_node("not"), cond]);
     Ok(list_node(vec![
@@ -1061,11 +1069,7 @@ fn expand_thread(args: &[SyntaxObj], position: ThreadPosition) -> Result<Node, M
     Ok(acc)
 }
 
-fn thread_step(
-    acc: &Node,
-    step: &Node,
-    position: ThreadPosition,
-) -> Result<Node, MacroError> {
+fn thread_step(acc: &Node, step: &Node, position: ThreadPosition) -> Result<Node, MacroError> {
     match &step.kind {
         NodeKind::List(items) if items.is_empty() => Err(MacroError::Message(
             "threading macro step cannot be empty list".to_string(),
@@ -1098,12 +1102,7 @@ fn expand_and(args: &[SyntaxObj], gensym: &mut Gensym) -> Node {
             let tmp = symbol_node(&name);
             let binding = vector_node(vec![tmp.clone(), args[0].node.clone()]);
             let rest = expand_and(&args[1..], gensym);
-            let if_expr = list_node(vec![
-                symbol_node("if"),
-                tmp.clone(),
-                rest,
-                bool_node(false),
-            ]);
+            let if_expr = list_node(vec![symbol_node("if"), tmp.clone(), rest, bool_node(false)]);
             list_node(vec![symbol_node("let"), binding, if_expr])
         }
     }
@@ -1118,12 +1117,7 @@ fn expand_or(args: &[SyntaxObj], gensym: &mut Gensym) -> Node {
             let tmp = symbol_node(&name);
             let binding = vector_node(vec![tmp.clone(), args[0].node.clone()]);
             let rest = expand_or(&args[1..], gensym);
-            let if_expr = list_node(vec![
-                symbol_node("if"),
-                tmp.clone(),
-                tmp.clone(),
-                rest,
-            ]);
+            let if_expr = list_node(vec![symbol_node("if"), tmp.clone(), tmp.clone(), rest]);
             list_node(vec![symbol_node("let"), binding, if_expr])
         }
     }
@@ -1235,8 +1229,7 @@ mod tests {
         "#;
         let nodes = read(src, FileId::SYNTHETIC).expect("parse");
         let expanded = expand_forms(&nodes).expect("expand");
-        let expected =
-            read("(quote (use-form 1))", FileId::SYNTHETIC).expect("parse expected");
+        let expected = read("(quote (use-form 1))", FileId::SYNTHETIC).expect("parse expected");
         assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
     }
 
@@ -1341,9 +1334,11 @@ mod tests {
         "#;
         let nodes = read(src, FileId::SYNTHETIC).expect("parse");
         let expanded = expand_forms(&nodes).expect("expand");
-        let expected =
-            read("(if (not ok) (do (println \"no\")) unit)", FileId::SYNTHETIC)
-                .expect("parse expected");
+        let expected = read(
+            "(if (not ok) (do (println \"no\")) unit)",
+            FileId::SYNTHETIC,
+        )
+        .expect("parse expected");
         assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
     }
 
@@ -1354,8 +1349,7 @@ mod tests {
         "#;
         let nodes = read(src, FileId::SYNTHETIC).expect("parse");
         let expanded = expand_forms(&nodes).expect("expand");
-        let expected = read("(if (< x 0) :neg :pos)", FileId::SYNTHETIC)
-            .expect("parse expected");
+        let expected = read("(if (< x 0) :neg :pos)", FileId::SYNTHETIC).expect("parse expected");
         assert_eq!(normalize(&expanded[0]), normalize(&expected[0]));
     }
 
@@ -1414,9 +1408,7 @@ mod tests {
     fn collect_symbols(node: &Node, out: &mut Vec<String>) {
         match &node.kind {
             NodeKind::Atom(Atom::Symbol { ns: None, name }) => out.push(name.clone()),
-            NodeKind::List(items)
-            | NodeKind::Vector(items)
-            | NodeKind::Set(items) => {
+            NodeKind::List(items) | NodeKind::Vector(items) | NodeKind::Set(items) => {
                 for item in items {
                     collect_symbols(item, out);
                 }

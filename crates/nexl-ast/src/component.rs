@@ -209,9 +209,7 @@ fn extract_exports_map(node: &Node) -> Result<Vec<(String, Node)>, ComponentPars
                 let name = match &key.kind {
                     NodeKind::Atom(Atom::Keyword { ns: None, name }) => name.clone(),
                     _ => {
-                        return Err(ComponentParseError::new(
-                            "export map keys must be keywords",
-                        ));
+                        return Err(ComponentParseError::new("export map keys must be keywords"));
                     }
                 };
                 exports.push((name, val.clone()));
@@ -272,12 +270,7 @@ mod tests {
     /// Build a map node from (keyword, node) pairs.
     fn map(pairs: Vec<(&str, Node)>) -> Node {
         Node::new(
-            NodeKind::Map(
-                pairs
-                    .into_iter()
-                    .map(|(k, v)| (kw(k), v))
-                    .collect(),
-            ),
+            NodeKind::Map(pairs.into_iter().map(|(k, v)| (kw(k), v)).collect()),
             s(),
         )
     }
@@ -424,12 +417,7 @@ mod tests {
     #[test]
     fn test_parse_import_component_error_missing_exports() {
         // (import-component "lib" :as l)
-        let items = vec![
-            sym("import-component"),
-            str_lit("lib"),
-            kw("as"),
-            sym("l"),
-        ];
+        let items = vec![sym("import-component"), str_lit("lib"), kw("as"), sym("l")];
         let err = parse_import_component_decl(&items).unwrap_err();
         assert!(err.description.contains("exports map"));
     }
@@ -522,11 +510,7 @@ mod tests {
 
     #[test]
     fn test_parse_export_component_error_name_not_string() {
-        let items = vec![
-            sym("export-component"),
-            sym("not-a-string"),
-            map(vec![]),
-        ];
+        let items = vec![sym("export-component"), sym("not-a-string"), map(vec![])];
         let err = parse_export_component_decl(&items).unwrap_err();
         assert!(err.description.contains("must be a string literal"));
     }

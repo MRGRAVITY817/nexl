@@ -145,11 +145,19 @@ impl Emitter {
         // global 1: __evv_depth (i32, mutable) — current evidence-vector depth
         let mut globals = GlobalSection::new();
         globals.global(
-            GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
             &ConstExpr::i32_const(HEAP_BASE),
         );
         globals.global(
-            GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+            GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
             &ConstExpr::i32_const(0),
         );
         wasm.section(&globals);
@@ -221,7 +229,11 @@ fn emit_func(func: &FuncDef, so: &StringMap) -> Result<Function, EmitError> {
     collect_bind_vars(&func.body, &mut local_map, &mut next_local);
 
     let num_extra = next_local - func.params.len() as u32;
-    let locals = if num_extra > 0 { vec![(num_extra, DEFAULT_VAL)] } else { vec![] };
+    let locals = if num_extra > 0 {
+        vec![(num_extra, DEFAULT_VAL)]
+    } else {
+        vec![]
+    };
 
     let mut wasm_func = Function::new(locals);
     emit_block(&func.body, &local_map, so, &mut wasm_func, None)?;
@@ -239,7 +251,11 @@ fn collect_bind_vars(block: &Block, local_map: &mut HashMap<VarId, u32>, next: &
         });
     }
     match block.tail.as_ref() {
-        Tail::If { then_block, else_block, .. } => {
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_bind_vars(then_block, local_map, next);
             collect_bind_vars(else_block, local_map, next);
         }
@@ -296,7 +312,11 @@ fn emit_tail(
 ) -> Result<(), EmitError> {
     match tail {
         Tail::Return(atom) => emit_atom(atom, local_map, so, func),
-        Tail::If { cond, then_block, else_block } => {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
             emit_atom(cond, local_map, so, func)?;
             // Bool is stored as i64 (1/0); WASM `if` expects i32.
             func.instruction(&Instruction::I32WrapI64);
@@ -337,8 +357,8 @@ fn emit_tail(
             Ok(())
         }
         Tail::Recur { args } => {
-            let (loop_var_ids, depth) = lv
-                .ok_or_else(|| EmitError("recur outside loop".to_string()))?;
+            let (loop_var_ids, depth) =
+                lv.ok_or_else(|| EmitError("recur outside loop".to_string()))?;
             // Set each loop variable to its new value.
             for (var_id, arg) in loop_var_ids.iter().zip(args.iter()) {
                 emit_atom(arg, local_map, so, func)?;
@@ -370,9 +390,9 @@ fn emit_rhs(
             emit_make_closure(func_id.0, captures, local_map, so, func)
         }
         Rhs::MakeTuple { ctor, fields } => emit_make_tuple(ctor, fields, local_map, so, func),
-        Rhs::Project { .. } => {
-            Err(EmitError("field projection codegen not yet implemented".to_string()))
-        }
+        Rhs::Project { .. } => Err(EmitError(
+            "field projection codegen not yet implemented".to_string(),
+        )),
     }
 }
 
@@ -409,7 +429,11 @@ fn emit_make_closure(
     // ── Store func_id at offset 0 ─────────────────────────────────────────
     push_closure_ptr(func);
     func.instruction(&Instruction::I64Const(func_id_u32 as i64));
-    func.instruction(&Instruction::I64Store(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    func.instruction(&Instruction::I64Store(MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
 
     // ── Store each capture value at offset 8, 16, … ──────────────────────
     for (slot, (_, capture_atom)) in captures.iter().enumerate() {
@@ -436,13 +460,22 @@ fn emit_atom(
     func: &mut Function,
 ) -> Result<(), EmitError> {
     match atom {
-        Atom::Int(n) => { func.instruction(&Instruction::I64Const(*n)); Ok(()) }
-        Atom::Float(f) => { func.instruction(&Instruction::F64Const((*f).into())); Ok(()) }
+        Atom::Int(n) => {
+            func.instruction(&Instruction::I64Const(*n));
+            Ok(())
+        }
+        Atom::Float(f) => {
+            func.instruction(&Instruction::F64Const((*f).into()));
+            Ok(())
+        }
         Atom::Bool(b) => {
             func.instruction(&Instruction::I64Const(if *b { 1 } else { 0 }));
             Ok(())
         }
-        Atom::Unit => { func.instruction(&Instruction::I64Const(0)); Ok(()) }
+        Atom::Unit => {
+            func.instruction(&Instruction::I64Const(0));
+            Ok(())
+        }
         Atom::Var(var) => {
             let idx = local_idx(*var, local_map)?;
             func.instruction(&Instruction::LocalGet(idx));
@@ -457,9 +490,10 @@ fn emit_atom(
             func.instruction(&Instruction::I64Const(packed));
             Ok(())
         }
-        Atom::FuncRef(fid) => {
-            Err(EmitError(format!("bare FuncRef({}) cannot be an atom value", fid.0)))
-        }
+        Atom::FuncRef(fid) => Err(EmitError(format!(
+            "bare FuncRef({}) cannot be an atom value",
+            fid.0
+        ))),
     }
 }
 
@@ -532,7 +566,11 @@ fn emit_make_tuple(
     // Store tag at offset 0
     push_ptr(func);
     func.instruction(&Instruction::I64Const(ctor_tag(ctor)));
-    func.instruction(&Instruction::I64Store(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    func.instruction(&Instruction::I64Store(MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
 
     // Store each field at offset 8, 16, …
     for (i, field) in fields.iter().enumerate() {
@@ -579,7 +617,11 @@ fn emit_match_arms(
     // Load tag from scrutinee (ptr as i32, tag is i64 at offset 0).
     emit_atom(scrutinee, local_map, so, func)?;
     func.instruction(&Instruction::I32WrapI64);
-    func.instruction(&Instruction::I64Load(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    func.instruction(&Instruction::I64Load(MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     func.instruction(&Instruction::I64Const(ctor_tag(&arm.ctor)));
     // i64.eq returns i32 (0 or 1) — consumed directly by `if`.
     func.instruction(&Instruction::I64Eq);
@@ -626,7 +668,11 @@ fn emit_evv_push() -> Function {
     f.instruction(&Instruction::I32Const(EVV_BASE));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Store(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     // __evv_depth++
     f.instruction(&Instruction::GlobalGet(EVV_DEPTH));
     f.instruction(&Instruction::I32Const(1));
@@ -653,7 +699,11 @@ fn emit_evv_pop() -> Function {
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Const(EVV_BASE));
     f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I64Load(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::End);
     f
 }
@@ -670,7 +720,11 @@ fn emit_evv_get() -> Function {
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Const(EVV_BASE));
     f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I64Load(MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::End);
     f
 }
@@ -695,11 +749,7 @@ fn collect_string_literals(module: &Module) -> Vec<Rc<str>> {
     order
 }
 
-fn collect_strings_in_block(
-    block: &Block,
-    order: &mut Vec<Rc<str>>,
-    seen: &mut HashSet<Rc<str>>,
-) {
+fn collect_strings_in_block(block: &Block, order: &mut Vec<Rc<str>>, seen: &mut HashSet<Rc<str>>) {
     for bind in &block.binds {
         collect_strings_in_rhs(&bind.rhs, order, seen);
     }
@@ -732,7 +782,11 @@ fn collect_strings_in_rhs(rhs: &Rhs, order: &mut Vec<Rc<str>>, seen: &mut HashSe
 fn collect_strings_in_tail(tail: &Tail, order: &mut Vec<Rc<str>>, seen: &mut HashSet<Rc<str>>) {
     match tail {
         Tail::Return(a) | Tail::Panic(a) => collect_strings_in_atom(a, order, seen),
-        Tail::If { cond, then_block, else_block } => {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
             collect_strings_in_atom(cond, order, seen);
             collect_strings_in_block(then_block, order, seen);
             collect_strings_in_block(else_block, order, seen);
@@ -779,9 +833,10 @@ mod tests {
     use nexl_ir::{Lowerer, Module as IrModule};
 
     fn lower(src: &str) -> IrModule {
-        let nodes = nexl_reader::read(src, meta::FileId::SYNTHETIC)
-            .expect("parse error in test");
-        Lowerer::new("test").lower_module(&nodes).expect("lower error in test")
+        let nodes = nexl_reader::read(src, meta::FileId::SYNTHETIC).expect("parse error in test");
+        Lowerer::new("test")
+            .lower_module(&nodes)
+            .expect("lower error in test")
     }
 
     fn emit(src: &str) -> Vec<u8> {
@@ -801,7 +856,10 @@ mod tests {
     // ─── 2. Empty module magic ────────────────────────────────────────────────
     #[test]
     fn emit_empty_module_has_magic() {
-        let m = IrModule { name: "empty".to_string(), funcs: vec![] };
+        let m = IrModule {
+            name: "empty".to_string(),
+            funcs: vec![],
+        };
         let bytes = Emitter::new().emit(&m).unwrap();
         assert!(bytes.len() >= 8);
         assert_eq!(&bytes[..4], &WASM_MAGIC, "WASM magic bytes");
@@ -810,7 +868,10 @@ mod tests {
     // ─── 3. Empty module version ─────────────────────────────────────────────
     #[test]
     fn emit_empty_module_has_version() {
-        let m = IrModule { name: "empty".to_string(), funcs: vec![] };
+        let m = IrModule {
+            name: "empty".to_string(),
+            funcs: vec![],
+        };
         let bytes = Emitter::new().emit(&m).unwrap();
         assert_eq!(&bytes[4..8], &WASM_VERSION, "WASM version bytes");
     }
@@ -905,7 +966,9 @@ mod tests {
         // Memory section id = 0x05
         let bytes = emit("(defn f [] 1)");
         // Memory section (id=0x05), size=3, count=1, no-max flag=0x00, 1 page
-        let has_memory_section = bytes.windows(5).any(|w| w == [0x05, 0x03, 0x01, 0x00, 0x01]);
+        let has_memory_section = bytes
+            .windows(5)
+            .any(|w| w == [0x05, 0x03, 0x01, 0x00, 0x01]);
         assert!(has_memory_section, "expected memory section in WASM bytes");
     }
 
@@ -963,7 +1026,10 @@ mod tests {
             evv_end <= HEAP_BASE as u32,
             "evv region ({evv_end}) overflows into heap ({HEAP_BASE})"
         );
-        assert!(EVV_BASE > 0, "evv must not start at address 0 (reserved for strings)");
+        assert!(
+            EVV_BASE > 0,
+            "evv must not start at address 0 (reserved for strings)"
+        );
         assert!(EVV_MAX_HANDLERS >= 8, "need room for at least 8 handlers");
     }
 
@@ -988,14 +1054,19 @@ mod tests {
         let bytes = emit("(defn f [] 1)");
         let init_zero = [0x41u8, 0x00, 0x0B]; // i32.const 0 end
         let found = bytes.windows(3).any(|w| w == init_zero);
-        assert!(found, "__evv_depth i32.const 0 initializer not found in output");
+        assert!(
+            found,
+            "__evv_depth i32.const 0 initializer not found in output"
+        );
     }
 
     // ─── 23. __evv_push exported ──────────────────────────────────────────────
     #[test]
     fn emit_evv_push_in_output() {
         let bytes = emit("(defn f [] 1)");
-        let found = bytes.windows(b"__evv_push".len()).any(|w| w == b"__evv_push");
+        let found = bytes
+            .windows(b"__evv_push".len())
+            .any(|w| w == b"__evv_push");
         assert!(found, "__evv_push name not found in WASM output");
     }
 
@@ -1033,7 +1104,10 @@ mod tests {
         assert_eq!(&bytes[..4], &WASM_MAGIC);
         // return_call opcode must appear (from (b x) in tail position)
         let found = bytes.windows(1).any(|w| w == [0x12]);
-        assert!(found, "WASM return_call opcode (0x12) not found for inter-func tail call");
+        assert!(
+            found,
+            "WASM return_call opcode (0x12) not found for inter-func tail call"
+        );
     }
 
     // ─── 28. end-to-end: trivial program validates with wasmparser ───────────
@@ -1053,7 +1127,11 @@ mod tests {
         tmp.write_all(&bytes).expect("write wasm bytes");
         // Verify the file starts with the WASM magic
         let on_disk = std::fs::read(tmp.path()).expect("read back temp file");
-        assert_eq!(&on_disk[..4], &WASM_MAGIC, "file should start with WASM magic");
+        assert_eq!(
+            &on_disk[..4],
+            &WASM_MAGIC,
+            "file should start with WASM magic"
+        );
     }
 
     // ─── 30. loop without recur emits valid WASM ──────────────────────────────
@@ -1081,7 +1159,9 @@ mod tests {
         // Recur is inside an if-else block, so br depth = 1 → [0x0C, 0x01]
         let bytes = emit("(defn f [n] (loop [i n] (if false 99 (recur 0))))");
         let found = bytes.windows(2).any(|w| w == [0x0C, 0x01]);
-        assert!(found, "WASM br 1 [0x0C, 0x01] not found in output (recur inside if)");
+        assert!(
+            found,
+            "WASM br 1 [0x0C, 0x01] not found in output (recur inside if)"
+        );
     }
-
 }

@@ -95,9 +95,7 @@ where
         NodeKind::Atom(_) => node.kind.clone(),
         NodeKind::List(children) => NodeKind::List(children.iter().map(&mut f).collect()),
         NodeKind::Vector(children) => NodeKind::Vector(children.iter().map(&mut f).collect()),
-        NodeKind::Map(pairs) => {
-            NodeKind::Map(pairs.iter().map(|(k, v)| (f(k), f(v))).collect())
-        }
+        NodeKind::Map(pairs) => NodeKind::Map(pairs.iter().map(|(k, v)| (f(k), f(v))).collect()),
         NodeKind::Set(children) => NodeKind::Set(children.iter().map(&mut f).collect()),
         NodeKind::Quote(inner) => NodeKind::Quote(Box::new(f(inner))),
         NodeKind::Deref(inner) => NodeKind::Deref(Box::new(f(inner))),

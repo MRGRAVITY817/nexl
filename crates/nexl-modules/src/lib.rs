@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use nexl_ast::ImportDecl;
 
 pub mod resolver;
-pub use resolver::{build_name_resolver, ModuleExports, NameResolver, ResolvedName, ResolveError};
+pub use resolver::{ModuleExports, NameResolver, ResolveError, ResolvedName, build_name_resolver};
 
 /// Errors produced while mapping module names to file paths.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -226,8 +226,8 @@ pub(crate) fn has_prefix(module: &str, prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use nexl_ast::ImportKind;
+    use std::path::Path;
 
     #[test]
     fn module_name_to_path_basic() {
@@ -237,8 +237,8 @@ mod tests {
 
     #[test]
     fn path_to_module_name_basic() {
-        let name = path_to_module_name(Path::new("my-app/server.nxl"), "my-app")
-            .expect("map failed");
+        let name =
+            path_to_module_name(Path::new("my-app/server.nxl"), "my-app").expect("map failed");
         assert_eq!(name, "my-app.server");
     }
 

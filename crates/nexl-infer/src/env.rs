@@ -373,7 +373,10 @@ fn console_effect_ops() -> Vec<(&'static str, Type)> {
     vec![
         ("print", effect_fn(vec![Type::Str], Type::Unit, "Console")),
         ("println", effect_fn(vec![Type::Str], Type::Unit, "Console")),
-        ("eprintln", effect_fn(vec![Type::Str], Type::Unit, "Console")),
+        (
+            "eprintln",
+            effect_fn(vec![Type::Str], Type::Unit, "Console"),
+        ),
         ("read-line", effect_fn(vec![], Type::Str, "Console")),
     ]
 }
@@ -382,7 +385,10 @@ fn filesystem_effect_ops() -> Vec<(&'static str, Type)> {
     let bytes = adt0("Bytes");
     let file_info = adt0("FileInfo");
     vec![
-        ("read-file", effect_fn(vec![Type::Str], bytes.clone(), "FileSystem")),
+        (
+            "read-file",
+            effect_fn(vec![Type::Str], bytes.clone(), "FileSystem"),
+        ),
         (
             "write-file",
             effect_fn(vec![Type::Str, bytes.clone()], Type::Unit, "FileSystem"),
@@ -430,7 +436,10 @@ fn random_effect_ops() -> Vec<(&'static str, Type)> {
             effect_fn(vec![Type::Int, Type::Int], Type::Int, "Random"),
         ),
         ("random-float", effect_fn(vec![], Type::Float, "Random")),
-        ("random-bytes", effect_fn(vec![Type::Int], bytes.clone(), "Random")),
+        (
+            "random-bytes",
+            effect_fn(vec![Type::Int], bytes.clone(), "Random"),
+        ),
         ("random-u8", effect_fn(vec![], Type::U8, "Random")),
         ("random-f32", effect_fn(vec![], Type::F32, "Random")),
     ]
@@ -885,7 +894,10 @@ mod tests {
         let expected = vec![
             ("print", effect_fn(vec![Type::Str], Type::Unit, "Console")),
             ("println", effect_fn(vec![Type::Str], Type::Unit, "Console")),
-            ("eprintln", effect_fn(vec![Type::Str], Type::Unit, "Console")),
+            (
+                "eprintln",
+                effect_fn(vec![Type::Str], Type::Unit, "Console"),
+            ),
             ("read-line", effect_fn(vec![], Type::Str, "Console")),
         ];
         for (name, ty) in expected {
@@ -900,7 +912,10 @@ mod tests {
         let bytes = adt0("Bytes");
         let file_info = adt0("FileInfo");
         let expected = vec![
-            ("read-file", effect_fn(vec![Type::Str], bytes.clone(), "FileSystem")),
+            (
+                "read-file",
+                effect_fn(vec![Type::Str], bytes.clone(), "FileSystem"),
+            ),
             (
                 "write-file",
                 effect_fn(vec![Type::Str, bytes.clone()], Type::Unit, "FileSystem"),
@@ -925,7 +940,10 @@ mod tests {
                 "make-dir",
                 effect_fn(vec![Type::Str], Type::Unit, "FileSystem"),
             ),
-            ("stat", effect_fn(vec![Type::Str], file_info.clone(), "FileSystem")),
+            (
+                "stat",
+                effect_fn(vec![Type::Str], file_info.clone(), "FileSystem"),
+            ),
         ];
         for (name, ty) in expected {
             assert_effect_op(&env, "FileSystem", name, ty);
@@ -957,7 +975,10 @@ mod tests {
                 effect_fn(vec![Type::Int, Type::Int], Type::Int, "Random"),
             ),
             ("random-float", effect_fn(vec![], Type::Float, "Random")),
-            ("random-bytes", effect_fn(vec![Type::Int], bytes.clone(), "Random")),
+            (
+                "random-bytes",
+                effect_fn(vec![Type::Int], bytes.clone(), "Random"),
+            ),
             ("random-u8", effect_fn(vec![], Type::U8, "Random")),
             ("random-f32", effect_fn(vec![], Type::F32, "Random")),
         ];
@@ -995,11 +1016,7 @@ mod tests {
             ret: Box::new(Type::Var(t0)),
             effects: EffectRow::new(vec!["Concurrent".to_string()], None),
         };
-        let expected = vec![
-            ("fork", fork_ty),
-            ("join", join_ty),
-            ("race", race_ty),
-        ];
+        let expected = vec![("fork", fork_ty), ("join", join_ty), ("race", race_ty)];
         for (name, ty) in expected {
             assert_effect_scheme(&env, "Concurrent", name, scheme_forall(t0, ty));
         }
@@ -1014,13 +1031,8 @@ mod tests {
             name: "Channel".to_string(),
             args: vec![Type::Var(t0)],
         };
-        let make_channel_ty =
-            effect_fn(vec![Type::Int], chan_t0.clone(), "Chan");
-        let send_ty = effect_fn(
-            vec![chan_t0.clone(), Type::Var(t0)],
-            Type::Unit,
-            "Chan",
-        );
+        let make_channel_ty = effect_fn(vec![Type::Int], chan_t0.clone(), "Chan");
+        let send_ty = effect_fn(vec![chan_t0.clone(), Type::Var(t0)], Type::Unit, "Chan");
         let recv_ty = effect_fn(vec![chan_t0.clone()], Type::Var(t0), "Chan");
         let close_ty = effect_fn(vec![chan_t0], Type::Unit, "Chan");
         let expected = vec![

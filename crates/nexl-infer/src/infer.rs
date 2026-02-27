@@ -338,12 +338,12 @@ fn par_let_references_any(node: &Node, names: &HashSet<String>) -> bool {
     match &node.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) => names.contains(name),
         NodeKind::Atom(_) => false,
-        NodeKind::List(items) | NodeKind::Vector(items) | NodeKind::Set(items) => items
+        NodeKind::List(items) | NodeKind::Vector(items) | NodeKind::Set(items) => {
+            items.iter().any(|item| par_let_references_any(item, names))
+        }
+        NodeKind::Map(entries) => entries
             .iter()
-            .any(|item| par_let_references_any(item, names)),
-        NodeKind::Map(entries) => entries.iter().any(|(k, v)| {
-            par_let_references_any(k, names) || par_let_references_any(v, names)
-        }),
+            .any(|(k, v)| par_let_references_any(k, names) || par_let_references_any(v, names)),
         NodeKind::Quote(_) | NodeKind::Discard(_) => false,
         NodeKind::Deref(inner)
         | NodeKind::Quasiquote(inner)
@@ -359,12 +359,8 @@ fn synth_deref(inner: &Node, env: &Env, state: &mut InferState) -> Result<Type, 
         name: "Atom".to_string(),
         args: vec![value_var.clone()],
     };
-    nexl_types::unify(&target_ty, &expected, &mut state.subst).map_err(|e| {
-        e.with_help(format!(
-            "@ expects an Atom value, but got {}",
-            target_ty
-        ))
-    })?;
+    nexl_types::unify(&target_ty, &expected, &mut state.subst)
+        .map_err(|e| e.with_help(format!("@ expects an Atom value, but got {}", target_ty)))?;
     Ok(state.subst.apply(&value_var))
 }
 
@@ -1788,10 +1784,7 @@ fn synth_assert_unreachable(
 fn synth_as_any(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     if items.len() != 2 {
         return Err(TypeError::new(TypeErrorKind::MalformedForm {
-            description: format!(
-                "as-any expects (as-any expr), got {} elements",
-                items.len()
-            ),
+            description: format!("as-any expects (as-any expr), got {} elements", items.len()),
         }));
     }
     let _ = synth(&items[1], env, state)?;
@@ -1800,11 +1793,7 @@ fn synth_as_any(items: &[Node], env: &Env, state: &mut InferState) -> Result<Typ
 }
 
 /// Synthesize the type of an `(assert-type expr Type)` form.
-fn synth_assert_type(
-    items: &[Node],
-    env: &Env,
-    state: &mut InferState,
-) -> Result<Type, TypeError> {
+fn synth_assert_type(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     if items.len() != 3 {
         return Err(TypeError::new(TypeErrorKind::MalformedForm {
             description: format!(
@@ -1834,22 +1823,15 @@ fn synth_assert_type(
 fn synth_question(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     if items.len() != 2 {
         return Err(TypeError::new(TypeErrorKind::MalformedForm {
-            description: format!(
-                "? expects (? expr), got {} element(s)",
-                items.len()
-            ),
+            description: format!("? expects (? expr), got {} element(s)", items.len()),
         }));
     }
 
-    let ret_ty = state
-        .return_type_stack
-        .last()
-        .cloned()
-        .ok_or_else(|| {
-            TypeError::new(TypeErrorKind::MalformedForm {
-                description: "? operator used outside of a function body".to_string(),
-            })
-        })?;
+    let ret_ty = state.return_type_stack.last().cloned().ok_or_else(|| {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: "? operator used outside of a function body".to_string(),
+        })
+    })?;
     let ret_ty = state.subst.apply(&ret_ty);
 
     let expr_ty = synth(&items[1], env, state)?;
@@ -2054,11 +2036,7 @@ fn synth_atom(atom: &Atom, env: &Env, state: &mut InferState) -> Result<Type, Ty
 }
 
 /// Synthesize a type for a vector literal `[a b ...]` (homogeneous elements).
-fn synth_vec_literal(
-    items: &[Node],
-    env: &Env,
-    state: &mut InferState,
-) -> Result<Type, TypeError> {
+fn synth_vec_literal(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     if items.is_empty() {
         return Ok(Type::Vec(Box::new(state.fresh_var())));
     }
@@ -2167,11 +2145,7 @@ fn synth_map_literal(
 }
 
 /// Synthesize a type for a set literal `#{a b ...}` (homogeneous elements).
-fn synth_set_literal(
-    items: &[Node],
-    env: &Env,
-    state: &mut InferState,
-) -> Result<Type, TypeError> {
+fn synth_set_literal(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
     if items.is_empty() {
         return Ok(Type::Set(Box::new(state.fresh_var())));
     }
@@ -2431,9 +2405,7 @@ pub fn infer_defn(
     // Infer the body in the extended environment.
     // Push the declared return type (or a fresh var) so that `?` in the body
     // can determine which wrapper type to propagate.
-    let ret_push = ret_annotation
-        .clone()
-        .unwrap_or_else(|| state.fresh_var());
+    let ret_push = ret_annotation.clone().unwrap_or_else(|| state.fresh_var());
     state.return_type_stack.push(ret_push);
     state.push_effect_scope();
     let body_ty = synth(body_node, &body_env, state);
@@ -3422,9 +3394,8 @@ pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
             );
             if !is_refine_head {
                 return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                    description:
-                        "deftype expects a `|`-prefixed constructor list or a map literal"
-                            .to_string(),
+                    description: "deftype expects a `|`-prefixed constructor list or a map literal"
+                        .to_string(),
                 }));
             }
             let binder_vec = match &refine_items[1].kind {
@@ -3432,7 +3403,7 @@ pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
                 _ => {
                     return Err(TypeError::new(TypeErrorKind::MalformedForm {
                         description: "refine binder must be a vector".to_string(),
-                    }))
+                    }));
                 }
             };
             if binder_vec.len() != 3 {
@@ -3444,9 +3415,8 @@ pub fn parse_deftype(node: &Node) -> Result<DeftypeDecl, TypeError> {
                 NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
                 _ => {
                     return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                        description: "refine binder name must be an unqualified symbol"
-                            .to_string(),
-                    }))
+                        description: "refine binder name must be an unqualified symbol".to_string(),
+                    }));
                 }
             };
             let is_colon = matches!(
@@ -3526,8 +3496,8 @@ pub fn parse_deftype_opaque(node: &Node) -> Result<OpaqueTypeDef, TypeError> {
                 NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
                 _ => {
                     return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                        description:
-                            "deftype-opaque type params must be unqualified symbols".to_string(),
+                        description: "deftype-opaque type params must be unqualified symbols"
+                            .to_string(),
                     }));
                 }
             };
@@ -3572,12 +3542,14 @@ pub fn parse_deftype_opaque(node: &Node) -> Result<OpaqueTypeDef, TypeError> {
                 }
                 let Some(derive_node) = items.get(idx + 1) else {
                     return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                        description: "deftype-opaque :derive expects a vector of symbols".to_string(),
+                        description: "deftype-opaque :derive expects a vector of symbols"
+                            .to_string(),
                     }));
                 };
                 let NodeKind::Vector(derive_items) = &derive_node.kind else {
                     return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                        description: "deftype-opaque :derive expects a vector of symbols".to_string(),
+                        description: "deftype-opaque :derive expects a vector of symbols"
+                            .to_string(),
                     }));
                 };
                 for item in derive_items {
@@ -3589,7 +3561,7 @@ pub fn parse_deftype_opaque(node: &Node) -> Result<OpaqueTypeDef, TypeError> {
                             return Err(TypeError::new(TypeErrorKind::MalformedForm {
                                 description: "deftype-opaque :derive entries must be symbols"
                                     .to_string(),
-                            }))
+                            }));
                         }
                     }
                 }
@@ -3611,7 +3583,7 @@ pub fn parse_deftype_opaque(node: &Node) -> Result<OpaqueTypeDef, TypeError> {
                     _ => {
                         return Err(TypeError::new(TypeErrorKind::MalformedForm {
                             description: "deftype-opaque :drop expects a symbol".to_string(),
-                        }))
+                        }));
                     }
                 };
                 drop = Some(drop_name);
@@ -3680,10 +3652,7 @@ pub fn parse_deftype_alias(node: &Node) -> Result<TypeAliasDef, TypeError> {
     Ok(TypeAliasDef { name, target })
 }
 
-fn parse_deftype_derive_clause(
-    items: &[Node],
-    body_index: &mut usize,
-) -> Result<(), TypeError> {
+fn parse_deftype_derive_clause(items: &[Node], body_index: &mut usize) -> Result<(), TypeError> {
     let Some(node) = items.get(*body_index) else {
         return Ok(());
     };
@@ -3710,7 +3679,7 @@ fn parse_deftype_derive_clause(
             _ => {
                 return Err(TypeError::new(TypeErrorKind::MalformedForm {
                     description: "deftype :derive entries must be symbols".to_string(),
-                }))
+                }));
             }
         }
     }
@@ -3863,10 +3832,7 @@ fn expand_defpattern(node: &Node, env: &Env) -> Result<(Node, Option<Node>), Typ
     }
 
     let pattern = substitute_node(&def.pattern, &subs, false);
-    let guard = def
-        .guard
-        .as_ref()
-        .map(|g| substitute_node(g, &subs, true));
+    let guard = def.guard.as_ref().map(|g| substitute_node(g, &subs, true));
 
     Ok((pattern, guard))
 }
@@ -4947,10 +4913,7 @@ mod tests {
         );
 
         let contains_node = parse_one(r#"(contains? {:a 1} :a)"#);
-        assert_eq!(
-            synth(&contains_node, &env, &mut state).unwrap(),
-            Type::Bool
-        );
+        assert_eq!(synth(&contains_node, &env, &mut state).unwrap(), Type::Bool);
     }
 
     #[test]
@@ -4969,10 +4932,7 @@ mod tests {
         );
 
         let contains_node = parse_one(r#"(contains? #{1 2} 1)"#);
-        assert_eq!(
-            synth(&contains_node, &env, &mut state).unwrap(),
-            Type::Bool
-        );
+        assert_eq!(synth(&contains_node, &env, &mut state).unwrap(), Type::Bool);
     }
 
     #[test]
@@ -5706,9 +5666,7 @@ mod tests {
     #[test]
     fn infer_assert_type_adds_dynamic_effect() {
         let (env, mut state) = empty();
-        let node = parse_one(
-            "(defn parse-unknown [x : Any] -> Str (assert-type x Str))",
-        );
+        let node = parse_one("(defn parse-unknown [x : Any] -> Str (assert-type x Str))");
         let (_name, ty, _env) = infer_defn(&node, &env, &mut state).unwrap();
         assert_eq!(
             ty,
@@ -6096,10 +6054,7 @@ mod tests {
         assert!(td.params.is_empty());
         assert_eq!(
             td.constructors,
-            vec![
-                Constructor::nullary("Red"),
-                Constructor::nullary("Green"),
-            ]
+            vec![Constructor::nullary("Red"), Constructor::nullary("Green"),]
         );
     }
 
@@ -6123,20 +6078,17 @@ mod tests {
     // -- Test 11 (deftype refine) --
     #[test]
     fn parse_deftype_refine_port() {
-        let node = parse_one(
-            "(deftype Port (refine [n : Int] (and (>= n 0) (<= n 65535))))",
-        );
-        let (name, params, binder, base, predicate) =
-            match super::parse_deftype(&node).unwrap() {
-                DeftypeDecl::Refined {
-                    name,
-                    params,
-                    binder,
-                    base,
-                    predicate,
-                } => (name, params, binder, base, predicate),
-                other => panic!("expected Refined deftype, got {other:?}"),
-            };
+        let node = parse_one("(deftype Port (refine [n : Int] (and (>= n 0) (<= n 65535))))");
+        let (name, params, binder, base, predicate) = match super::parse_deftype(&node).unwrap() {
+            DeftypeDecl::Refined {
+                name,
+                params,
+                binder,
+                base,
+                predicate,
+            } => (name, params, binder, base, predicate),
+            other => panic!("expected Refined deftype, got {other:?}"),
+        };
         assert_eq!(name, "Port");
         assert!(params.is_empty());
         assert_eq!(binder, "n");
@@ -6147,9 +6099,7 @@ mod tests {
     // -- Test 12 (deftype refine) --
     #[test]
     fn parse_deftype_refine_nonempty() {
-        let node = parse_one(
-            "(deftype NonEmpty (refine [s : Str] (> (count s) 0)))",
-        );
+        let node = parse_one("(deftype NonEmpty (refine [s : Str] (> (count s) 0)))");
         let (name, params, binder, base) = match super::parse_deftype(&node).unwrap() {
             DeftypeDecl::Refined {
                 name,
@@ -6271,13 +6221,15 @@ mod tests {
     #[test]
     fn infer_impl_multiple_protocols() {
         let (env, mut state) = empty();
-        let node = parse_one(r#"
+        let node = parse_one(
+            r#"
         (impl Point
           Show
           (show [p] "ok")
           Eq
           (eq? [a b] true))
-        "#);
+        "#,
+        );
         let result = super::infer_impl(&node, &env, &mut state);
         assert!(result.is_ok(), "expected impl to type-check");
     }
@@ -8749,10 +8701,7 @@ mod tests {
             NodeKind::Vector(params.iter().map(|p| sym_node(p)).collect()),
             syn_span(),
         );
-        Node::new(
-            NodeKind::List(vec![sym_node(name), pvec, body]),
-            syn_span(),
-        )
+        Node::new(NodeKind::List(vec![sym_node(name), pvec, body]), syn_span())
     }
 
     // -- Test 1 (handle) --
@@ -9203,9 +9152,8 @@ mod tests {
         };
         let env = Env::new().extend("id", Scheme::mono(id_ty));
         let mut state = InferState::new();
-        let node = parse_one(
-            "(defn f [x : (Result Int Str)] -> (Result Int Str) (let [n (id x)?] x))",
-        );
+        let node =
+            parse_one("(defn f [x : (Result Int Str)] -> (Result Int Str) (let [n (id x)?] x))");
         let (_name, ty, _) = infer_defn(&node, &env, &mut state).unwrap();
         assert!(
             state.errors.is_empty(),
@@ -9234,9 +9182,7 @@ mod tests {
         };
         let env = Env::new().extend("get-option", Scheme::mono(get_option_ty));
         let mut state = InferState::new();
-        let node = parse_one(
-            "(defn f [] -> (Result Int Str) (let [n (get-option)?] 0))",
-        );
+        let node = parse_one("(defn f [] -> (Result Int Str) (let [n (get-option)?] 0))");
         let result = infer_defn(&node, &env, &mut state);
         assert!(
             result.is_err() || !state.errors.is_empty(),
@@ -9260,9 +9206,7 @@ mod tests {
         };
         let env = Env::new().extend("get-result", Scheme::mono(get_result_ty));
         let mut state = InferState::new();
-        let node = parse_one(
-            "(defn f [] -> (Option Int) (let [n (get-result)?] 0))",
-        );
+        let node = parse_one("(defn f [] -> (Option Int) (let [n (get-result)?] 0))");
         let result = infer_defn(&node, &env, &mut state);
         assert!(
             result.is_err() || !state.errors.is_empty(),
@@ -9281,9 +9225,8 @@ mod tests {
         };
         let env = Env::new().extend("get-int", Scheme::mono(int_fn_ty));
         let mut state = InferState::new();
-        let node = parse_one(
-            "(defn f [x : (Option Int)] -> (Option Int) (let [n (get-int 1)?] x))",
-        );
+        let node =
+            parse_one("(defn f [x : (Option Int)] -> (Option Int) (let [n (get-int 1)?] x))");
         let result = infer_defn(&node, &env, &mut state);
         assert!(
             result.is_err() || !state.errors.is_empty(),
@@ -9296,7 +9239,7 @@ mod tests {
     fn question_outside_function_is_error() {
         // (? expr) at top level, no enclosing function → MalformedForm
         let (env, mut state) = empty();
-        let node = parse_one("((fn [x] x) 42)?");  // postfix ? on a list expression
+        let node = parse_one("((fn [x] x) 42)?"); // postfix ? on a list expression
         let err = synth(&node, &env, &mut state).unwrap_err();
         assert!(
             matches!(err.kind, TypeErrorKind::MalformedForm { .. }),
@@ -9318,9 +9261,7 @@ mod tests {
         };
         let env = Env::new().extend("id", Scheme::mono(id_ty));
         let mut state = InferState::new();
-        let node = parse_one(
-            "(defn f [x : (Option Int)] -> (Option Int) (let [n (id x)?] x))",
-        );
+        let node = parse_one("(defn f [x : (Option Int)] -> (Option Int) (let [n (id x)?] x))");
         let (_name, ty, _) = infer_defn(&node, &env, &mut state).unwrap();
         assert!(
             state.errors.is_empty(),

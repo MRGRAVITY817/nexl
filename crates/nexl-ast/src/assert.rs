@@ -59,9 +59,9 @@ impl std::error::Error for AssertParseError {}
 ///
 /// The caller should pass the full list items including the head symbol.
 pub fn parse_assert_form(items: &[Node]) -> Result<AssertForm, AssertParseError> {
-    let head = items.first().ok_or_else(|| {
-        AssertParseError::new("assert form requires a head symbol")
-    })?;
+    let head = items
+        .first()
+        .ok_or_else(|| AssertParseError::new("assert form requires a head symbol"))?;
 
     let name = match &head.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.as_str(),
@@ -163,9 +163,6 @@ mod tests {
     fn parse_assert_unreachable_basic() {
         let items = vec![sym("assert-unreachable!")];
         let form = parse_assert_form(&items).expect("parse failed");
-        assert_eq!(
-            form,
-            AssertForm::AssertUnreachable { message: None }
-        );
+        assert_eq!(form, AssertForm::AssertUnreachable { message: None });
     }
 }

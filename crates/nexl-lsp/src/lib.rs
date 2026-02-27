@@ -4,12 +4,12 @@
 //! go-to-definition, and completion support for Nexl source files.
 
 use dashmap::DashMap;
-use std::borrow::Cow;
-use std::collections::HashSet;
 use nexl_ast::{Atom, FileId, Node, NodeKind, Span};
 use nexl_errors::{Diagnostic as NexlDiagnostic, Severity as NexlSeverity};
 use nexl_infer::{Env, InferState};
 use nexl_types::{Type, TypeError, TypeErrorKind};
+use std::borrow::Cow;
+use std::collections::HashSet;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -171,9 +171,9 @@ fn type_error_message(error: &TypeError) -> String {
         TypeErrorKind::InfiniteType { var, ty } => {
             format!("infinite type: {} = {ty}", Type::Var(*var))
         }
-        TypeErrorKind::ArityMismatch { expected, found } => format!(
-            "function arity mismatch: expected {expected} parameter(s), found {found}"
-        ),
+        TypeErrorKind::ArityMismatch { expected, found } => {
+            format!("function arity mismatch: expected {expected} parameter(s), found {found}")
+        }
         TypeErrorKind::UnboundVariable { name } => format!("unbound variable: {name}"),
         TypeErrorKind::MalformedForm { description } => format!("malformed form: {description}"),
     };
@@ -311,13 +311,7 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
     None
 }
 
-fn build_hover(
-    name: &str,
-    ty: &Type,
-    docstring: Option<&str>,
-    span: Span,
-    source: &str,
-) -> Hover {
+fn build_hover(name: &str, ty: &Type, docstring: Option<&str>, span: Span, source: &str) -> Hover {
     let mut value = format!("```nexl\n{name} : {ty}\n```");
     match docstring {
         Some(doc) if !doc.is_empty() => {
@@ -468,9 +462,7 @@ fn completion_items(nodes: &[Node]) -> Vec<CompletionItem> {
     let mut seen = HashSet::new();
     let mut items = Vec::new();
     for node in nodes {
-        match defn_name_and_docstring(node)
-            .and_then(|(name_node, _)| symbol_name(name_node))
-        {
+        match defn_name_and_docstring(node).and_then(|(name_node, _)| symbol_name(name_node)) {
             Some(name) if seen.insert(name.clone()) => {
                 items.push(CompletionItem {
                     label: name,
@@ -501,7 +493,10 @@ fn list_head_is(node: &Node, name: &str) -> bool {
     match &node.kind {
         NodeKind::List(items) => match items.first() {
             Some(first) => match &first.kind {
-                NodeKind::Atom(Atom::Symbol { ns: None, name: head }) => head == name,
+                NodeKind::Atom(Atom::Symbol {
+                    ns: None,
+                    name: head,
+                }) => head == name,
                 _ => false,
             },
             None => false,
@@ -521,6 +516,7 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
@@ -551,8 +547,7 @@ impl LanguageServer for Backend {
                 text: text.clone(),
             },
         );
-        self.publish_diagnostics(&uri, &text, Some(version))
-            .await;
+        self.publish_diagnostics(&uri, &text, Some(version)).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -570,8 +565,7 @@ impl LanguageServer for Backend {
         let text = doc.text.clone();
         let version = doc.version;
         drop(doc);
-        self.publish_diagnostics(&uri, &text, Some(version))
-            .await;
+        self.publish_diagnostics(&uri, &text, Some(version)).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -642,6 +636,39 @@ impl LanguageServer for Backend {
         let items = completion_items(&nodes);
         Ok(Some(CompletionResponse::Array(items)))
     }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let source = match self.get_document_text(&params.text_document.uri) {
+            Some(source) => source,
+            None => return Ok(None),
+        };
+
+        let nodes = match nexl_reader::read(&source, FileId(0)) {
+            Ok(nodes) => nodes,
+            Err(_) => return Ok(None), // Don't format broken files
+        };
+
+        let tab_size = params.options.tab_size as usize;
+        let config = nexl_ast::printer::PrintConfig {
+            indent_width: tab_size,
+            ..nexl_ast::printer::PrintConfig::default()
+        };
+        let printer = nexl_ast::printer::PrettyPrinter::new(config);
+        let formatted = printer.print_file(&nodes);
+
+        if formatted == source {
+            return Ok(Some(Vec::new())); // Already formatted
+        }
+
+        // Replace entire document
+        let last_line = source.lines().count().saturating_sub(1) as u32;
+        let last_char = source.lines().last().map_or(0, |l| l.len()) as u32;
+        let edit = TextEdit {
+            range: Range::new(Position::new(0, 0), Position::new(last_line, last_char)),
+            new_text: formatted,
+        };
+        Ok(Some(vec![edit]))
+    }
 }
 
 /// Start the LSP server on stdin/stdout.
@@ -661,10 +688,10 @@ mod tests {
     use std::time::Duration;
     use tower::Service;
     use tower::ServiceExt;
+    use tower_lsp::ClientSocket;
     use tower_lsp::jsonrpc::Request;
     use tower_lsp::lsp_types::notification::Notification;
     use tower_lsp::lsp_types::notification::PublishDiagnostics;
-    use tower_lsp::ClientSocket;
 
     async fn initialize_service(service: &mut LspService<Backend>) {
         let request = Request::build("initialize")
@@ -720,6 +747,9 @@ mod tests {
 
         // Completion should be enabled
         assert!(caps.completion_provider.is_some());
+
+        // Formatting should be enabled
+        assert_eq!(caps.document_formatting_provider, Some(OneOf::Left(true)));
     }
 
     fn test_uri(name: &str) -> Url {
@@ -963,10 +993,7 @@ mod tests {
         assert!(value.contains("one : (Fn [] -> Int)"));
         assert!(value.contains("One."));
         let end = offset_to_position(source, offset + "one".len());
-        assert_eq!(
-            hover.range,
-            Some(Range::new(position, end))
-        );
+        assert_eq!(hover.range, Some(Range::new(position, end)));
     }
 
     #[tokio::test]
@@ -1039,7 +1066,8 @@ mod tests {
             .expect("definition result");
 
         let expected_start = offset_to_position(source, source.find("one").expect("one def"));
-        let expected_end = offset_to_position(source, source.find("one").expect("one def") + "one".len());
+        let expected_end =
+            offset_to_position(source, source.find("one").expect("one def") + "one".len());
         let expected = Location {
             uri: uri.clone(),
             range: Range::new(expected_start, expected_end),
@@ -1138,5 +1166,105 @@ mod tests {
             answer.and_then(|item| item.kind),
             Some(CompletionItemKind::VARIABLE)
         ));
+    }
+
+    fn formatting_params(uri: Url) -> DocumentFormattingParams {
+        DocumentFormattingParams {
+            text_document: TextDocumentIdentifier { uri },
+            options: FormattingOptions {
+                tab_size: 2,
+                insert_spaces: true,
+                ..FormattingOptions::default()
+            },
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_formatting_returns_edits() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("format.nexl");
+        // Multi-form file without trailing newlines
+        let source = "(def x 1)\n(def y 2)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let result = backend
+            .formatting(formatting_params(uri))
+            .await
+            .expect("formatting request")
+            .expect("formatting result");
+
+        assert!(
+            !result.is_empty(),
+            "should return edits for unformatted file"
+        );
+        let edit = &result[0];
+        assert!(edit.new_text.ends_with('\n'));
+    }
+
+    #[tokio::test]
+    async fn test_formatting_none_on_parse_error() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("format-error.nexl");
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: "(".to_string(),
+                },
+            })
+            .await;
+
+        let result = backend
+            .formatting(formatting_params(uri))
+            .await
+            .expect("formatting request");
+
+        assert!(result.is_none(), "should return None for parse error");
+    }
+
+    #[tokio::test]
+    async fn test_formatting_noop_already_formatted() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("format-noop.nexl");
+        let source = "(def x 1)\n";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let result = backend
+            .formatting(formatting_params(uri))
+            .await
+            .expect("formatting request")
+            .expect("formatting result");
+
+        assert!(
+            result.is_empty(),
+            "should return empty edits for already-formatted file"
+        );
     }
 }

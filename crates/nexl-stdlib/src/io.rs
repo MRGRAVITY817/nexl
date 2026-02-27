@@ -12,7 +12,10 @@ use crate::StdlibEntry;
 /// Return all `io` module function entries.
 pub fn entries() -> Vec<StdlibEntry> {
     vec![
-        ("println", io_println as fn(&[Value]) -> Result<Value, String>),
+        (
+            "println",
+            io_println as fn(&[Value]) -> Result<Value, String>,
+        ),
         ("print", io_print),
         ("read-file", read_file),
         ("write-file", write_file),
@@ -23,14 +26,20 @@ pub fn entries() -> Vec<StdlibEntry> {
 fn one_arg<'a>(op: &str, args: &'a [Value]) -> Result<&'a Value, String> {
     match args {
         [a] => Ok(a),
-        _ => Err(format!("`io/{op}` requires exactly 1 argument, got {}", args.len())),
+        _ => Err(format!(
+            "`io/{op}` requires exactly 1 argument, got {}",
+            args.len()
+        )),
     }
 }
 
 fn two_args<'a>(op: &str, args: &'a [Value]) -> Result<(&'a Value, &'a Value), String> {
     match args {
         [a, b] => Ok((a, b)),
-        _ => Err(format!("`io/{op}` requires exactly 2 arguments, got {}", args.len())),
+        _ => Err(format!(
+            "`io/{op}` requires exactly 2 arguments, got {}",
+            args.len()
+        )),
     }
 }
 

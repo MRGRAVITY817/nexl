@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::{Atom, Block, FuncDef, FuncId, LetBind, Module, MatchArm, Rhs, Tail, VarGen, VarId};
+use crate::{Atom, Block, FuncDef, FuncId, LetBind, MatchArm, Module, Rhs, Tail, VarGen, VarId};
 
 /// Maximum cost for a function to be considered inlinable.
 const INLINE_COST_THRESHOLD: usize = 10;
@@ -25,13 +25,13 @@ fn rhs_cost(rhs: &Rhs) -> usize {
 fn tail_cost(tail: &Tail) -> usize {
     match tail {
         Tail::Return(_) => 0,
-        Tail::If { then_block, else_block, .. } => {
-            1 + block_cost(then_block) + block_cost(else_block)
-        }
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => 1 + block_cost(then_block) + block_cost(else_block),
         Tail::TailCall { .. } => 2,
-        Tail::Match { arms, .. } => {
-            1 + arms.iter().map(|a| block_cost(&a.body)).sum::<usize>()
-        }
+        Tail::Match { arms, .. } => 1 + arms.iter().map(|a| block_cost(&a.body)).sum::<usize>(),
         Tail::Panic(_) => 1,
         Tail::Loop { body, .. } => 2 + block_cost(body),
         Tail::Recur { .. } => 1,
@@ -53,8 +53,15 @@ pub fn func_cost(func: &FuncDef) -> usize {
 fn collect_callees_block(block: &Block, out: &mut HashSet<FuncId>) {
     for bind in &block.binds {
         match &bind.rhs {
-            Rhs::Call { func: Atom::FuncRef(id), .. } => { out.insert(*id); }
-            Rhs::MakeClosure { func_id, .. } => { out.insert(*func_id); }
+            Rhs::Call {
+                func: Atom::FuncRef(id),
+                ..
+            } => {
+                out.insert(*id);
+            }
+            Rhs::MakeClosure { func_id, .. } => {
+                out.insert(*func_id);
+            }
             _ => {}
         }
     }
@@ -63,8 +70,17 @@ fn collect_callees_block(block: &Block, out: &mut HashSet<FuncId>) {
 
 fn collect_callees_tail(tail: &Tail, out: &mut HashSet<FuncId>) {
     match tail {
-        Tail::TailCall { func: Atom::FuncRef(id), .. } => { out.insert(*id); }
-        Tail::If { then_block, else_block, .. } => {
+        Tail::TailCall {
+            func: Atom::FuncRef(id),
+            ..
+        } => {
+            out.insert(*id);
+        }
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_callees_block(then_block, out);
             collect_callees_block(else_block, out);
         }
@@ -140,7 +156,11 @@ fn collect_closure_refs(block: &Block, out: &mut HashSet<FuncId>) {
 
 fn collect_closure_refs_tail(tail: &Tail, out: &mut HashSet<FuncId>) {
     match tail {
-        Tail::If { then_block, else_block, .. } => {
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_closure_refs(then_block, out);
             collect_closure_refs(else_block, out);
         }
@@ -233,7 +253,9 @@ fn max_var_rhs(rhs: &Rhs, max: &mut u32) {
         Rhs::Atom(a) => max_var_atom(a, max),
         Rhs::Call { func, args } => {
             max_var_atom(func, max);
-            for a in args { max_var_atom(a, max); }
+            for a in args {
+                max_var_atom(a, max);
+            }
         }
         Rhs::MakeClosure { captures, .. } => {
             for (v, a) in captures {
@@ -242,7 +264,9 @@ fn max_var_rhs(rhs: &Rhs, max: &mut u32) {
             }
         }
         Rhs::MakeTuple { fields, .. } => {
-            for a in fields { max_var_atom(a, max); }
+            for a in fields {
+                max_var_atom(a, max);
+            }
         }
         Rhs::Project { base, .. } => max_var_atom(base, max),
     }
@@ -257,19 +281,27 @@ fn max_var_atom(atom: &Atom, max: &mut u32) {
 fn max_var_tail(tail: &Tail, max: &mut u32) {
     match tail {
         Tail::Return(a) => max_var_atom(a, max),
-        Tail::If { cond, then_block, else_block } => {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
             max_var_atom(cond, max);
             max_var_block(then_block, max);
             max_var_block(else_block, max);
         }
         Tail::TailCall { func, args } => {
             max_var_atom(func, max);
-            for a in args { max_var_atom(a, max); }
+            for a in args {
+                max_var_atom(a, max);
+            }
         }
         Tail::Match { scrutinee, arms } => {
             max_var_atom(scrutinee, max);
             for arm in arms {
-                for v in &arm.binds { *max = (*max).max(v.0); }
+                for v in &arm.binds {
+                    *max = (*max).max(v.0);
+                }
                 max_var_block(&arm.body, max);
             }
         }
@@ -282,7 +314,9 @@ fn max_var_tail(tail: &Tail, max: &mut u32) {
             max_var_block(body, max);
         }
         Tail::Recur { args } => {
-            for a in args { max_var_atom(a, max); }
+            for a in args {
+                max_var_atom(a, max);
+            }
         }
     }
 }
@@ -297,7 +331,10 @@ fn inline_block(
 
     for bind in &block.binds {
         match &bind.rhs {
-            Rhs::Call { func: Atom::FuncRef(id), args } if func_table.contains_key(id) => {
+            Rhs::Call {
+                func: Atom::FuncRef(id),
+                args,
+            } if func_table.contains_key(id) => {
                 let callee = func_table[id];
                 // Build a variable rename map: callee vars → fresh vars.
                 let mut rename = HashMap::new();
@@ -343,13 +380,13 @@ fn inline_block(
 }
 
 /// Inline calls that appear in tail position.
-fn inline_tail(
-    tail: &Tail,
-    func_table: &HashMap<FuncId, &FuncDef>,
-    var_gen: &mut VarGen,
-) -> Tail {
+fn inline_tail(tail: &Tail, func_table: &HashMap<FuncId, &FuncDef>, var_gen: &mut VarGen) -> Tail {
     match tail {
-        Tail::If { cond, then_block, else_block } => Tail::If {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => Tail::If {
             cond: cond.clone(),
             then_block: inline_block(then_block, func_table, var_gen),
             else_block: inline_block(else_block, func_table, var_gen),
@@ -370,7 +407,10 @@ fn inline_tail(
             body: Box::new(inline_block(body, func_table, var_gen)),
         },
         // TailCall to an eligible function: inline as block + return.
-        Tail::TailCall { func: Atom::FuncRef(id), args } if func_table.contains_key(id) => {
+        Tail::TailCall {
+            func: Atom::FuncRef(id),
+            args,
+        } if func_table.contains_key(id) => {
             let callee = func_table[id];
             let mut rename = HashMap::new();
             let mut extra_binds = Vec::new();
@@ -410,17 +450,16 @@ fn inline_tail(
 
 // ── Variable renaming ──────────────────────────────────────────────────────
 
-fn rename_block(
-    block: &Block,
-    rename: &mut HashMap<VarId, VarId>,
-    var_gen: &mut VarGen,
-) -> Block {
+fn rename_block(block: &Block, rename: &mut HashMap<VarId, VarId>, var_gen: &mut VarGen) -> Block {
     let mut new_binds = Vec::new();
     for bind in &block.binds {
         let fresh = var_gen.fresh();
         let new_rhs = rename_rhs(&bind.rhs, rename);
         rename.insert(bind.var, fresh);
-        new_binds.push(LetBind { var: fresh, rhs: new_rhs });
+        new_binds.push(LetBind {
+            var: fresh,
+            rhs: new_rhs,
+        });
     }
     let new_tail = rename_tail(&block.tail, rename, var_gen);
     Block {
@@ -470,14 +509,14 @@ fn rename_rhs(rhs: &Rhs, rename: &HashMap<VarId, VarId>) -> Rhs {
     }
 }
 
-fn rename_tail(
-    tail: &Tail,
-    rename: &mut HashMap<VarId, VarId>,
-    var_gen: &mut VarGen,
-) -> Tail {
+fn rename_tail(tail: &Tail, rename: &mut HashMap<VarId, VarId>, var_gen: &mut VarGen) -> Tail {
     match tail {
         Tail::Return(a) => Tail::Return(rename_atom(a, rename)),
-        Tail::If { cond, then_block, else_block } => Tail::If {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => Tail::If {
             cond: rename_atom(cond, rename),
             then_block: rename_block(then_block, &mut rename.clone(), var_gen),
             else_block: rename_block(else_block, &mut rename.clone(), var_gen),
@@ -705,7 +744,10 @@ mod tests {
             params: vec![VarId(0)],
             body: Block {
                 binds: vec![
-                    LetBind { var: VarId(1), rhs: Rhs::Atom(Atom::Int(1)) },
+                    LetBind {
+                        var: VarId(1),
+                        rhs: Rhs::Atom(Atom::Int(1)),
+                    },
                     LetBind {
                         var: VarId(2),
                         rhs: Rhs::Call {
@@ -755,12 +797,21 @@ mod tests {
         // After inlining, main should have the constant 42 instead of a call.
         let main = &result.funcs[1];
         // The call should be replaced by binding x = 42 (via Atom).
-        assert!(main.body.binds.iter().any(|b| {
-            matches!(&b.rhs, Rhs::Atom(Atom::Int(42)))
-        }));
+        assert!(
+            main.body
+                .binds
+                .iter()
+                .any(|b| { matches!(&b.rhs, Rhs::Atom(Atom::Int(42))) })
+        );
         // No call to @fn0 should remain.
         assert!(!main.body.binds.iter().any(|b| {
-            matches!(&b.rhs, Rhs::Call { func: Atom::FuncRef(FuncId(0)), .. })
+            matches!(
+                &b.rhs,
+                Rhs::Call {
+                    func: Atom::FuncRef(FuncId(0)),
+                    ..
+                }
+            )
         }));
     }
 
@@ -793,7 +844,13 @@ mod tests {
         let main = &result.funcs[1];
         // Should have no calls remaining.
         assert!(!main.body.binds.iter().any(|b| {
-            matches!(&b.rhs, Rhs::Call { func: Atom::FuncRef(FuncId(0)), .. })
+            matches!(
+                &b.rhs,
+                Rhs::Call {
+                    func: Atom::FuncRef(FuncId(0)),
+                    ..
+                }
+            )
         }));
     }
 

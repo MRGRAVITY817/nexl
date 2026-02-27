@@ -61,7 +61,11 @@ fn collect_func_refs_rhs(rhs: &Rhs, out: &mut HashSet<FuncId>) {
 fn collect_func_refs_tail(tail: &Tail, out: &mut HashSet<FuncId>) {
     match tail {
         Tail::Return(a) => collect_func_refs_atom(a, out),
-        Tail::If { cond, then_block, else_block } => {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
             collect_func_refs_atom(cond, out);
             collect_func_refs_block(then_block, out);
             collect_func_refs_block(else_block, out);
@@ -185,7 +189,11 @@ fn collect_used_vars_rhs(rhs: &Rhs, used: &mut HashSet<VarId>) {
 fn collect_used_vars_tail(tail: &Tail, used: &mut HashSet<VarId>) {
     match tail {
         Tail::Return(a) => collect_used_vars_atom(a, used),
-        Tail::If { cond, then_block, else_block } => {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
             collect_used_vars_atom(cond, used);
             collect_used_vars_block(then_block, used);
             collect_used_vars_block(else_block, used);
@@ -256,7 +264,11 @@ fn eliminate_dead_binds_block(block: &Block) -> Block {
 
 fn eliminate_dead_binds_tail(tail: &Tail) -> Tail {
     match tail {
-        Tail::If { cond, then_block, else_block } => Tail::If {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => Tail::If {
             cond: cond.clone(),
             then_block: eliminate_dead_binds_block(then_block),
             else_block: eliminate_dead_binds_block(else_block),
@@ -420,8 +432,14 @@ mod tests {
     fn unused_pure_binding_is_removed() {
         let block = Block {
             binds: vec![
-                LetBind { var: VarId(0), rhs: Rhs::Atom(Atom::Int(42)) }, // unused
-                LetBind { var: VarId(1), rhs: Rhs::Atom(Atom::Int(7)) },  // used in return
+                LetBind {
+                    var: VarId(0),
+                    rhs: Rhs::Atom(Atom::Int(42)),
+                }, // unused
+                LetBind {
+                    var: VarId(1),
+                    rhs: Rhs::Atom(Atom::Int(7)),
+                }, // used in return
             ],
             tail: Box::new(Tail::Return(Atom::Var(VarId(1)))),
         };
@@ -452,9 +470,18 @@ mod tests {
         // %0 = 1; %1 = %0; %2 = %1 — but only %2 is used? No, none are used.
         let block = Block {
             binds: vec![
-                LetBind { var: VarId(0), rhs: Rhs::Atom(Atom::Int(1)) },
-                LetBind { var: VarId(1), rhs: Rhs::Atom(Atom::Var(VarId(0))) },
-                LetBind { var: VarId(2), rhs: Rhs::Atom(Atom::Var(VarId(1))) },
+                LetBind {
+                    var: VarId(0),
+                    rhs: Rhs::Atom(Atom::Int(1)),
+                },
+                LetBind {
+                    var: VarId(1),
+                    rhs: Rhs::Atom(Atom::Var(VarId(0))),
+                },
+                LetBind {
+                    var: VarId(2),
+                    rhs: Rhs::Atom(Atom::Var(VarId(1))),
+                },
             ],
             tail: Box::new(Tail::Return(Atom::Int(99))),
         };
@@ -468,8 +495,14 @@ mod tests {
         // %0 = 1; %1 = %0; return %1  → both kept.
         let block = Block {
             binds: vec![
-                LetBind { var: VarId(0), rhs: Rhs::Atom(Atom::Int(1)) },
-                LetBind { var: VarId(1), rhs: Rhs::Atom(Atom::Var(VarId(0))) },
+                LetBind {
+                    var: VarId(0),
+                    rhs: Rhs::Atom(Atom::Int(1)),
+                },
+                LetBind {
+                    var: VarId(1),
+                    rhs: Rhs::Atom(Atom::Var(VarId(0))),
+                },
             ],
             tail: Box::new(Tail::Return(Atom::Var(VarId(1)))),
         };
@@ -485,7 +518,10 @@ mod tests {
                 cond: Atom::Bool(true),
                 then_block: Block {
                     binds: vec![
-                        LetBind { var: VarId(0), rhs: Rhs::Atom(Atom::Int(1)) }, // unused
+                        LetBind {
+                            var: VarId(0),
+                            rhs: Rhs::Atom(Atom::Int(1)),
+                        }, // unused
                     ],
                     tail: Box::new(Tail::Return(Atom::Int(2))),
                 },
@@ -510,7 +546,10 @@ mod tests {
             params: vec![],
             body: Block {
                 binds: vec![
-                    LetBind { var: VarId(0), rhs: Rhs::Atom(Atom::Int(99)) }, // unused
+                    LetBind {
+                        var: VarId(0),
+                        rhs: Rhs::Atom(Atom::Int(99)),
+                    }, // unused
                 ],
                 tail: Box::new(Tail::Return(Atom::Int(1))),
             },

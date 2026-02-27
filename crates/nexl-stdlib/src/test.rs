@@ -80,11 +80,7 @@ mod tests {
     #[test]
     fn test_assert_eq_str() {
         assert_eq!(
-            assert_eq_fn(&[
-                Value::Str(Rc::from("hello")),
-                Value::Str(Rc::from("hello")),
-            ])
-            .unwrap(),
+            assert_eq_fn(&[Value::Str(Rc::from("hello")), Value::Str(Rc::from("hello")),]).unwrap(),
             Value::Unit
         );
     }

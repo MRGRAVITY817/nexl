@@ -122,9 +122,7 @@ pub fn parse_defextern_decl(items: &[Node]) -> Result<DefExternDecl, FfiParseErr
         NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) if kw.is_empty() => {}
         NodeKind::Atom(Atom::Symbol { ns: None, name: s }) if s == ":" => {}
         _ => {
-            return Err(FfiParseError::new(
-                "expected `:` after name in defextern",
-            ));
+            return Err(FfiParseError::new("expected `:` after name in defextern"));
         }
     }
 
@@ -159,9 +157,7 @@ pub fn parse_defextern_decl(items: &[Node]) -> Result<DefExternDecl, FfiParseErr
             NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) if kw == "performs" => {
                 i += 1;
                 if i >= items.len() {
-                    return Err(FfiParseError::new(
-                        ":performs requires a vector argument",
-                    ));
+                    return Err(FfiParseError::new(":performs requires a vector argument"));
                 }
                 performs = Some(extract_symbol_vec(&items[i])?);
             }
@@ -218,9 +214,7 @@ pub fn parse_defexport_decl(items: &[Node]) -> Result<DefExportDecl, FfiParseErr
         NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) if kw.is_empty() => {}
         NodeKind::Atom(Atom::Symbol { ns: None, name: s }) if s == ":" => {}
         _ => {
-            return Err(FfiParseError::new(
-                "expected `:` after name in defexport",
-            ));
+            return Err(FfiParseError::new("expected `:` after name in defexport"));
         }
     }
 

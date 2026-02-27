@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use meta::{Atom, Node, NodeKind, parse_try_form, TryCatchForm};
+use meta::{Atom, Node, NodeKind, TryCatchForm, parse_try_form};
 use nexl_runtime::{Value, value::Function};
 
 use crate::{Env, EvalError};
@@ -60,7 +60,10 @@ fn eval_atom(atom: &Atom, env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         Atom::Symbol { ns: None, name } => env
             .get(name)
             .ok_or_else(|| EvalError::UnboundSymbol(name.clone()))?,
-        Atom::Symbol { ns: Some(alias), name } => env
+        Atom::Symbol {
+            ns: Some(alias),
+            name,
+        } => env
             .get_qualified(alias, name)
             .ok_or_else(|| EvalError::UnboundSymbol(format!("{alias}/{name}")))?,
     };
@@ -93,9 +96,7 @@ fn eval_list<'a>(
         }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "for" => eval_for(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "for!" => eval_for(items, env),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "each" => {
-            eval_each(items, env)
-        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "each" => eval_each(items, env),
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "times" => {
             eval_times(items, env)
         }
@@ -561,17 +562,13 @@ fn eval_each(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
                     .ok_or_else(|| EvalError::NativeError("Option.Some missing field".into()))?;
                 iter_values.push(value.clone());
             }
-            _ => {
-                return Err(EvalError::NativeError(
-                    "unknown Option constructor".into(),
-                ))
-            }
+            _ => return Err(EvalError::NativeError("unknown Option constructor".into())),
         },
         other => {
             return Err(EvalError::NativeError(format!(
                 "`each` expected Vec, Map, Set, or Option, got {}",
                 other.type_name()
-            )))
+            )));
         }
     }
 
@@ -616,13 +613,13 @@ fn eval_times(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         Value::Int(n) => {
             return Err(EvalError::NativeError(format!(
                 "`times` count must be non-negative, got {n}"
-            )))
+            )));
         }
         other => {
             return Err(EvalError::NativeError(format!(
                 "`times` expected Int count, got {}",
                 other.type_name()
-            )))
+            )));
         }
     };
 
@@ -743,17 +740,13 @@ fn eval_for_bindings(
                         })?;
                         iter_values.push(value.clone());
                     }
-                    _ => {
-                        return Err(EvalError::NativeError(
-                            "unknown Option constructor".into(),
-                        ))
-                    }
+                    _ => return Err(EvalError::NativeError("unknown Option constructor".into())),
                 },
                 other => {
                     return Err(EvalError::NativeError(format!(
                         "`for` expected Vec, Map, Set, or Option, got {}",
                         other.type_name()
-                    )))
+                    )));
                 }
             }
 
@@ -771,10 +764,7 @@ fn eval_for_bindings(
     }
 }
 
-fn eval_for_let_bindings(
-    bindings: &[Node],
-    env: &Rc<Env>,
-) -> Result<Rc<Env>, EvalError> {
+fn eval_for_let_bindings(bindings: &[Node], env: &Rc<Env>) -> Result<Rc<Env>, EvalError> {
     if !bindings.len().is_multiple_of(2) {
         return Err(EvalError::Arity);
     }
@@ -928,7 +918,7 @@ fn eval_apply<'a>(
             match cond {
                 Value::Bool(true) => {}
                 Value::Bool(false) => {
-                    return Err(EvalError::Panic("postcondition failed".to_string()))
+                    return Err(EvalError::Panic("postcondition failed".to_string()));
                 }
                 _ => return Err(EvalError::InvalidConditionType),
             }
@@ -974,10 +964,7 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
     }
 
     for (idx, param) in func.params.iter().enumerate() {
-        let arg_val = args
-            .get(idx)
-            .ok_or(EvalError::Arity)?
-            .clone();
+        let arg_val = args.get(idx).ok_or(EvalError::Arity)?.clone();
         call_env.define(param.clone(), arg_val);
     }
 
@@ -1022,7 +1009,7 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
             match cond {
                 Value::Bool(true) => {}
                 Value::Bool(false) => {
-                    return Err(EvalError::Panic("postcondition failed".to_string()))
+                    return Err(EvalError::Panic("postcondition failed".to_string()));
                 }
                 _ => return Err(EvalError::InvalidConditionType),
             }
@@ -1146,32 +1133,40 @@ fn eval_question<'a>(
         EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
     };
     match &val {
-        Value::Adt { type_name, ctor, fields } if type_name.as_ref() == "Result" => {
-            match ctor.as_ref() {
-                "Ok" => {
-                    let inner = fields
-                        .first()
-                        .ok_or_else(|| EvalError::NativeError("Result.Ok missing field".into()))?
-                        .clone();
-                    Ok(EvalReturn::Value(inner))
-                }
-                "Err" => Err(EvalError::EarlyReturn(val)),
-                _ => Err(EvalError::NativeError(format!("unknown Result constructor: {ctor}"))),
+        Value::Adt {
+            type_name,
+            ctor,
+            fields,
+        } if type_name.as_ref() == "Result" => match ctor.as_ref() {
+            "Ok" => {
+                let inner = fields
+                    .first()
+                    .ok_or_else(|| EvalError::NativeError("Result.Ok missing field".into()))?
+                    .clone();
+                Ok(EvalReturn::Value(inner))
             }
-        }
-        Value::Adt { type_name, ctor, fields } if type_name.as_ref() == "Option" => {
-            match ctor.as_ref() {
-                "Some" => {
-                    let inner = fields
-                        .first()
-                        .ok_or_else(|| EvalError::NativeError("Option.Some missing field".into()))?
-                        .clone();
-                    Ok(EvalReturn::Value(inner))
-                }
-                "None" => Err(EvalError::EarlyReturn(val)),
-                _ => Err(EvalError::NativeError(format!("unknown Option constructor: {ctor}"))),
+            "Err" => Err(EvalError::EarlyReturn(val)),
+            _ => Err(EvalError::NativeError(format!(
+                "unknown Result constructor: {ctor}"
+            ))),
+        },
+        Value::Adt {
+            type_name,
+            ctor,
+            fields,
+        } if type_name.as_ref() == "Option" => match ctor.as_ref() {
+            "Some" => {
+                let inner = fields
+                    .first()
+                    .ok_or_else(|| EvalError::NativeError("Option.Some missing field".into()))?
+                    .clone();
+                Ok(EvalReturn::Value(inner))
             }
-        }
+            "None" => Err(EvalError::EarlyReturn(val)),
+            _ => Err(EvalError::NativeError(format!(
+                "unknown Option constructor: {ctor}"
+            ))),
+        },
         other => Err(EvalError::NativeError(format!(
             "? applied to non-Result/Option value: {}",
             other.type_name()
@@ -1189,8 +1184,7 @@ fn eval_try<'a>(
     env: &Rc<Env>,
     loop_state: Option<&'a LoopFrame<'a>>,
 ) -> Result<EvalReturn, EvalError> {
-    let form = parse_try_form(items)
-        .map_err(|e| EvalError::NativeError(e.description))?;
+    let form = parse_try_form(items).map_err(|e| EvalError::NativeError(e.description))?;
     eval_try_form(&form, env, loop_state)
 }
 
@@ -1212,38 +1206,40 @@ fn eval_try_form<'a>(
 
     // Desugar: match last on Ok/Err.
     match last {
-        Value::Adt { ref type_name, ref ctor, ref fields } if type_name.as_ref() == "Result" => {
-            match ctor.as_ref() {
-                "Ok" => {
-                    let inner = fields
-                        .first()
-                        .ok_or_else(|| EvalError::NativeError("Result.Ok missing field".into()))?
-                        .clone();
-                    Ok(EvalReturn::Value(inner))
-                }
-                "Err" => {
-                    let inner = fields
-                        .first()
-                        .ok_or_else(|| EvalError::NativeError("Result.Err missing field".into()))?
-                        .clone();
-                    let catch_env = Rc::new(Env::child(Rc::clone(env)));
-                    catch_env.define(form.catch_name.as_str(), inner);
-                    let mut catch_last = Value::Unit;
-                    for expr in &form.catch_body {
-                        match eval_with_loop(expr, &catch_env, loop_state) {
-                            Ok(EvalReturn::Value(v)) => catch_last = v,
-                            Ok(EvalReturn::Recur(vals)) => return Ok(EvalReturn::Recur(vals)),
-                            Err(EvalError::EarlyReturn(v)) => return Ok(EvalReturn::Value(v)),
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    Ok(EvalReturn::Value(catch_last))
-                }
-                _ => Err(EvalError::NativeError(format!(
-                    "try: expected Result (Ok or Err), got constructor `{ctor}`"
-                ))),
+        Value::Adt {
+            ref type_name,
+            ref ctor,
+            ref fields,
+        } if type_name.as_ref() == "Result" => match ctor.as_ref() {
+            "Ok" => {
+                let inner = fields
+                    .first()
+                    .ok_or_else(|| EvalError::NativeError("Result.Ok missing field".into()))?
+                    .clone();
+                Ok(EvalReturn::Value(inner))
             }
-        }
+            "Err" => {
+                let inner = fields
+                    .first()
+                    .ok_or_else(|| EvalError::NativeError("Result.Err missing field".into()))?
+                    .clone();
+                let catch_env = Rc::new(Env::child(Rc::clone(env)));
+                catch_env.define(form.catch_name.as_str(), inner);
+                let mut catch_last = Value::Unit;
+                for expr in &form.catch_body {
+                    match eval_with_loop(expr, &catch_env, loop_state) {
+                        Ok(EvalReturn::Value(v)) => catch_last = v,
+                        Ok(EvalReturn::Recur(vals)) => return Ok(EvalReturn::Recur(vals)),
+                        Err(EvalError::EarlyReturn(v)) => return Ok(EvalReturn::Value(v)),
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(EvalReturn::Value(catch_last))
+            }
+            _ => Err(EvalError::NativeError(format!(
+                "try: expected Result (Ok or Err), got constructor `{ctor}`"
+            ))),
+        },
         other => Err(EvalError::NativeError(format!(
             "try: body must produce a Result, got {}",
             other.type_name()

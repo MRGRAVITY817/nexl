@@ -413,8 +413,7 @@ mod tests {
             ],
         }];
         let functions = vec![("version".to_string(), vec![], Type::Str)];
-        let result =
-            generate_wit_interface_full("database", &functions, &resources).unwrap();
+        let result = generate_wit_interface_full("database", &functions, &resources).unwrap();
         assert!(result.contains("package nexl:database;"));
         assert!(result.contains("interface database {"));
         assert!(result.contains("resource connection {"));

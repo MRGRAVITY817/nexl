@@ -236,10 +236,7 @@ mod tests {
     fn handler_record_insert_continuation_op() {
         let mut rec = HandlerRecord::new("Console");
         rec.insert_continuation_op("print", 7_i32);
-        assert_eq!(
-            rec.lookup("print"),
-            Some(&HandlerOp::Continuation(7_i32))
-        );
+        assert_eq!(rec.lookup("print"), Some(&HandlerOp::Continuation(7_i32)));
     }
 
     // -- Test 4 --
@@ -293,10 +290,7 @@ mod tests {
         let mut net = HandlerRecord::new("Net");
         net.insert_op("get", 2_i32);
         let ev = EvidenceVector::from_records(vec![console, net]);
-        assert_eq!(
-            ev.lookup("Net", "get"),
-            Some(&HandlerOp::Simple(2_i32))
-        );
+        assert_eq!(ev.lookup("Net", "get"), Some(&HandlerOp::Simple(2_i32)));
     }
 
     // -- Test 9 --

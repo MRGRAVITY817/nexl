@@ -20,14 +20,20 @@ pub fn entries() -> Vec<StdlibEntry> {
 fn one_arg<'a>(op: &str, args: &'a [Value]) -> Result<&'a Value, String> {
     match args {
         [a] => Ok(a),
-        _ => Err(format!("`json/{op}` requires exactly 1 argument, got {}", args.len())),
+        _ => Err(format!(
+            "`json/{op}` requires exactly 1 argument, got {}",
+            args.len()
+        )),
     }
 }
 
 fn expect_str<'a>(op: &str, v: &'a Value) -> Result<&'a Rc<str>, String> {
     match v {
         Value::Str(s) => Ok(s),
-        other => Err(format!("`json/{op}` expected Str, got {}", other.type_name())),
+        other => Err(format!(
+            "`json/{op}` expected Str, got {}",
+            other.type_name()
+        )),
     }
 }
 
@@ -117,10 +123,7 @@ fn parse_string(input: &str) -> Result<(Value, &str), String> {
     while let Some((i, c)) = chars.next() {
         match c {
             '"' => {
-                return Ok((
-                    Value::Str(Rc::from(result.as_str())),
-                    &rest[i + 1..],
-                ));
+                return Ok((Value::Str(Rc::from(result.as_str())), &rest[i + 1..]));
             }
             '\\' => {
                 if let Some((_, escaped)) = chars.next() {
@@ -148,7 +151,9 @@ fn parse_string(input: &str) -> Result<(Value, &str), String> {
 
 fn parse_number(input: &str) -> Result<(Value, &str), String> {
     let end = input
-        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != '+' && c != 'e' && c != 'E')
+        .find(|c: char| {
+            !c.is_ascii_digit() && c != '.' && c != '-' && c != '+' && c != 'e' && c != 'E'
+        })
         .unwrap_or(input.len());
     let num_str = &input[..end];
     let rest = &input[end..];

@@ -367,7 +367,10 @@ fn list_head_is(node: &Node, name: &str) -> bool {
         return false;
     };
     match &first.kind {
-        NodeKind::Atom(Atom::Symbol { ns: None, name: head }) => head == name,
+        NodeKind::Atom(Atom::Symbol {
+            ns: None,
+            name: head,
+        }) => head == name,
         _ => false,
     }
 }

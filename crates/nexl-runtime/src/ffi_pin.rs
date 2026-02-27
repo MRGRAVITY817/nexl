@@ -138,11 +138,46 @@ mod tests {
 
     #[test]
     fn test_c_type_layout_sizes() {
-        assert_eq!(CTypeLayout::Int { bytes: 1, signed: true }.size(), 1);
-        assert_eq!(CTypeLayout::Int { bytes: 2, signed: true }.size(), 2);
-        assert_eq!(CTypeLayout::Int { bytes: 4, signed: true }.size(), 4);
-        assert_eq!(CTypeLayout::Int { bytes: 8, signed: true }.size(), 8);
-        assert_eq!(CTypeLayout::Int { bytes: 4, signed: false }.size(), 4);
+        assert_eq!(
+            CTypeLayout::Int {
+                bytes: 1,
+                signed: true
+            }
+            .size(),
+            1
+        );
+        assert_eq!(
+            CTypeLayout::Int {
+                bytes: 2,
+                signed: true
+            }
+            .size(),
+            2
+        );
+        assert_eq!(
+            CTypeLayout::Int {
+                bytes: 4,
+                signed: true
+            }
+            .size(),
+            4
+        );
+        assert_eq!(
+            CTypeLayout::Int {
+                bytes: 8,
+                signed: true
+            }
+            .size(),
+            8
+        );
+        assert_eq!(
+            CTypeLayout::Int {
+                bytes: 4,
+                signed: false
+            }
+            .size(),
+            4
+        );
         assert_eq!(CTypeLayout::Float { bytes: 4 }.size(), 4);
         assert_eq!(CTypeLayout::Float { bytes: 8 }.size(), 8);
         assert_eq!(CTypeLayout::Bool.size(), 1);

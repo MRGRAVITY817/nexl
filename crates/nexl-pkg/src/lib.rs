@@ -1,7 +1,7 @@
 //! `nexl-pkg` — package manifest schema for `project.nexl` (EDN format).
 
 use meta::{Atom, Node, NodeKind};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -112,9 +112,7 @@ impl Capability {
             "random" => Ok(Self::Random),
             "concurrent" => Ok(Self::Concurrent),
             "unsafe" => Ok(Self::Unsafe),
-            other => Err(ManifestError::Parse(format!(
-                "unknown capability :{other}"
-            ))),
+            other => Err(ManifestError::Parse(format!("unknown capability :{other}"))),
         }
     }
 }
@@ -245,7 +243,7 @@ pub fn parse_manifest(source: &str) -> Result<PackageManifest, ManifestError> {
         _ => {
             return Err(ManifestError::Parse(
                 "expected a map as the top-level form".to_string(),
-            ))
+            ));
         }
     };
 
@@ -267,12 +265,12 @@ pub fn parse_manifest(source: &str) -> Result<PackageManifest, ManifestError> {
             Some(other) => {
                 return Err(ManifestError::Parse(format!(
                     "unknown top-level key :{other}"
-                )))
+                )));
             }
             None => {
                 return Err(ManifestError::Parse(
                     "top-level keys must be keywords".to_string(),
-                ))
+                ));
             }
         }
     }
@@ -333,19 +331,17 @@ fn parse_package_section(node: &Node) -> Result<PackageSection, ManifestError> {
         match keyword_name(key) {
             Some("name") => name = Some(expect_string(value, "package.name")?),
             Some("version") => version = Some(expect_string(value, "package.version")?),
-            Some("description") => {
-                description = Some(expect_string(value, "package.description")?)
-            }
+            Some("description") => description = Some(expect_string(value, "package.description")?),
             Some("prefix") => prefix = Some(expect_string(value, "package.prefix")?),
             Some(other) => {
                 return Err(ManifestError::Parse(format!(
                     "unknown package field :{other}"
-                )))
+                )));
             }
             None => {
                 return Err(ManifestError::Parse(
                     "package keys must be keywords".to_string(),
-                ))
+                ));
             }
         }
     }
@@ -355,14 +351,11 @@ fn parse_package_section(node: &Node) -> Result<PackageSection, ManifestError> {
         version: version
             .ok_or_else(|| ManifestError::MissingField("package.version".to_string()))?,
         description,
-        prefix: prefix
-            .ok_or_else(|| ManifestError::MissingField("package.prefix".to_string()))?,
+        prefix: prefix.ok_or_else(|| ManifestError::MissingField("package.prefix".to_string()))?,
     })
 }
 
-fn parse_dependencies(
-    node: &Node,
-) -> Result<BTreeMap<String, DependencySpec>, ManifestError> {
+fn parse_dependencies(node: &Node) -> Result<BTreeMap<String, DependencySpec>, ManifestError> {
     let pairs = expect_map(node, "dependencies")?;
     let mut deps = BTreeMap::new();
 
@@ -378,7 +371,7 @@ fn parse_dependencies(
                 return Err(ManifestError::TypeError {
                     field: format!("dependency `{name}`"),
                     expected: "string or map".to_string(),
-                })
+                });
             }
         };
         deps.insert(name, spec);
@@ -387,9 +380,7 @@ fn parse_dependencies(
     Ok(deps)
 }
 
-fn parse_dependency_detail(
-    pairs: &[(Node, Node)],
-) -> Result<DependencyDetail, ManifestError> {
+fn parse_dependency_detail(pairs: &[(Node, Node)]) -> Result<DependencyDetail, ManifestError> {
     let mut version = None;
     let mut registry = None;
 
@@ -400,12 +391,12 @@ fn parse_dependency_detail(
             Some(other) => {
                 return Err(ManifestError::Parse(format!(
                     "unknown dependency field :{other}"
-                )))
+                )));
             }
             None => {
                 return Err(ManifestError::Parse(
                     "dependency detail keys must be keywords".to_string(),
-                ))
+                ));
             }
         }
     }
@@ -417,9 +408,7 @@ fn parse_dependency_detail(
     })
 }
 
-fn parse_registries(
-    node: &Node,
-) -> Result<BTreeMap<String, RegistrySpec>, ManifestError> {
+fn parse_registries(node: &Node) -> Result<BTreeMap<String, RegistrySpec>, ManifestError> {
     let pairs = expect_map(node, "registries")?;
     let mut regs = BTreeMap::new();
 
@@ -436,12 +425,12 @@ fn parse_registries(
                 Some(other) => {
                     return Err(ManifestError::Parse(format!(
                         "unknown registry field :{other}"
-                    )))
+                    )));
                 }
                 None => {
                     return Err(ManifestError::Parse(
                         "registry keys must be keywords".to_string(),
-                    ))
+                    ));
                 }
             }
         }
@@ -449,8 +438,7 @@ fn parse_registries(
         regs.insert(
             name,
             RegistrySpec {
-                url: url
-                    .ok_or_else(|| ManifestError::MissingField("registry.url".to_string()))?,
+                url: url.ok_or_else(|| ManifestError::MissingField("registry.url".to_string()))?,
                 token_env,
             },
         );
@@ -477,12 +465,12 @@ fn parse_sandbox_config(pairs: &[(Node, Node)]) -> Result<SandboxConfig, Manifes
             Some(other) => {
                 return Err(ManifestError::Parse(format!(
                     "unknown sandbox field :{other}"
-                )))
+                )));
             }
             None => {
                 return Err(ManifestError::Parse(
                     "sandbox keys must be keywords".to_string(),
-                ))
+                ));
             }
         }
     }
@@ -497,7 +485,7 @@ fn parse_capability_set(node: &Node) -> Result<BTreeSet<Capability>, ManifestErr
             return Err(ManifestError::TypeError {
                 field: "sandbox.allow".to_string(),
                 expected: "set".to_string(),
-            })
+            });
         }
     };
 
@@ -512,17 +500,14 @@ fn parse_capability_set(node: &Node) -> Result<BTreeSet<Capability>, ManifestErr
     Ok(caps)
 }
 
-fn parse_string_set(
-    node: &Node,
-    field: &str,
-) -> Result<BTreeSet<String>, ManifestError> {
+fn parse_string_set(node: &Node, field: &str) -> Result<BTreeSet<String>, ManifestError> {
     let items = match &node.kind {
         NodeKind::Set(items) => items,
         _ => {
             return Err(ManifestError::TypeError {
                 field: field.to_string(),
                 expected: "set".to_string(),
-            })
+            });
         }
     };
 
@@ -533,9 +518,7 @@ fn parse_string_set(
     Ok(set)
 }
 
-fn parse_profiles(
-    node: &Node,
-) -> Result<BTreeMap<String, ProfileConfig>, ManifestError> {
+fn parse_profiles(node: &Node) -> Result<BTreeMap<String, ProfileConfig>, ManifestError> {
     let pairs = expect_map(node, "profiles")?;
     let mut profiles = BTreeMap::new();
 
@@ -559,12 +542,12 @@ fn parse_profiles(
                 Some(other) => {
                     return Err(ManifestError::Parse(format!(
                         "unknown profile field :{other}"
-                    )))
+                    )));
                 }
                 None => {
                     return Err(ManifestError::Parse(
                         "profile keys must be keywords".to_string(),
-                    ))
+                    ));
                 }
             }
         }
@@ -601,7 +584,10 @@ pub fn serialize_manifest(manifest: &PackageManifest) -> String {
 
     // Registries
     if !manifest.registries.is_empty() {
-        sections.push(("registries", serialize_registries_lines(&manifest.registries)));
+        sections.push((
+            "registries",
+            serialize_registries_lines(&manifest.registries),
+        ));
     }
 
     // Sandbox
@@ -659,21 +645,15 @@ pub fn parse_lockfile(source: &str) -> Result<Lockfile, ManifestError> {
 
                 for (ik, iv) in inner {
                     match keyword_name(ik) {
-                        Some("version") => {
-                            version = Some(expect_string(iv, "locked.version")?)
-                        }
+                        Some("version") => version = Some(expect_string(iv, "locked.version")?),
                         Some("kind") => {
-                            let k = keyword_name(iv).ok_or_else(|| {
-                                ManifestError::TypeError {
-                                    field: "locked.kind".to_string(),
-                                    expected: "keyword".to_string(),
-                                }
+                            let k = keyword_name(iv).ok_or_else(|| ManifestError::TypeError {
+                                field: "locked.kind".to_string(),
+                                expected: "keyword".to_string(),
                             })?;
                             kind = Some(DependencyKind::from_str(k)?);
                         }
-                        Some("registry") => {
-                            registry = Some(expect_string(iv, "locked.registry")?)
-                        }
+                        Some("registry") => registry = Some(expect_string(iv, "locked.registry")?),
                         _ => {}
                     }
                 }
@@ -774,7 +754,11 @@ fn serialize_registries_lines(regs: &BTreeMap<String, RegistrySpec>) -> Vec<Stri
 fn serialize_sandbox_lines(sb: &SandboxConfig) -> Vec<String> {
     let mut lines = Vec::new();
     if !sb.allow.is_empty() {
-        let caps: Vec<String> = sb.allow.iter().map(|c| format!(":{}", c.as_str())).collect();
+        let caps: Vec<String> = sb
+            .allow
+            .iter()
+            .map(|c| format!(":{}", c.as_str()))
+            .collect();
         lines.push(format!(":allow #{{{}}}", caps.join(" ")));
     }
     if !sb.net.is_empty() {
@@ -807,7 +791,11 @@ fn serialize_profiles_lines(profiles: &BTreeMap<String, ProfileConfig>) -> Vec<S
 fn serialize_sandbox_inline(sb: &SandboxConfig) -> String {
     let mut parts = Vec::new();
     if !sb.allow.is_empty() {
-        let caps: Vec<String> = sb.allow.iter().map(|c| format!(":{}", c.as_str())).collect();
+        let caps: Vec<String> = sb
+            .allow
+            .iter()
+            .map(|c| format!(":{}", c.as_str()))
+            .collect();
         parts.push(format!(":allow #{{{}}}", caps.join(" ")));
     }
     if !sb.net.is_empty() {
@@ -983,13 +971,14 @@ fn collect_deps_list(items: &[Node], locals: &mut HashSet<String>, deps: &mut Ha
                 // (fn [params...] body...)
                 let mut fn_locals = locals.clone();
                 if items.len() >= 2
-                    && let NodeKind::Vector(params) = &items[1].kind {
-                        for p in params {
-                            if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &p.kind {
-                                fn_locals.insert(name.clone());
-                            }
+                    && let NodeKind::Vector(params) = &items[1].kind
+                {
+                    for p in params {
+                        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &p.kind {
+                            fn_locals.insert(name.clone());
                         }
                     }
+                }
                 for item in &items[2..] {
                     collect_deps_node(item, &mut fn_locals, deps);
                 }
@@ -999,20 +988,19 @@ fn collect_deps_list(items: &[Node], locals: &mut HashSet<String>, deps: &mut Ha
                 // (let [name val name val ...] body...)
                 let mut let_locals = locals.clone();
                 if items.len() >= 2
-                    && let NodeKind::Vector(bindings) = &items[1].kind {
-                        for pair in bindings.chunks(2) {
-                            if pair.len() == 2 {
-                                // Eval the value in current scope.
-                                collect_deps_node(&pair[1], &mut let_locals, deps);
-                                // Add the name to scope.
-                                if let NodeKind::Atom(Atom::Symbol { ns: None, name }) =
-                                    &pair[0].kind
-                                {
-                                    let_locals.insert(name.clone());
-                                }
+                    && let NodeKind::Vector(bindings) = &items[1].kind
+                {
+                    for pair in bindings.chunks(2) {
+                        if pair.len() == 2 {
+                            // Eval the value in current scope.
+                            collect_deps_node(&pair[1], &mut let_locals, deps);
+                            // Add the name to scope.
+                            if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &pair[0].kind {
+                                let_locals.insert(name.clone());
                             }
                         }
                     }
+                }
                 for item in &items[2..] {
                     collect_deps_node(item, &mut let_locals, deps);
                 }
@@ -1022,17 +1010,19 @@ fn collect_deps_list(items: &[Node], locals: &mut HashSet<String>, deps: &mut Ha
                 // (defn name [params...] body...)
                 let mut defn_locals = locals.clone();
                 if items.len() >= 2
-                    && let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &items[1].kind {
-                        defn_locals.insert(name.clone());
-                    }
+                    && let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &items[1].kind
+                {
+                    defn_locals.insert(name.clone());
+                }
                 if items.len() >= 3
-                    && let NodeKind::Vector(params) = &items[2].kind {
-                        for p in params {
-                            if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &p.kind {
-                                defn_locals.insert(name.clone());
-                            }
+                    && let NodeKind::Vector(params) = &items[2].kind
+                {
+                    for p in params {
+                        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &p.kind {
+                            defn_locals.insert(name.clone());
                         }
                     }
+                }
                 for item in &items[3..] {
                     collect_deps_node(item, &mut defn_locals, deps);
                 }
@@ -1042,18 +1032,17 @@ fn collect_deps_list(items: &[Node], locals: &mut HashSet<String>, deps: &mut Ha
                 // (loop [var init var init ...] body...)
                 let mut loop_locals = locals.clone();
                 if items.len() >= 2
-                    && let NodeKind::Vector(bindings) = &items[1].kind {
-                        for pair in bindings.chunks(2) {
-                            if pair.len() == 2 {
-                                collect_deps_node(&pair[1], &mut loop_locals, deps);
-                                if let NodeKind::Atom(Atom::Symbol { ns: None, name }) =
-                                    &pair[0].kind
-                                {
-                                    loop_locals.insert(name.clone());
-                                }
+                    && let NodeKind::Vector(bindings) = &items[1].kind
+                {
+                    for pair in bindings.chunks(2) {
+                        if pair.len() == 2 {
+                            collect_deps_node(&pair[1], &mut loop_locals, deps);
+                            if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &pair[0].kind {
+                                loop_locals.insert(name.clone());
                             }
                         }
                     }
+                }
                 for item in &items[2..] {
                     collect_deps_node(item, &mut loop_locals, deps);
                 }
@@ -1104,13 +1093,34 @@ fn collect_pattern_names(node: &Node, locals: &mut HashSet<String>) {
 fn is_special_form(name: &str) -> bool {
     matches!(
         name,
-        "fn" | "let" | "if" | "do" | "defn" | "def" | "deftype" | "defeffect"
-            | "defmacro" | "defn-macro" | "defmacro-syntax"
-            | "loop" | "recur" | "match" | "try" | "catch"
-            | "quote" | "quasiquote" | "unquote" | "unquote-splice"
-            | "module" | "import" | "export"
-            | "handle" | "perform" | "resume"
-            | "assert!" | "assert-unreachable!" | "panic!"
+        "fn" | "let"
+            | "if"
+            | "do"
+            | "defn"
+            | "def"
+            | "deftype"
+            | "defeffect"
+            | "defmacro"
+            | "defn-macro"
+            | "defmacro-syntax"
+            | "loop"
+            | "recur"
+            | "match"
+            | "try"
+            | "catch"
+            | "quote"
+            | "quasiquote"
+            | "unquote"
+            | "unquote-splice"
+            | "module"
+            | "import"
+            | "export"
+            | "handle"
+            | "perform"
+            | "resume"
+            | "assert!"
+            | "assert-unreachable!"
+            | "panic!"
     )
 }
 
@@ -1313,10 +1323,7 @@ impl DefinitionStore {
     }
 
     /// Find all definition hashes that were expanded using the given macro.
-    pub fn definitions_using_macro(
-        &self,
-        macro_name: &str,
-    ) -> Result<Vec<String>, StoreError> {
+    pub fn definitions_using_macro(&self, macro_name: &str) -> Result<Vec<String>, StoreError> {
         let mut stmt = self
             .conn
             .prepare("SELECT def_hash FROM macro_expansions WHERE macro_name = ?1")?;
@@ -1336,10 +1343,8 @@ impl DefinitionStore {
         let hashes = self.definitions_using_macro(macro_name)?;
         let count = hashes.len();
         for hash in &hashes {
-            self.conn.execute(
-                "DELETE FROM definitions WHERE hash = ?1",
-                params![hash],
-            )?;
+            self.conn
+                .execute("DELETE FROM definitions WHERE hash = ?1", params![hash])?;
         }
         self.conn.execute(
             "DELETE FROM macro_expansions WHERE macro_name = ?1",
@@ -1372,10 +1377,7 @@ impl DefinitionStore {
                 cached.push(def_name.clone());
             }
         }
-        Ok(IncrementalPlan {
-            to_compile,
-            cached,
-        })
+        Ok(IncrementalPlan { to_compile, cached })
     }
 
     fn init(&self) -> Result<(), StoreError> {
@@ -1489,7 +1491,10 @@ mod tests {
         let manifest = parse_manifest(input).expect("manifest parse");
         assert_eq!(manifest.package.name, "my-app");
         assert_eq!(manifest.package.version, "1.0.0");
-        assert_eq!(manifest.package.description.as_deref(), Some("My application"));
+        assert_eq!(
+            manifest.package.description.as_deref(),
+            Some("My application")
+        );
         assert_eq!(manifest.package.prefix, "my-app");
         assert_eq!(
             manifest.dependencies.get("http-server"),
@@ -1515,10 +1520,7 @@ mod tests {
 "#;
 
         let manifest = parse_manifest(input).expect("manifest parse");
-        let registry = manifest
-            .registries
-            .get("internal")
-            .expect("registry entry");
+        let registry = manifest.registries.get("internal").expect("registry entry");
         assert_eq!(registry.url, "https://registry.corp.example.com");
         assert_eq!(registry.token_env.as_deref(), Some("NEXL_CORP_TOKEN"));
         assert_eq!(
@@ -1698,9 +1700,7 @@ mod tests {
             dep.name == "core" && dep.kind == DependencyKind::Runtime && dep.version == "^1.0.0"
         }));
         assert!(resolved.iter().any(|dep| {
-            dep.name == "test-utils"
-                && dep.kind == DependencyKind::Dev
-                && dep.version == "^0.1.0"
+            dep.name == "test-utils" && dep.kind == DependencyKind::Dev && dep.version == "^0.1.0"
         }));
     }
 
@@ -1772,10 +1772,7 @@ mod tests {
         );
 
         let lockfile = build_lockfile(&manifest).expect("lockfile build");
-        let core = lockfile
-            .dependencies
-            .get("core")
-            .expect("core entry");
+        let core = lockfile.dependencies.get("core").expect("core entry");
         assert_eq!(core.kind, DependencyKind::Runtime);
         let test_utils = lockfile
             .dependencies
@@ -1787,9 +1784,7 @@ mod tests {
     #[test]
     fn definition_store_roundtrips_artifacts() {
         let store = DefinitionStore::open_in_memory().expect("store open");
-        store
-            .put("hash-1", b"artifact")
-            .expect("store write");
+        store.put("hash-1", b"artifact").expect("store write");
         let fetched = store.get("hash-1").expect("store read");
         assert_eq!(fetched, Some(b"artifact".to_vec()));
     }
@@ -2009,9 +2004,7 @@ mod tests {
         store
             .record_macro_expansion("h1", "my-macro")
             .expect("record");
-        let defs = store
-            .definitions_using_macro("my-macro")
-            .expect("query");
+        let defs = store.definitions_using_macro("my-macro").expect("query");
         assert_eq!(defs, vec!["h1"]);
     }
 
@@ -2037,10 +2030,12 @@ mod tests {
         // Definition should be gone.
         assert!(!store.contains("h1").expect("check"));
         // No more expansion records.
-        assert!(store
-            .definitions_using_macro("my-macro")
-            .expect("query")
-            .is_empty());
+        assert!(
+            store
+                .definitions_using_macro("my-macro")
+                .expect("query")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2167,8 +2162,14 @@ mod tests {
             .expect("put");
 
         // Warm build: same source hashes to same key, finds cached artifact.
-        let cached = store.get_definition(&hash2).expect("get").expect("should exist");
-        assert_eq!(cached.artifact, artifact, "warm build reuses cold build artifact");
+        let cached = store
+            .get_definition(&hash2)
+            .expect("get")
+            .expect("should exist");
+        assert_eq!(
+            cached.artifact, artifact,
+            "warm build reuses cold build artifact"
+        );
         assert!(!store.needs_recompile(&hash2).expect("check"));
     }
 

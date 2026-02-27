@@ -55,7 +55,9 @@ pub enum ResolveError {
     NameNotExported { module: String, name: String },
 
     /// A package-private name is accessed from outside its package.
-    #[error("package-private name `{name}` from module `{module}` is not visible outside its package")]
+    #[error(
+        "package-private name `{name}` from module `{module}` is not visible outside its package"
+    )]
     PackagePrivateNotVisible { module: String, name: String },
 
     /// A bare name matches exports from more than one imported module.
@@ -196,19 +198,25 @@ pub fn build_name_resolver(
             ImportKind::Refer(names) => {
                 for name in names {
                     validate_visibility(&import.module_path, name, exports, same_package)?;
-                    candidates.entry(name.clone()).or_default().push(ResolvedName {
-                        module: import.module_path.clone(),
-                        name: name.clone(),
-                    });
+                    candidates
+                        .entry(name.clone())
+                        .or_default()
+                        .push(ResolvedName {
+                            module: import.module_path.clone(),
+                            name: name.clone(),
+                        });
                 }
             }
 
             ImportKind::All => {
                 for name in visible_exports(exports, same_package) {
-                    candidates.entry(name.clone()).or_default().push(ResolvedName {
-                        module: import.module_path.clone(),
-                        name,
-                    });
+                    candidates
+                        .entry(name.clone())
+                        .or_default()
+                        .push(ResolvedName {
+                            module: import.module_path.clone(),
+                            name,
+                        });
                 }
             }
 
@@ -218,10 +226,13 @@ pub fn build_name_resolver(
                 }
                 for name in visible_exports(exports, same_package) {
                     if !excluded.contains(&name) {
-                        candidates.entry(name.clone()).or_default().push(ResolvedName {
-                            module: import.module_path.clone(),
-                            name,
-                        });
+                        candidates
+                            .entry(name.clone())
+                            .or_default()
+                            .push(ResolvedName {
+                                module: import.module_path.clone(),
+                                name,
+                            });
                     }
                 }
             }
@@ -229,10 +240,13 @@ pub fn build_name_resolver(
             ImportKind::Rename(renames) => {
                 for (old, new) in renames {
                     validate_visibility(&import.module_path, old, exports, same_package)?;
-                    candidates.entry(new.clone()).or_default().push(ResolvedName {
-                        module: import.module_path.clone(),
-                        name: old.clone(),
-                    });
+                    candidates
+                        .entry(new.clone())
+                        .or_default()
+                        .push(ResolvedName {
+                            module: import.module_path.clone(),
+                            name: old.clone(),
+                        });
                 }
             }
         }
@@ -244,8 +258,7 @@ pub fn build_name_resolver(
         if resolved_list.len() == 1 {
             unqualified.insert(name, UnqualifiedEntry::Unique(resolved_list.remove(0)));
         } else {
-            let mut modules: Vec<String> =
-                resolved_list.iter().map(|r| r.module.clone()).collect();
+            let mut modules: Vec<String> = resolved_list.iter().map(|r| r.module.clone()).collect();
             modules.sort();
             modules.dedup();
             unqualified.insert(name, UnqualifiedEntry::Ambiguous(modules));
@@ -348,7 +361,12 @@ mod tests {
         let imports: Vec<(ImportDecl, ModuleExports)> = vec![];
         let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_qualified("foo", "bar").unwrap_err();
-        assert_eq!(err, ResolveError::UnknownAlias { alias: "foo".to_string() });
+        assert_eq!(
+            err,
+            ResolveError::UnknownAlias {
+                alias: "foo".to_string()
+            }
+        );
     }
 
     // ── Test 3 ──────────────────────────────────────────────────────────────
@@ -401,7 +419,12 @@ mod tests {
         )];
         let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_unqualified("filter").unwrap_err();
-        assert_eq!(err, ResolveError::UnknownName { name: "filter".to_string() });
+        assert_eq!(
+            err,
+            ResolveError::UnknownName {
+                name: "filter".to_string()
+            }
+        );
     }
 
     // ── Test 6 ──────────────────────────────────────────────────────────────
@@ -425,13 +448,15 @@ mod tests {
     fn resolve_unqualified_all_unexported_name() {
         // (import lib.math) — bare import, exports [add]
         // resolve `sub` → UnknownName
-        let imports = vec![(
-            mk_import("lib.math", ImportKind::All),
-            exports(&["add"]),
-        )];
+        let imports = vec![(mk_import("lib.math", ImportKind::All), exports(&["add"]))];
         let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_unqualified("sub").unwrap_err();
-        assert_eq!(err, ResolveError::UnknownName { name: "sub".to_string() });
+        assert_eq!(
+            err,
+            ResolveError::UnknownName {
+                name: "sub".to_string()
+            }
+        );
     }
 
     // ── Test 8 ──────────────────────────────────────────────────────────────
@@ -450,7 +475,12 @@ mod tests {
         assert_eq!(resolved.name, "add");
         // div is excluded
         let err = resolver.resolve_unqualified("div").unwrap_err();
-        assert_eq!(err, ResolveError::UnknownName { name: "div".to_string() });
+        assert_eq!(
+            err,
+            ResolveError::UnknownName {
+                name: "div".to_string()
+            }
+        );
     }
 
     // ── Test 10 ─────────────────────────────────────────────────────────────
@@ -474,7 +504,12 @@ mod tests {
         assert_eq!(resolved.name, "split");
         // Original name is not in scope
         let err = resolver.resolve_unqualified("split").unwrap_err();
-        assert_eq!(err, ResolveError::UnknownName { name: "split".to_string() });
+        assert_eq!(
+            err,
+            ResolveError::UnknownName {
+                name: "split".to_string()
+            }
+        );
     }
 
     // ── Test 9 ──────────────────────────────────────────────────────────────
@@ -484,14 +519,8 @@ mod tests {
         // (import mod-a) exports [foo] + (import mod-b) exports [foo]
         // resolve `foo` → AmbiguousName
         let imports = vec![
-            (
-                mk_import("mod-a", ImportKind::All),
-                exports(&["foo"]),
-            ),
-            (
-                mk_import("mod-b", ImportKind::All),
-                exports(&["foo"]),
-            ),
+            (mk_import("mod-a", ImportKind::All), exports(&["foo"])),
+            (mk_import("mod-b", ImportKind::All), exports(&["foo"])),
         ];
         let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_unqualified("foo").unwrap_err();
@@ -513,7 +542,12 @@ mod tests {
         let imports: Vec<(ImportDecl, ModuleExports)> = vec![];
         let resolver = build_name_resolver("app", &imports).expect("build failed");
         let err = resolver.resolve_unqualified("baz").unwrap_err();
-        assert_eq!(err, ResolveError::UnknownName { name: "baz".to_string() });
+        assert_eq!(
+            err,
+            ResolveError::UnknownName {
+                name: "baz".to_string()
+            }
+        );
     }
 
     // ── Test 12 ─────────────────────────────────────────────────────────────
@@ -620,5 +654,4 @@ mod tests {
             }
         );
     }
-
 }

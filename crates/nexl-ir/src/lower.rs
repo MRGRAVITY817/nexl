@@ -128,21 +128,22 @@ impl Lowerer {
 
         // Collect in FuncId order so module.funcs[i].id == FuncId(i).
         let funcs: Vec<FuncDef> = self.funcs.into_values().collect();
-        Ok(Module { name: self.module_name, funcs })
+        Ok(Module {
+            name: self.module_name,
+            funcs,
+        })
     }
 
     fn lower_top_level(&mut self, node: &Node) -> Result<(), LowerError> {
         match &node.kind {
-            NodeKind::List(items) if !items.is_empty() => {
-                match &items[0].kind {
-                    NodeKind::Atom(AstAtom::Symbol { ns: None, name }) if name == "defn" => {
-                        let func = self.lower_defn(items)?;
-                        self.funcs.insert(func.id.0, func);
-                        Ok(())
-                    }
-                    _ => Err(LowerError::UnsupportedTopLevel),
+            NodeKind::List(items) if !items.is_empty() => match &items[0].kind {
+                NodeKind::Atom(AstAtom::Symbol { ns: None, name }) if name == "defn" => {
+                    let func = self.lower_defn(items)?;
+                    self.funcs.insert(func.id.0, func);
+                    Ok(())
                 }
-            }
+                _ => Err(LowerError::UnsupportedTopLevel),
+            },
             _ => Err(LowerError::UnsupportedTopLevel),
         }
     }
@@ -164,7 +165,10 @@ impl Lowerer {
         };
 
         // Look up the FuncId assigned during the pre-pass.
-        let func_id = *self.global_funcs.get(&name).ok_or(LowerError::MalformedDefn)?;
+        let func_id = *self
+            .global_funcs
+            .get(&name)
+            .ok_or(LowerError::MalformedDefn)?;
 
         let mut env: HashMap<String, VarId> = HashMap::new();
         let mut param_ids = vec![];
@@ -249,8 +253,7 @@ impl Lowerer {
                         _ => {
                             // Uppercase head → constructor application.
                             if name.chars().next().is_some_and(|c| c.is_uppercase()) {
-                                let (binds, atom) =
-                                    self.lower_ctor_expr(name, &items[1..], env)?;
+                                let (binds, atom) = self.lower_ctor_expr(name, &items[1..], env)?;
                                 return Ok((binds, Tail::Return(atom)));
                             }
                         }
@@ -274,7 +277,10 @@ impl Lowerer {
                     Ok((all_binds, Tail::TailCall { func: f_atom, args }))
                 } else {
                     let result_var = self.var_gen.fresh();
-                    all_binds.push(LetBind { var: result_var, rhs: Rhs::Call { func: f_atom, args } });
+                    all_binds.push(LetBind {
+                        var: result_var,
+                        rhs: Rhs::Call { func: f_atom, args },
+                    });
                     Ok((all_binds, Tail::Return(Atom::Var(result_var))))
                 }
             }
@@ -309,7 +315,14 @@ impl Lowerer {
             tail: Box::new(else_tail),
         };
 
-        Ok((cond_binds, Tail::If { cond: cond_atom, then_block, else_block }))
+        Ok((
+            cond_binds,
+            Tail::If {
+                cond: cond_atom,
+                then_block,
+                else_block,
+            },
+        ))
     }
 
     fn lower_let_tail(
@@ -344,7 +357,10 @@ impl Lowerer {
             all_binds.extend(expr_binds);
 
             let var = self.var_gen.fresh();
-            all_binds.push(LetBind { var, rhs: Rhs::Atom(atom) });
+            all_binds.push(LetBind {
+                var,
+                rhs: Rhs::Atom(atom),
+            });
             inner_env.insert(bname, var);
         }
 
@@ -393,7 +409,13 @@ impl Lowerer {
             });
         }
 
-        Ok((scrut_binds, Tail::Match { scrutinee: scrut_atom, arms }))
+        Ok((
+            scrut_binds,
+            Tail::Match {
+                scrutinee: scrut_atom,
+                arms,
+            },
+        ))
     }
 
     fn lower_loop_tail(
@@ -431,7 +453,13 @@ impl Lowerer {
         }
 
         let body = self.lower_body(&items[2..], &current_env)?;
-        Ok((all_binds, Tail::Loop { vars: loop_vars, body: Box::new(body) }))
+        Ok((
+            all_binds,
+            Tail::Loop {
+                vars: loop_vars,
+                body: Box::new(body),
+            },
+        ))
     }
 
     fn lower_recur_tail(
@@ -572,12 +600,15 @@ impl Lowerer {
         }
 
         let body = self.lower_body(body_nodes, &fn_env)?;
-        self.funcs.insert(func_id.0, FuncDef {
-            id: func_id,
-            name: None,
-            params: param_ids,
-            body,
-        });
+        self.funcs.insert(
+            func_id.0,
+            FuncDef {
+                id: func_id,
+                name: None,
+                params: param_ids,
+                body,
+            },
+        );
 
         let closure_var = self.var_gen.fresh();
         Ok((
@@ -609,7 +640,10 @@ impl Lowerer {
         let result_var = self.var_gen.fresh();
         all_binds.push(LetBind {
             var: result_var,
-            rhs: Rhs::MakeTuple { ctor: ctor.to_string(), fields },
+            rhs: Rhs::MakeTuple {
+                ctor: ctor.to_string(),
+                fields,
+            },
         });
         Ok((all_binds, Atom::Var(result_var)))
     }
@@ -646,7 +680,10 @@ impl Lowerer {
             all_binds.extend(expr_binds);
 
             let var = self.var_gen.fresh();
-            all_binds.push(LetBind { var, rhs: Rhs::Atom(atom) });
+            all_binds.push(LetBind {
+                var,
+                rhs: Rhs::Atom(atom),
+            });
             inner_env.insert(bname, var);
         }
 
@@ -776,8 +813,7 @@ mod tests {
     use super::*;
 
     fn lower(src: &str) -> Result<Module, LowerError> {
-        let nodes =
-            nexl_reader::read(src, meta::FileId::SYNTHETIC).expect("parse error in test");
+        let nodes = nexl_reader::read(src, meta::FileId::SYNTHETIC).expect("parse error in test");
         Lowerer::new("test").lower_module(&nodes)
     }
 
@@ -795,7 +831,10 @@ mod tests {
     #[test]
     fn lower_bool_literal() {
         let m = lower("(defn f [] true)").unwrap();
-        assert!(matches!(*m.funcs[0].body.tail, Tail::Return(Atom::Bool(true))));
+        assert!(matches!(
+            *m.funcs[0].body.tail,
+            Tail::Return(Atom::Bool(true))
+        ));
     }
 
     // ─── 3. Unit literal ─────────────────────────────────────────────────────
@@ -901,7 +940,10 @@ mod tests {
         assert_eq!(m.funcs.len(), 2);
 
         // Find the outer `f` by name (the lifted lambda has no name).
-        let outer = m.funcs.iter().find(|fd| fd.name.as_deref() == Some("f"))
+        let outer = m
+            .funcs
+            .iter()
+            .find(|fd| fd.name.as_deref() == Some("f"))
             .expect("defn f not found");
 
         // Outer body has 1 bind: closure_var = MakeClosure { captures: [...] }
@@ -947,7 +989,11 @@ mod tests {
         let m = lower("(defn wrap [x] (Some x))").unwrap();
         let body = &m.funcs[0].body;
         assert_eq!(body.binds.len(), 1);
-        let Rhs::MakeTuple { ref ctor, ref fields } = body.binds[0].rhs else {
+        let Rhs::MakeTuple {
+            ref ctor,
+            ref fields,
+        } = body.binds[0].rhs
+        else {
             panic!("expected MakeTuple, got {:?}", body.binds[0].rhs)
         };
         assert_eq!(ctor, "Some");
@@ -998,7 +1044,10 @@ mod tests {
             panic!("expected Tail::If inside loop body, got {:?}", body.tail)
         };
         let Tail::Recur { ref args } = *else_block.tail else {
-            panic!("expected Tail::Recur in else branch, got {:?}", else_block.tail)
+            panic!(
+                "expected Tail::Recur in else branch, got {:?}",
+                else_block.tail
+            )
         };
         assert_eq!(args.len(), 1, "recur passes 1 new value");
     }
@@ -1012,11 +1061,14 @@ mod tests {
         let m = lower("(defn nothing [] None)").unwrap();
         let body = &m.funcs[0].body;
         assert_eq!(body.binds.len(), 1);
-        let Rhs::MakeTuple { ref ctor, ref fields } = body.binds[0].rhs else {
+        let Rhs::MakeTuple {
+            ref ctor,
+            ref fields,
+        } = body.binds[0].rhs
+        else {
             panic!("expected MakeTuple, got {:?}", body.binds[0].rhs)
         };
         assert_eq!(ctor, "None");
         assert!(fields.is_empty());
     }
-
 }

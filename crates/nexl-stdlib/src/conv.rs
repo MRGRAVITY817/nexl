@@ -28,7 +28,10 @@ pub fn entries() -> Vec<StdlibEntry> {
 fn one_arg<'a>(op: &str, args: &'a [Value]) -> Result<&'a Value, String> {
     match args {
         [a] => Ok(a),
-        _ => Err(format!("`conv/{op}` requires exactly 1 argument, got {}", args.len())),
+        _ => Err(format!(
+            "`conv/{op}` requires exactly 1 argument, got {}",
+            args.len()
+        )),
     }
 }
 

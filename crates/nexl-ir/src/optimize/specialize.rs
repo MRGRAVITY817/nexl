@@ -80,7 +80,11 @@ fn atom_display(atom: &Atom) -> String {
 
 fn collect_call_sites(block: &Block, sites: &mut HashMap<FuncId, Vec<Vec<Atom>>>) {
     for bind in &block.binds {
-        if let Rhs::Call { func: Atom::FuncRef(fid), args } = &bind.rhs {
+        if let Rhs::Call {
+            func: Atom::FuncRef(fid),
+            args,
+        } = &bind.rhs
+        {
             sites.entry(*fid).or_default().push(args.clone());
         }
     }
@@ -89,10 +93,17 @@ fn collect_call_sites(block: &Block, sites: &mut HashMap<FuncId, Vec<Vec<Atom>>>
 
 fn collect_call_sites_tail(tail: &Tail, sites: &mut HashMap<FuncId, Vec<Vec<Atom>>>) {
     match tail {
-        Tail::TailCall { func: Atom::FuncRef(fid), args } => {
+        Tail::TailCall {
+            func: Atom::FuncRef(fid),
+            args,
+        } => {
             sites.entry(*fid).or_default().push(args.clone());
         }
-        Tail::If { then_block, else_block, .. } => {
+        Tail::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             collect_call_sites(then_block, sites);
             collect_call_sites(else_block, sites);
         }
@@ -184,20 +195,24 @@ pub fn specialize(module: &Module) -> Module {
     }
 }
 
-fn rewrite_calls_block(block: &Block, rewrites: &HashMap<FuncId, (FuncId, Vec<Option<Atom>>)>) -> Block {
+fn rewrite_calls_block(
+    block: &Block,
+    rewrites: &HashMap<FuncId, (FuncId, Vec<Option<Atom>>)>,
+) -> Block {
     let new_binds = block
         .binds
         .iter()
         .map(|bind| {
             let new_rhs = match &bind.rhs {
-                Rhs::Call { func: Atom::FuncRef(fid), args } if rewrites.contains_key(fid) => {
+                Rhs::Call {
+                    func: Atom::FuncRef(fid),
+                    args,
+                } if rewrites.contains_key(fid) => {
                     let (spec_id, const_args) = &rewrites[fid];
                     let remaining_args: Vec<Atom> = args
                         .iter()
                         .enumerate()
-                        .filter(|(i, _)| {
-                            const_args.get(*i).is_none_or(|ca| ca.is_none())
-                        })
+                        .filter(|(i, _)| const_args.get(*i).is_none_or(|ca| ca.is_none()))
                         .map(|(_, a)| a.clone())
                         .collect();
                     Rhs::Call {
@@ -220,9 +235,15 @@ fn rewrite_calls_block(block: &Block, rewrites: &HashMap<FuncId, (FuncId, Vec<Op
     }
 }
 
-fn rewrite_calls_tail(tail: &Tail, rewrites: &HashMap<FuncId, (FuncId, Vec<Option<Atom>>)>) -> Tail {
+fn rewrite_calls_tail(
+    tail: &Tail,
+    rewrites: &HashMap<FuncId, (FuncId, Vec<Option<Atom>>)>,
+) -> Tail {
     match tail {
-        Tail::TailCall { func: Atom::FuncRef(fid), args } if rewrites.contains_key(fid) => {
+        Tail::TailCall {
+            func: Atom::FuncRef(fid),
+            args,
+        } if rewrites.contains_key(fid) => {
             let (spec_id, const_args) = &rewrites[fid];
             let remaining_args: Vec<Atom> = args
                 .iter()
@@ -235,7 +256,11 @@ fn rewrite_calls_tail(tail: &Tail, rewrites: &HashMap<FuncId, (FuncId, Vec<Optio
                 args: remaining_args,
             }
         }
-        Tail::If { cond, then_block, else_block } => Tail::If {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => Tail::If {
             cond: cond.clone(),
             then_block: rewrite_calls_block(then_block, rewrites),
             else_block: rewrite_calls_block(else_block, rewrites),
@@ -310,7 +335,11 @@ fn apply_subst_rhs(rhs: &Rhs, subst: &HashMap<VarId, Atom>) -> Rhs {
 fn apply_subst_tail(tail: &Tail, subst: &HashMap<VarId, Atom>) -> Tail {
     match tail {
         Tail::Return(a) => Tail::Return(apply_subst_atom(a, subst)),
-        Tail::If { cond, then_block, else_block } => Tail::If {
+        Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } => Tail::If {
             cond: apply_subst_atom(cond, subst),
             then_block: apply_subst_block(then_block, subst),
             else_block: apply_subst_block(else_block, subst),
@@ -485,7 +514,10 @@ mod tests {
         let main = &result.funcs[1];
         let call_bind = &main.body.binds[0];
         match &call_bind.rhs {
-            Rhs::Call { func: Atom::FuncRef(fid), args } => {
+            Rhs::Call {
+                func: Atom::FuncRef(fid),
+                args,
+            } => {
                 assert_eq!(*fid, spec_fn.id);
                 assert_eq!(args.len(), 1); // only the non-constant arg
             }

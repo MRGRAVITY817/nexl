@@ -45,21 +45,33 @@ fn expect_str<'a>(op: &str, v: &'a Value) -> Result<&'a Rc<str>, String> {
 fn one_arg<'a>(op: &str, args: &'a [Value]) -> Result<&'a Value, String> {
     match args {
         [a] => Ok(a),
-        _ => Err(format!("`{op}` requires exactly 1 argument, got {}", args.len())),
+        _ => Err(format!(
+            "`{op}` requires exactly 1 argument, got {}",
+            args.len()
+        )),
     }
 }
 
 fn two_args<'a>(op: &str, args: &'a [Value]) -> Result<(&'a Value, &'a Value), String> {
     match args {
         [a, b] => Ok((a, b)),
-        _ => Err(format!("`{op}` requires exactly 2 arguments, got {}", args.len())),
+        _ => Err(format!(
+            "`{op}` requires exactly 2 arguments, got {}",
+            args.len()
+        )),
     }
 }
 
-fn three_args<'a>(op: &str, args: &'a [Value]) -> Result<(&'a Value, &'a Value, &'a Value), String> {
+fn three_args<'a>(
+    op: &str,
+    args: &'a [Value],
+) -> Result<(&'a Value, &'a Value, &'a Value), String> {
     match args {
         [a, b, c] => Ok((a, b, c)),
-        _ => Err(format!("`{op}` requires exactly 3 arguments, got {}", args.len())),
+        _ => Err(format!(
+            "`{op}` requires exactly 3 arguments, got {}",
+            args.len()
+        )),
     }
 }
 
@@ -72,7 +84,8 @@ fn split(args: &[Value]) -> Result<Value, String> {
     let (s, sep) = two_args("str/split", args)?;
     let s = expect_str("str/split", s)?;
     let sep = expect_str("str/split", sep)?;
-    let parts: Vec<Value> = s.split(sep.as_ref())
+    let parts: Vec<Value> = s
+        .split(sep.as_ref())
         .map(|part| Value::Str(Rc::from(part)))
         .collect();
     Ok(Value::Vec(Rc::new(parts)))
@@ -83,7 +96,10 @@ fn join(args: &[Value]) -> Result<Value, String> {
     let (sep, coll) = two_args("str/join", args)?;
     let sep = expect_str("str/join", sep)?;
     let Value::Vec(items) = coll else {
-        return Err(format!("`str/join` second argument must be Vec, got {}", coll.type_name()));
+        return Err(format!(
+            "`str/join` second argument must be Vec, got {}",
+            coll.type_name()
+        ));
     };
     let mut parts = Vec::with_capacity(items.len());
     for item in items.iter() {
@@ -158,7 +174,9 @@ fn replace(args: &[Value]) -> Result<Value, String> {
     let s = expect_str("str/replace", s)?;
     let from = expect_str("str/replace", from)?;
     let to = expect_str("str/replace", to)?;
-    Ok(Value::Str(Rc::from(s.replace(from.as_ref(), to.as_ref()).as_str())))
+    Ok(Value::Str(Rc::from(
+        s.replace(from.as_ref(), to.as_ref()).as_str(),
+    )))
 }
 
 /// `(str/index-of s substr)` — return (Some Int) of first occurrence, or None.
@@ -217,10 +235,7 @@ mod tests {
 
     #[test]
     fn test_split() {
-        let result = split(&[
-            Value::Str(Rc::from("a,b,c")),
-            Value::Str(Rc::from(",")),
-        ]).unwrap();
+        let result = split(&[Value::Str(Rc::from("a,b,c")), Value::Str(Rc::from(","))]).unwrap();
         let expected = Value::Vec(Rc::new(vec![
             Value::Str(Rc::from("a")),
             Value::Str(Rc::from("b")),
@@ -238,7 +253,8 @@ mod tests {
                 Value::Str(Rc::from("b")),
                 Value::Str(Rc::from("c")),
             ])),
-        ]).unwrap();
+        ])
+        .unwrap();
         assert_eq!(result, Value::Str(Rc::from("a, b, c")));
     }
 
@@ -305,7 +321,11 @@ mod tests {
     #[test]
     fn test_contains() {
         assert_eq!(
-            contains(&[Value::Str(Rc::from("hello world")), Value::Str(Rc::from("world"))]).unwrap(),
+            contains(&[
+                Value::Str(Rc::from("hello world")),
+                Value::Str(Rc::from("world"))
+            ])
+            .unwrap(),
             Value::Bool(true)
         );
         assert_eq!(
@@ -321,47 +341,62 @@ mod tests {
                 Value::Str(Rc::from("hello world")),
                 Value::Str(Rc::from("world")),
                 Value::Str(Rc::from("nexl")),
-            ]).unwrap(),
+            ])
+            .unwrap(),
             Value::Str(Rc::from("hello nexl"))
         );
     }
 
     #[test]
     fn test_index_of_found() {
-        let result = index_of(&[
-            Value::Str(Rc::from("hello")),
-            Value::Str(Rc::from("ell")),
-        ]).unwrap();
-        assert_eq!(result, Value::Adt {
-            type_name: Rc::from("Option"),
-            ctor: Rc::from("Some"),
-            fields: Rc::new(vec![Value::Int(1)]),
-        });
+        let result =
+            index_of(&[Value::Str(Rc::from("hello")), Value::Str(Rc::from("ell"))]).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: Rc::from("Option"),
+                ctor: Rc::from("Some"),
+                fields: Rc::new(vec![Value::Int(1)]),
+            }
+        );
     }
 
     #[test]
     fn test_index_of_not_found() {
-        let result = index_of(&[
-            Value::Str(Rc::from("hello")),
-            Value::Str(Rc::from("xyz")),
-        ]).unwrap();
-        assert_eq!(result, Value::Adt {
-            type_name: Rc::from("Option"),
-            ctor: Rc::from("None"),
-            fields: Rc::new(vec![]),
-        });
+        let result =
+            index_of(&[Value::Str(Rc::from("hello")), Value::Str(Rc::from("xyz"))]).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: Rc::from("Option"),
+                ctor: Rc::from("None"),
+                fields: Rc::new(vec![]),
+            }
+        );
     }
 
     #[test]
     fn test_blank_true() {
-        assert_eq!(blank(&[Value::Str(Rc::from(""))]).unwrap(), Value::Bool(true));
-        assert_eq!(blank(&[Value::Str(Rc::from("  "))]).unwrap(), Value::Bool(true));
-        assert_eq!(blank(&[Value::Str(Rc::from(" \t\n "))]).unwrap(), Value::Bool(true));
+        assert_eq!(
+            blank(&[Value::Str(Rc::from(""))]).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            blank(&[Value::Str(Rc::from("  "))]).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            blank(&[Value::Str(Rc::from(" \t\n "))]).unwrap(),
+            Value::Bool(true)
+        );
     }
 
     #[test]
     fn test_blank_false() {
-        assert_eq!(blank(&[Value::Str(Rc::from("a"))]).unwrap(), Value::Bool(false));
+        assert_eq!(
+            blank(&[Value::Str(Rc::from("a"))]).unwrap(),
+            Value::Bool(false)
+        );
     }
 
     #[test]

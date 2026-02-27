@@ -23,21 +23,30 @@ pub fn entries() -> Vec<StdlibEntry> {
 fn one_arg<'a>(op: &str, args: &'a [Value]) -> Result<&'a Value, String> {
     match args {
         [a] => Ok(a),
-        _ => Err(format!("`crypto/{op}` requires exactly 1 argument, got {}", args.len())),
+        _ => Err(format!(
+            "`crypto/{op}` requires exactly 1 argument, got {}",
+            args.len()
+        )),
     }
 }
 
 fn two_args<'a>(op: &str, args: &'a [Value]) -> Result<(&'a Value, &'a Value), String> {
     match args {
         [a, b] => Ok((a, b)),
-        _ => Err(format!("`crypto/{op}` requires exactly 2 arguments, got {}", args.len())),
+        _ => Err(format!(
+            "`crypto/{op}` requires exactly 2 arguments, got {}",
+            args.len()
+        )),
     }
 }
 
 fn expect_str<'a>(op: &str, v: &'a Value) -> Result<&'a Rc<str>, String> {
     match v {
         Value::Str(s) => Ok(s),
-        other => Err(format!("`crypto/{op}` expected Str, got {}", other.type_name())),
+        other => Err(format!(
+            "`crypto/{op}` expected Str, got {}",
+            other.type_name()
+        )),
     }
 }
 
@@ -97,7 +106,8 @@ mod tests {
             constant_time_eq(&[
                 Value::Str(Rc::from("secret")),
                 Value::Str(Rc::from("secret")),
-            ]).unwrap(),
+            ])
+            .unwrap(),
             Value::Bool(true)
         );
     }
@@ -108,7 +118,8 @@ mod tests {
             constant_time_eq(&[
                 Value::Str(Rc::from("secret")),
                 Value::Str(Rc::from("other!")),
-            ]).unwrap(),
+            ])
+            .unwrap(),
             Value::Bool(false)
         );
     }
@@ -119,7 +130,8 @@ mod tests {
             constant_time_eq(&[
                 Value::Str(Rc::from("short")),
                 Value::Str(Rc::from("longer")),
-            ]).unwrap(),
+            ])
+            .unwrap(),
             Value::Bool(false)
         );
     }

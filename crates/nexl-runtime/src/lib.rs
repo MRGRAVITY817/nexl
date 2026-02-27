@@ -29,14 +29,12 @@ pub fn call_value(callee: &Value, args: &[Value]) -> Result<Value, String> {
     match callee {
         Value::NativeFunction(native) => (native.f)(args),
         Value::NativeClosure { f, .. } => f(args),
-        _ => {
-            CALL_VALUE.with(|cell| {
-                let guard = cell.borrow();
-                match *guard {
-                    Some(f) => f(callee, args),
-                    None => Err("no evaluator registered for calling functions".into()),
-                }
-            })
-        }
+        _ => CALL_VALUE.with(|cell| {
+            let guard = cell.borrow();
+            match *guard {
+                Some(f) => f(callee, args),
+                None => Err("no evaluator registered for calling functions".into()),
+            }
+        }),
     }
 }

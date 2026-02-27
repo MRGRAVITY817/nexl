@@ -318,10 +318,7 @@ mod tests {
     fn ir_rhs_make_closure_captures() {
         let rhs = Rhs::MakeClosure {
             func_id: FuncId(3),
-            captures: vec![
-                (VarId(10), Atom::Int(99)),
-                (VarId(11), Atom::Bool(true)),
-            ],
+            captures: vec![(VarId(10), Atom::Int(99)), (VarId(11), Atom::Bool(true))],
         };
         let Rhs::MakeClosure { func_id, captures } = rhs else {
             panic!("expected MakeClosure")
@@ -335,8 +332,14 @@ mod tests {
     fn ir_block_binds_count() {
         let block = Block {
             binds: vec![
-                LetBind { var: VarId(0), rhs: Rhs::Atom(Atom::Int(1)) },
-                LetBind { var: VarId(1), rhs: Rhs::Atom(Atom::Int(2)) },
+                LetBind {
+                    var: VarId(0),
+                    rhs: Rhs::Atom(Atom::Int(1)),
+                },
+                LetBind {
+                    var: VarId(1),
+                    rhs: Rhs::Atom(Atom::Int(2)),
+                },
             ],
             tail: Box::new(Tail::Return(Atom::Var(VarId(1)))),
         };
@@ -355,7 +358,12 @@ mod tests {
             then_block: make_return(1),
             else_block: make_return(0),
         };
-        let Tail::If { cond, then_block, else_block } = tail else {
+        let Tail::If {
+            cond,
+            then_block,
+            else_block,
+        } = tail
+        else {
             panic!("expected If")
         };
         assert_eq!(cond.to_string(), "true");

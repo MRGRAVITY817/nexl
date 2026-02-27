@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use meta::{Atom, ImportDecl, ImportKind, ModuleDecl, Node, NodeKind, parse_import_decl, parse_module_decl};
-use nexl_modules::{ModuleInfo, build_module_graph};
 use crate::{Env, EvalError, ModuleExports, eval::eval, stdlib};
+use meta::{
+    Atom, ImportDecl, ImportKind, ModuleDecl, Node, NodeKind, parse_import_decl, parse_module_decl,
+};
+use nexl_modules::{ModuleInfo, build_module_graph};
 
 /// Parsed module source: declaration, imports, and remaining forms.
 #[derive(Debug, Clone)]
@@ -24,23 +26,27 @@ pub fn parse_module_source(nodes: &[Node]) -> Result<ModuleSource, EvalError> {
         NodeKind::List(items) if list_head_is(items, "module") => items,
         _ => return Err(EvalError::MissingModuleDecl),
     };
-    let decl = parse_module_decl(module_items)
-        .map_err(|e| EvalError::ModuleParse(e.description))?;
+    let decl =
+        parse_module_decl(module_items).map_err(|e| EvalError::ModuleParse(e.description))?;
 
     let mut imports = Vec::new();
     let mut forms = Vec::new();
     for node in iter {
         match &node.kind {
             NodeKind::List(items) if list_head_is(items, "import") => {
-                let import = parse_import_decl(items)
-                    .map_err(|e| EvalError::ModuleParse(e.description))?;
+                let import =
+                    parse_import_decl(items).map_err(|e| EvalError::ModuleParse(e.description))?;
                 imports.push(import);
             }
             _ => forms.push(node.clone()),
         }
     }
 
-    Ok(ModuleSource { decl, imports, forms })
+    Ok(ModuleSource {
+        decl,
+        imports,
+        forms,
+    })
 }
 
 /// Evaluate a set of modules, returning their environments keyed by module name.
@@ -64,7 +70,9 @@ pub fn eval_modules(modules: Vec<ModuleSource>) -> Result<HashMap<String, Rc<Env
         })
         .collect();
     let graph = build_module_graph(&infos).map_err(|e| EvalError::ModuleGraph(e.to_string()))?;
-    let order = graph.topo_sort().map_err(|e| EvalError::ModuleGraph(e.to_string()))?;
+    let order = graph
+        .topo_sort()
+        .map_err(|e| EvalError::ModuleGraph(e.to_string()))?;
 
     let base_env = stdlib::standard_env();
     let mut runtimes: HashMap<String, ModuleRuntime> = HashMap::new();
@@ -153,12 +161,13 @@ fn apply_import(
         }
         ImportKind::Refer(names) => {
             for name in names {
-                let value = exports.get(name.as_str()).ok_or_else(|| {
-                    EvalError::ImportNotExported {
-                        module: import.module_path.clone(),
-                        name: name.clone(),
-                    }
-                })?;
+                let value =
+                    exports
+                        .get(name.as_str())
+                        .ok_or_else(|| EvalError::ImportNotExported {
+                            module: import.module_path.clone(),
+                            name: name.clone(),
+                        })?;
                 env.define(Rc::from(name.as_str()), value.clone());
             }
         }
@@ -180,12 +189,13 @@ fn apply_import(
         }
         ImportKind::Rename(renames) => {
             for (old, new) in renames {
-                let value = exports.get(old.as_str()).ok_or_else(|| {
-                    EvalError::ImportNotExported {
-                        module: import.module_path.clone(),
-                        name: old.clone(),
-                    }
-                })?;
+                let value =
+                    exports
+                        .get(old.as_str())
+                        .ok_or_else(|| EvalError::ImportNotExported {
+                            module: import.module_path.clone(),
+                            name: old.clone(),
+                        })?;
                 env.define(Rc::from(new.as_str()), value.clone());
             }
         }
@@ -209,17 +219,21 @@ fn top_level_def_name(node: &Node) -> Option<String> {
         _ => return None,
     };
     match items {
-        [Node {
-            kind: NodeKind::Atom(Atom::Symbol { ns: None, name }),
-            ..
-        }, Node {
-            kind: NodeKind::Atom(Atom::Symbol { ns: None, name: def_name }),
-            ..
-        }, ..]
-            if name == "def" || name == "defn" =>
-        {
-            Some(def_name.clone())
-        }
+        [
+            Node {
+                kind: NodeKind::Atom(Atom::Symbol { ns: None, name }),
+                ..
+            },
+            Node {
+                kind:
+                    NodeKind::Atom(Atom::Symbol {
+                        ns: None,
+                        name: def_name,
+                    }),
+                ..
+            },
+            ..,
+        ] if name == "def" || name == "defn" => Some(def_name.clone()),
         _ => None,
     }
 }

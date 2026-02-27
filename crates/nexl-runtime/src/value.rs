@@ -158,10 +158,9 @@ impl PartialEq for Value {
             ) => a_type == b_type && a_ctor == b_ctor && a_fields == b_fields,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
             (Value::NativeFunction(a), Value::NativeFunction(b)) => a == b,
-            (
-                Value::NativeClosure { f: af, .. },
-                Value::NativeClosure { f: bf, .. },
-            ) => Rc::ptr_eq(af, bf),
+            (Value::NativeClosure { f: af, .. }, Value::NativeClosure { f: bf, .. }) => {
+                Rc::ptr_eq(af, bf)
+            }
             _ => false,
         }
     }
@@ -590,10 +589,7 @@ mod tests {
 
     #[test]
     fn value_type_name_collections() {
-        assert_eq!(
-            Value::Vec(Rc::new(vec![Value::Int(1)])).type_name(),
-            "Vec"
-        );
+        assert_eq!(Value::Vec(Rc::new(vec![Value::Int(1)])).type_name(), "Vec");
         assert_eq!(
             Value::Map(Rc::new(vec![(
                 Value::Keyword {
@@ -605,10 +601,7 @@ mod tests {
             .type_name(),
             "Map"
         );
-        assert_eq!(
-            Value::Set(Rc::new(vec![Value::Int(1)])).type_name(),
-            "Set"
-        );
+        assert_eq!(Value::Set(Rc::new(vec![Value::Int(1)])).type_name(), "Set");
     }
 
     #[test]

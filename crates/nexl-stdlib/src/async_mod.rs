@@ -11,9 +11,7 @@ use crate::StdlibEntry;
 ///
 /// Provides `sleep` as the only Stage 0 function.
 pub fn entries() -> Vec<StdlibEntry> {
-    vec![
-        ("sleep", sleep as fn(&[Value]) -> Result<Value, String>),
-    ]
+    vec![("sleep", sleep as fn(&[Value]) -> Result<Value, String>)]
 }
 
 /// `(async/sleep ms)` — pause execution for `ms` milliseconds.
@@ -27,7 +25,10 @@ fn sleep(args: &[Value]) -> Result<Value, String> {
             std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
             Ok(Value::Unit)
         }
-        [other] => Err(format!("`async/sleep` expected Int, got {}", other.type_name())),
+        [other] => Err(format!(
+            "`async/sleep` expected Int, got {}",
+            other.type_name()
+        )),
         _ => Err(format!(
             "`async/sleep` requires exactly 1 argument, got {}",
             args.len()

@@ -218,7 +218,13 @@ mod tests {
     }
 
     fn sym(name: &str) -> Node {
-        Node::atom(Atom::Symbol { ns: None, name: name.to_string() }, s())
+        Node::atom(
+            Atom::Symbol {
+                ns: None,
+                name: name.to_string(),
+            },
+            s(),
+        )
     }
 
     fn list(children: Vec<Node>) -> Node {
@@ -296,7 +302,11 @@ mod tests {
         // (handle [Console (print [s resume] s)] (do 1))
         let handler_vec = vec_node(vec![
             sym("Console"),
-            list(vec![sym("print"), vec_node(vec![sym("s"), sym("resume")]), sym("s")]),
+            list(vec![
+                sym("print"),
+                vec_node(vec![sym("s"), sym("resume")]),
+                sym("s"),
+            ]),
         ]);
         let items = vec![sym("handle"), handler_vec, list(vec![sym("do"), sym("1")])];
         let err = parse_handle_form(&items).unwrap_err();

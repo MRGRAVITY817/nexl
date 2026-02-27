@@ -48,11 +48,7 @@ impl Env {
     }
 
     /// Define a module alias mapped to its exported bindings.
-    pub fn define_module_alias(
-        &self,
-        alias: impl Into<Rc<str>>,
-        exports: ModuleExports,
-    ) {
+    pub fn define_module_alias(&self, alias: impl Into<Rc<str>>, exports: ModuleExports) {
         self.modules.borrow_mut().insert(alias.into(), exports);
     }
 
@@ -2836,10 +2832,7 @@ mod tests {
             eval_str(r#"(get {:a 1 :b 2} :a)"#).unwrap(),
             option_some(Value::Int(1))
         );
-        assert_eq!(
-            eval_str(r#"(get {:a 1 :b 2} :c)"#).unwrap(),
-            option_none()
-        );
+        assert_eq!(eval_str(r#"(get {:a 1 :b 2} :c)"#).unwrap(), option_none());
     }
 
     #[test]
@@ -2905,10 +2898,7 @@ mod tests {
             eval_str(r#"(contains? {:a 1 :b 2} :c)"#).unwrap(),
             Value::Bool(false)
         );
-        assert_eq!(
-            eval_str(r#"(count {:a 1 :b 2})"#).unwrap(),
-            Value::Int(2)
-        );
+        assert_eq!(eval_str(r#"(count {:a 1 :b 2})"#).unwrap(), Value::Int(2));
     }
 
     // --- collection builtin tests (Set) ---
@@ -3090,10 +3080,8 @@ mod tests {
     #[test]
     fn for_with_let_when_while() {
         assert_eq!(
-            eval_str(
-                r#"(for [x [1 2 3] :let [y (+ x 1)] :when (> y 2) :while (< y 4)] y)"#
-            )
-            .unwrap(),
+            eval_str(r#"(for [x [1 2 3] :let [y (+ x 1)] :when (> y 2) :while (< y 4)] y)"#)
+                .unwrap(),
             Value::Vec(Rc::new(vec![Value::Int(3)]))
         );
     }
@@ -3730,7 +3718,10 @@ mod tests {
     fn assert_true_returns_unit() {
         let env = Rc::new(Env::new());
         let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "assert!".into(),
+            }),
             lit(Atom::Bool(true)),
         ]);
         let result = eval(&expr, &env);
@@ -3742,7 +3733,10 @@ mod tests {
     fn assert_false_panics() {
         let env = Rc::new(Env::new());
         let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "assert!".into(),
+            }),
             lit(Atom::Bool(false)),
         ]);
         let result = eval(&expr, &env);
@@ -3754,7 +3748,10 @@ mod tests {
     fn assert_false_with_message_panics_with_message() {
         let env = Rc::new(Env::new());
         let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "assert!".into(),
+            }),
             lit(Atom::Bool(false)),
             lit(Atom::Str("boom".into())),
         ]);
@@ -3767,7 +3764,10 @@ mod tests {
     fn assert_true_with_message_does_not_panic() {
         let env = Rc::new(Env::new());
         let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "assert!".into(),
+            }),
             lit(Atom::Bool(true)),
             lit(Atom::Str("boom".into())),
         ]);
@@ -3779,9 +3779,10 @@ mod tests {
     #[test]
     fn assert_unreachable_always_panics() {
         let env = Rc::new(Env::new());
-        let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "assert-unreachable!".into() }),
-        ]);
+        let expr = list(vec![lit(Atom::Symbol {
+            ns: None,
+            name: "assert-unreachable!".into(),
+        })]);
         let result = eval(&expr, &env);
         assert!(matches!(result, Err(EvalError::Panic(_))));
     }
@@ -3791,7 +3792,10 @@ mod tests {
     fn assert_unreachable_with_message_includes_message() {
         let env = Rc::new(Env::new());
         let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "assert-unreachable!".into() }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "assert-unreachable!".into(),
+            }),
             lit(Atom::Str("never here".into())),
         ]);
         let result = eval(&expr, &env);
@@ -3802,9 +3806,10 @@ mod tests {
     #[test]
     fn assert_wrong_arity_is_error() {
         let env = Rc::new(Env::new());
-        let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "assert!".into() }),
-        ]);
+        let expr = list(vec![lit(Atom::Symbol {
+            ns: None,
+            name: "assert!".into(),
+        })]);
         let result = eval(&expr, &env);
         assert_eq!(result, Err(EvalError::Arity));
     }
@@ -3849,8 +3854,14 @@ mod tests {
         let env = Rc::new(Env::new());
         env.define("ok-val", ok_val(Value::Int(42)));
         let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "?".into() }),
-            lit(Atom::Symbol { ns: None, name: "ok-val".into() }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "?".into(),
+            }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "ok-val".into(),
+            }),
         ]);
         let result = eval(&expr, &env);
         assert_eq!(result, Ok(Value::Int(42)));
@@ -3863,16 +3874,23 @@ mod tests {
         let env = Rc::new(Env::new());
         env.define("err-val", err_val(Value::Str(Rc::from("boom"))));
         // ((fn [] (? err-val)))
-        let expr = list(vec![
+        let expr = list(vec![list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "fn".into(),
+            }),
+            vector(vec![]),
             list(vec![
-                lit(Atom::Symbol { ns: None, name: "fn".into() }),
-                vector(vec![]),
-                list(vec![
-                    lit(Atom::Symbol { ns: None, name: "?".into() }),
-                    lit(Atom::Symbol { ns: None, name: "err-val".into() }),
-                ]),
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "?".into(),
+                }),
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "err-val".into(),
+                }),
             ]),
-        ]);
+        ])]);
         let result = eval(&expr, &env);
         assert_eq!(result, Ok(err_val(Value::Str(Rc::from("boom")))));
     }
@@ -3883,8 +3901,14 @@ mod tests {
         let env = Rc::new(Env::new());
         env.define("some-val", some_val(Value::Int(7)));
         let expr = list(vec![
-            lit(Atom::Symbol { ns: None, name: "?".into() }),
-            lit(Atom::Symbol { ns: None, name: "some-val".into() }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "?".into(),
+            }),
+            lit(Atom::Symbol {
+                ns: None,
+                name: "some-val".into(),
+            }),
         ]);
         let result = eval(&expr, &env);
         assert_eq!(result, Ok(Value::Int(7)));
@@ -3896,16 +3920,23 @@ mod tests {
         let env = Rc::new(Env::new());
         env.define("none-val", none_val());
         // ((fn [] (? none-val)))
-        let expr = list(vec![
+        let expr = list(vec![list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "fn".into(),
+            }),
+            vector(vec![]),
             list(vec![
-                lit(Atom::Symbol { ns: None, name: "fn".into() }),
-                vector(vec![]),
-                list(vec![
-                    lit(Atom::Symbol { ns: None, name: "?".into() }),
-                    lit(Atom::Symbol { ns: None, name: "none-val".into() }),
-                ]),
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "?".into(),
+                }),
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "none-val".into(),
+                }),
             ]),
-        ]);
+        ])]);
         let result = eval(&expr, &env);
         assert_eq!(result, Ok(none_val()));
     }
@@ -3916,20 +3947,30 @@ mod tests {
         let env = Rc::new(Env::new());
         env.define("err-val", err_val(Value::Int(99)));
         // ((fn [] (? err-val) (panic "reached")))  — panic must not fire
-        let expr = list(vec![
+        let expr = list(vec![list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "fn".into(),
+            }),
+            vector(vec![]),
             list(vec![
-                lit(Atom::Symbol { ns: None, name: "fn".into() }),
-                vector(vec![]),
-                list(vec![
-                    lit(Atom::Symbol { ns: None, name: "?".into() }),
-                    lit(Atom::Symbol { ns: None, name: "err-val".into() }),
-                ]),
-                list(vec![
-                    lit(Atom::Symbol { ns: None, name: "panic".into() }),
-                    lit(Atom::Str("reached".into())),
-                ]),
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "?".into(),
+                }),
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "err-val".into(),
+                }),
             ]),
-        ]);
+            list(vec![
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "panic".into(),
+                }),
+                lit(Atom::Str("reached".into())),
+            ]),
+        ])]);
         let result = eval(&expr, &env);
         assert_eq!(result, Ok(err_val(Value::Int(99))));
     }
@@ -3940,23 +3981,39 @@ mod tests {
         let env = Rc::new(Env::new());
         env.define("ok-val", ok_val(Value::Int(42)));
         // ((fn [] (let [x (? ok-val)] x)))
-        let expr = list(vec![
+        let expr = list(vec![list(vec![
+            lit(Atom::Symbol {
+                ns: None,
+                name: "fn".into(),
+            }),
+            vector(vec![]),
             list(vec![
-                lit(Atom::Symbol { ns: None, name: "fn".into() }),
-                vector(vec![]),
-                list(vec![
-                    lit(Atom::Symbol { ns: None, name: "let".into() }),
-                    vector(vec![
-                        lit(Atom::Symbol { ns: None, name: "x".into() }),
-                        list(vec![
-                            lit(Atom::Symbol { ns: None, name: "?".into() }),
-                            lit(Atom::Symbol { ns: None, name: "ok-val".into() }),
-                        ]),
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "let".into(),
+                }),
+                vector(vec![
+                    lit(Atom::Symbol {
+                        ns: None,
+                        name: "x".into(),
+                    }),
+                    list(vec![
+                        lit(Atom::Symbol {
+                            ns: None,
+                            name: "?".into(),
+                        }),
+                        lit(Atom::Symbol {
+                            ns: None,
+                            name: "ok-val".into(),
+                        }),
                     ]),
-                    lit(Atom::Symbol { ns: None, name: "x".into() }),
                 ]),
+                lit(Atom::Symbol {
+                    ns: None,
+                    name: "x".into(),
+                }),
             ]),
-        ]);
+        ])]);
         let result = eval(&expr, &env);
         assert_eq!(result, Ok(Value::Int(42)));
     }
@@ -4112,10 +4169,7 @@ mod tests {
             eval_str(r#"(core/identity "hello")"#).unwrap(),
             Value::Str(Rc::from("hello"))
         );
-        assert_eq!(
-            eval_str("(core/identity true)").unwrap(),
-            Value::Bool(true)
-        );
+        assert_eq!(eval_str("(core/identity true)").unwrap(), Value::Bool(true));
         assert_eq!(
             eval_str("(core/identity [1 2 3])").unwrap(),
             Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
@@ -4239,16 +4293,8 @@ mod tests {
     fn test_e2e_json_roundtrip() {
         let env = crate::stdlib::standard_env();
         // Create a map, stringify it, parse it back
-        eval_forms(
-            r#"(def data {:name "nexl" :version 1})"#,
-            &env,
-        )
-        .unwrap();
-        eval_forms(
-            r#"(def json-str (json/stringify data))"#,
-            &env,
-        )
-        .unwrap();
+        eval_forms(r#"(def data {:name "nexl" :version 1})"#, &env).unwrap();
+        eval_forms(r#"(def json-str (json/stringify data))"#, &env).unwrap();
         let result = eval_forms(r#"(json/parse json-str)"#, &env).unwrap();
         // Should be (Ok {...})
         match result {
@@ -4261,11 +4307,7 @@ mod tests {
     fn test_e2e_conv_pipeline() {
         let env = crate::stdlib::standard_env();
         // Convert string to int, check it's Some
-        eval_forms(
-            r#"(def result (conv/->int "42"))"#,
-            &env,
-        )
-        .unwrap();
+        eval_forms(r#"(def result (conv/->int "42"))"#, &env).unwrap();
         let result = eval_forms(r#"result"#, &env).unwrap();
         assert_eq!(result, option_some(Value::Int(42)));
     }

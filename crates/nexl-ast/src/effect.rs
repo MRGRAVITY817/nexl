@@ -4,7 +4,7 @@
 //! parsing functions that convert generic [`Node`] trees into structured
 //! representations.
 
-use crate::{Node, NodeKind, Atom};
+use crate::{Atom, Node, NodeKind};
 
 // ---------------------------------------------------------------------------
 // Effect declaration
@@ -72,9 +72,7 @@ impl std::error::Error for EffectParseError {}
 pub fn parse_effect_decl(items: &[Node]) -> Result<EffectDecl, EffectParseError> {
     // items[0] = `defeffect`, items[1] = name, rest = optional type-params + operations
     if items.len() < 2 {
-        return Err(EffectParseError::new(
-            "defeffect requires a name",
-        ));
+        return Err(EffectParseError::new("defeffect requires a name"));
     }
 
     let name = extract_plain_symbol(&items[1])?;
@@ -367,7 +365,8 @@ mod tests {
         let items = vec![sym("defeffect"), sym("Foo"), sym("bar")];
         let err = parse_effect_decl(&items).unwrap_err();
         assert!(
-            err.description.contains("expected an operation declaration list"),
+            err.description
+                .contains("expected an operation declaration list"),
             "got: {}",
             err.description
         );

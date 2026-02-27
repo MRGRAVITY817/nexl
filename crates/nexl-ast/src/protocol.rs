@@ -78,9 +78,7 @@ impl std::error::Error for ProtocolParseError {}
 pub fn parse_protocol_decl(items: &[Node]) -> Result<ProtocolDecl, ProtocolParseError> {
     // items[0] = `defprotocol`, items[1] = name, rest = optional doc, type-params, :extends, operations
     if items.len() < 2 {
-        return Err(ProtocolParseError::new(
-            "defprotocol requires a name",
-        ));
+        return Err(ProtocolParseError::new("defprotocol requires a name"));
     }
 
     let name = extract_plain_symbol(&items[1])?;
@@ -111,7 +109,10 @@ pub fn parse_protocol_decl(items: &[Node]) -> Result<ProtocolDecl, ProtocolParse
 
     // Optional :extends [Proto1 Proto2 ...]
     if idx + 1 < items.len()
-        && let NodeKind::Atom(Atom::Keyword { ns: None, name: kw_name }) = &items[idx].kind
+        && let NodeKind::Atom(Atom::Keyword {
+            ns: None,
+            name: kw_name,
+        }) = &items[idx].kind
         && kw_name == "extends"
     {
         idx += 1;
@@ -180,7 +181,10 @@ fn parse_protocol_op(node: &Node) -> Result<ProtocolOpDecl, ProtocolParseError> 
     // Check for optional :default body
     let mut default_body = None;
     if items.len() >= 5
-        && let NodeKind::Atom(Atom::Keyword { ns: None, name: kw_name }) = &items[3].kind
+        && let NodeKind::Atom(Atom::Keyword {
+            ns: None,
+            name: kw_name,
+        }) = &items[3].kind
         && kw_name == "default"
     {
         default_body = Some(items[4].clone());
@@ -263,7 +267,13 @@ mod tests {
     }
 
     fn op_with_default(name: &str, type_ann: Node, default_body: Node) -> Node {
-        list(vec![sym(name), colon(), type_ann, kw("default"), default_body])
+        list(vec![
+            sym(name),
+            colon(),
+            type_ann,
+            kw("default"),
+            default_body,
+        ])
     }
 
     // ── Test 7 ──
@@ -302,10 +312,7 @@ mod tests {
         ];
         let decl = parse_protocol_decl(&items).unwrap();
         assert_eq!(decl.name, "Show");
-        assert_eq!(
-            decl.doc.as_deref(),
-            Some("Convert a value to a string.")
-        );
+        assert_eq!(decl.doc.as_deref(), Some("Convert a value to a string."));
         assert_eq!(decl.operations.len(), 1);
     }
 
@@ -369,7 +376,11 @@ mod tests {
             vec_node(vec![sym("self")]),
             list(vec![
                 sym("fold"),
-                list(vec![sym("fn"), vec_node(vec![sym("n"), sym("_")]), list(vec![sym("+"), sym("n"), sym("1")])]),
+                list(vec![
+                    sym("fn"),
+                    vec_node(vec![sym("n"), sym("_")]),
+                    list(vec![sym("+"), sym("n"), sym("1")]),
+                ]),
                 sym("0"),
                 sym("self"),
             ]),
@@ -386,7 +397,10 @@ mod tests {
         assert_eq!(decl.operations[0].name, "fold");
         assert!(decl.operations[0].default_body.is_none());
         assert_eq!(decl.operations[1].name, "count");
-        assert_eq!(decl.operations[1].default_body.as_ref().unwrap(), &default_body);
+        assert_eq!(
+            decl.operations[1].default_body.as_ref().unwrap(),
+            &default_body
+        );
     }
 
     // ── Test 12 ──
@@ -407,7 +421,8 @@ mod tests {
         let items = vec![sym("defprotocol"), sym("Foo"), sym("bar")];
         let err = parse_protocol_decl(&items).unwrap_err();
         assert!(
-            err.description.contains("expected an operation declaration list"),
+            err.description
+                .contains("expected an operation declaration list"),
             "got: {}",
             err.description
         );

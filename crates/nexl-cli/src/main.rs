@@ -11,8 +11,8 @@ use clap::{Parser, Subcommand};
 use meta::{Atom, Node, NodeKind};
 use nexl_doc::{extract_module_doc, render_module_pages};
 use nexl_pkg::{
-    build_lockfile, parse_manifest, serialize_lockfile, serialize_manifest, DependencySpec,
-    PackageManifest,
+    DependencySpec, PackageManifest, build_lockfile, parse_manifest, serialize_lockfile,
+    serialize_manifest,
 };
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -94,6 +94,24 @@ enum Command {
         #[arg(value_name = "FILE")]
         input: PathBuf,
     },
+    /// Format a Nexl source file.
+    Fmt {
+        /// File to format (use `-` for stdin).
+        #[arg(value_name = "FILE")]
+        input: String,
+        /// Format file in-place.
+        #[arg(short = 'i', long = "in-place")]
+        in_place: bool,
+        /// Maximum line width (default: 80).
+        #[arg(long = "width", default_value = "80")]
+        width: usize,
+        /// Indent width in spaces (default: 2).
+        #[arg(long = "indent", default_value = "2")]
+        indent: usize,
+        /// Disable vertical column alignment.
+        #[arg(long = "no-align")]
+        no_align: bool,
+    },
     Pkg {
         #[command(subcommand)]
         command: PkgCommand,
@@ -122,7 +140,13 @@ enum PkgCommand {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::Build { input, output, target, gc, no_opt } => {
+        Command::Build {
+            input,
+            output,
+            target,
+            gc,
+            no_opt,
+        } => {
             if let Err(message) = command_build(input, output, &target, &gc, no_opt) {
                 print_error(&message);
                 process::exit(1);
@@ -158,8 +182,7 @@ fn main() {
             }
         }
         Command::Lsp => {
-            let rt = tokio::runtime::Runtime::new()
-                .expect("failed to create tokio runtime");
+            let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
             rt.block_on(nexl_lsp::run_server());
         }
         Command::Sandbox {
@@ -184,6 +207,18 @@ fn main() {
                 allow_unsafe,
                 allow_all,
             ) {
+                print_error(&message);
+                process::exit(1);
+            }
+        }
+        Command::Fmt {
+            input,
+            in_place,
+            width,
+            indent,
+            no_align,
+        } => {
+            if let Err(message) = command_fmt(&input, in_place, width, indent, no_align) {
                 print_error(&message);
                 process::exit(1);
             }
@@ -221,13 +256,21 @@ fn command_build(
     // Validate gc mode.
     match gc {
         "rc" | "gc" | "none" => {}
-        other => return Err(format!("unknown gc mode: {other} (expected \"rc\", \"gc\", or \"none\")")),
+        other => {
+            return Err(format!(
+                "unknown gc mode: {other} (expected \"rc\", \"gc\", or \"none\")"
+            ));
+        }
     }
 
     let default_ext = match target {
         "wasm" => "wasm",
         "native" => "o",
-        other => return Err(format!("unknown target: {other} (expected \"wasm\" or \"native\")")),
+        other => {
+            return Err(format!(
+                "unknown target: {other} (expected \"wasm\" or \"native\")"
+            ));
+        }
     };
     let output_path = output_override.unwrap_or_else(|| input_path.with_extension(default_ext));
 
@@ -240,9 +283,8 @@ fn command_build(
         .unwrap_or("module")
         .to_string();
 
-    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
-        format_reader_report(*diag, &source, &input_path.display().to_string())
-    })?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
 
     let ir_module = nexl_ir::Lowerer::new(&module_name)
         .lower_module(&nodes)
@@ -285,9 +327,8 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
 
-    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
-        format_reader_report(*diag, &source, &input_path.display().to_string())
-    })?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
 
     let env = nexl_eval::stdlib::standard_env();
     for node in &nodes {
@@ -456,14 +497,12 @@ fn write_repl_help<W: Write>(output: &mut W) -> io::Result<()> {
 }
 
 pub(crate) fn infer_repl_type(expr: &str, env: &nexl_infer::Env) -> Result<String, String> {
-    let nodes =
-        nexl_reader::read(expr, meta::FileId::SYNTHETIC).map_err(|e| format!("{e}"))?;
+    let nodes = nexl_reader::read(expr, meta::FileId::SYNTHETIC).map_err(|e| format!("{e}"))?;
     if nodes.len() != 1 {
         return Err("expected a single form".to_string());
     }
     let mut state = nexl_infer::InferState::new();
-    let ty =
-        nexl_infer::synth(&nodes[0], env, &mut state).map_err(|e| format!("{e}"))?;
+    let ty = nexl_infer::synth(&nodes[0], env, &mut state).map_err(|e| format!("{e}"))?;
     if !state.errors.is_empty() {
         let message = state
             .errors
@@ -579,11 +618,7 @@ fn delimiters_balanced(source: &str) -> bool {
     paren == 0 && bracket == 0 && brace == 0
 }
 
-fn format_reader_report(
-    mut diag: nexl_errors::Diagnostic,
-    source: &str,
-    name: &str,
-) -> String {
+fn format_reader_report(mut diag: nexl_errors::Diagnostic, source: &str, name: &str) -> String {
     diag.attach_source(miette::NamedSource::new(name, source.to_string()));
     let report = miette::Report::new(diag);
     format!("{report:?}")
@@ -605,9 +640,8 @@ fn command_repl_protocol() -> Result<(), String> {
 fn command_check(input_path: PathBuf) -> Result<(), String> {
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
-    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
-        format_reader_report(*diag, &source, &input_path.display().to_string())
-    })?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
 
     let mut env = nexl_infer::Env::new();
     let mut state = nexl_infer::InferState::new();
@@ -628,6 +662,54 @@ fn command_check(input_path: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+fn command_fmt(
+    input: &str,
+    in_place: bool,
+    width: usize,
+    indent_width: usize,
+    no_align: bool,
+) -> Result<(), String> {
+    use meta::printer::{PrettyPrinter, PrintConfig};
+    use std::io::Read;
+
+    let config = PrintConfig {
+        indent_width,
+        max_line_width: width,
+        align_columns: !no_align,
+    };
+    let printer = PrettyPrinter::new(config);
+
+    let (source, filename) = if input == "-" {
+        let mut buf = String::new();
+        io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| format!("cannot read stdin: {e}"))?;
+        (buf, "<stdin>".to_string())
+    } else {
+        let path = PathBuf::from(input);
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("cannot read {:?}: {e}", path))?;
+        let name = path.display().to_string();
+        (text, name)
+    };
+
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| format_reader_report(*diag, &source, &filename))?;
+
+    let formatted = printer.print_file(&nodes);
+
+    if in_place {
+        if input == "-" {
+            return Err("cannot use --in-place with stdin".to_string());
+        }
+        std::fs::write(input, &formatted).map_err(|e| format!("cannot write {:?}: {e}", input))?;
+    } else {
+        print!("{formatted}");
+    }
+
+    Ok(())
+}
+
 fn command_doc(input_path: PathBuf, output_override: Option<PathBuf>) -> Result<(), String> {
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
@@ -638,8 +720,7 @@ fn command_doc(input_path: PathBuf, output_override: Option<PathBuf>) -> Result<
         .map_err(|e| format!("cannot create {:?}: {e}", output_dir))?;
     for page in pages {
         let path = output_dir.join(page.filename);
-        std::fs::write(&path, page.html)
-            .map_err(|e| format!("cannot write {:?}: {e}", path))?;
+        std::fs::write(&path, page.html).map_err(|e| format!("cannot write {:?}: {e}", path))?;
     }
     Ok(())
 }
@@ -648,9 +729,8 @@ fn command_audit(input_path: PathBuf) -> Result<(), String> {
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
 
-    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
-        format_reader_report(*diag, &source, &input_path.display().to_string())
-    })?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
 
     let filename = input_path.display().to_string();
     let mut ffi_entries: Vec<AuditEntry> = Vec::new();
@@ -706,7 +786,13 @@ fn command_audit(input_path: PathBuf) -> Result<(), String> {
             if flags.is_empty() {
                 flags.push("pure (declared)".to_string());
             }
-            println!("  {}:{} defextern {} — {}", filename, line, entry.name, flags.join(", "));
+            println!(
+                "  {}:{} defextern {} — {}",
+                filename,
+                line,
+                entry.name,
+                flags.join(", ")
+            );
             if entry.is_unsafe {
                 println!("    ⚠ requires Unsafe capability");
             }
@@ -923,14 +1009,12 @@ fn read_manifest(path: &PathBuf) -> Result<PackageManifest, String> {
 
 fn write_manifest(path: &PathBuf, manifest: &PackageManifest) -> Result<(), String> {
     let output = serialize_manifest(manifest);
-    std::fs::write(path, output)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+    std::fs::write(path, output).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 fn write_lockfile(path: &PathBuf, lockfile: &nexl_pkg::Lockfile) -> Result<(), String> {
     let output = serialize_lockfile(lockfile);
-    std::fs::write(path, output)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+    std::fs::write(path, output).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 fn check_top_level(
@@ -960,12 +1044,13 @@ fn list_head_is(node: &Node, name: &str) -> bool {
         return false;
     };
     match &first.kind {
-        NodeKind::Atom(Atom::Symbol { ns: None, name: head }) => head == name,
+        NodeKind::Atom(Atom::Symbol {
+            ns: None,
+            name: head,
+        }) => head == name,
         _ => false,
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -1012,8 +1097,7 @@ mod tests {
 
     #[test]
     fn parse_build_with_output() {
-        let cli = Cli::try_parse_from(["nexl", "build", "main.nexl", "out.wasm"])
-            .expect("parse");
+        let cli = Cli::try_parse_from(["nexl", "build", "main.nexl", "out.wasm"]).expect("parse");
         assert_eq!(
             cli.command,
             Command::Build {
@@ -1049,7 +1133,10 @@ mod tests {
         let result = command_build(path.clone(), Some(out.clone()), "native", "rc", false);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&out);
-        assert!(result.is_ok(), "native build should succeed, got: {result:?}");
+        assert!(
+            result.is_ok(),
+            "native build should succeed, got: {result:?}"
+        );
     }
 
     #[test]
@@ -1066,12 +1153,7 @@ mod tests {
     #[test]
     fn parse_repl_without_args() {
         let cli = Cli::try_parse_from(["nexl", "repl"]).expect("parse");
-        assert_eq!(
-            cli.command,
-            Command::Repl {
-                protocol: false,
-            }
-        );
+        assert_eq!(cli.command, Command::Repl { protocol: false });
     }
 
     #[test]
@@ -1157,8 +1239,8 @@ mod tests {
     #[test]
     fn reader_error_report_includes_source() {
         let source = "(";
-        let diag = nexl_reader::read(source, meta::FileId::SYNTHETIC)
-            .expect_err("expected parse error");
+        let diag =
+            nexl_reader::read(source, meta::FileId::SYNTHETIC).expect_err("expected parse error");
         let report = format_reader_report(*diag, source, "test.nxl");
         assert!(report.contains("unclosed `(`"));
         assert!(report.contains("test.nxl"));
@@ -1180,6 +1262,95 @@ mod tests {
     }
 
     #[test]
+    fn parse_fmt_basic() {
+        let cli = Cli::try_parse_from(["nexl", "fmt", "main.nexl"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Fmt {
+                input: "main.nexl".to_string(),
+                in_place: false,
+                width: 80,
+                indent: 2,
+                no_align: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fmt_in_place() {
+        let cli = Cli::try_parse_from(["nexl", "fmt", "-i", "main.nexl"]).expect("parse");
+        match cli.command {
+            Command::Fmt { in_place, .. } => assert!(in_place),
+            other => panic!("expected Fmt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_fmt_with_options() {
+        let cli = Cli::try_parse_from([
+            "nexl",
+            "fmt",
+            "--width",
+            "100",
+            "--indent",
+            "4",
+            "--no-align",
+            "main.nexl",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Fmt {
+                input: "main.nexl".to_string(),
+                in_place: false,
+                width: 100,
+                indent: 4,
+                no_align: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fmt_stdin() {
+        let cli = Cli::try_parse_from(["nexl", "fmt", "-"]).expect("parse");
+        match cli.command {
+            Command::Fmt { input, .. } => assert_eq!(input, "-"),
+            other => panic!("expected Fmt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fmt_formats_file() {
+        let source = "(def x 42)";
+        let path = write_temp_file(source, "fmt_basic");
+        let result = command_fmt(&path.display().to_string(), false, 80, 2, false);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "fmt should succeed: {result:?}");
+    }
+
+    #[test]
+    fn fmt_in_place_writes_file() {
+        let source = "(def   x   42)";
+        let path = write_temp_file(source, "fmt_inplace");
+        let path_str = path.display().to_string();
+        let result = command_fmt(&path_str, true, 80, 2, false);
+        let contents = std::fs::read_to_string(&path).unwrap_or_default();
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "fmt should succeed: {result:?}");
+        assert!(
+            contents.contains("(def x 42)"),
+            "file should be reformatted: {contents}"
+        );
+    }
+
+    #[test]
+    fn fmt_rejects_inplace_stdin() {
+        let result = command_fmt("-", true, 80, 2, false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("stdin"));
+    }
+
+    #[test]
     fn parse_doc_with_input() {
         let cli = Cli::try_parse_from(["nexl", "doc", "mod.nexl"]).expect("parse");
         assert_eq!(
@@ -1193,8 +1364,7 @@ mod tests {
 
     #[test]
     fn parse_doc_with_output() {
-        let cli = Cli::try_parse_from(["nexl", "doc", "mod.nexl", "out"])
-            .expect("parse");
+        let cli = Cli::try_parse_from(["nexl", "doc", "mod.nexl", "out"]).expect("parse");
         assert_eq!(
             cli.command,
             Command::Doc {
@@ -1206,8 +1376,7 @@ mod tests {
 
     #[test]
     fn parse_pkg_add_with_version_in_spec() {
-        let cli = Cli::try_parse_from(["nexl", "pkg", "add", "json@^1.0.0"])
-            .expect("parse");
+        let cli = Cli::try_parse_from(["nexl", "pkg", "add", "json@^1.0.0"]).expect("parse");
         assert_eq!(
             cli.command,
             Command::Pkg {
@@ -1279,7 +1448,10 @@ mod tests {
         let html_exists = html_path.exists();
         let _ = std::fs::remove_file(&html_path);
         let _ = std::fs::remove_dir_all(&out_dir);
-        assert!(result.is_ok(), "doc command should succeed, got: {result:?}");
+        assert!(
+            result.is_ok(),
+            "doc command should succeed, got: {result:?}"
+        );
         assert!(html_exists, "doc command should write html output");
     }
 
@@ -1337,12 +1509,22 @@ mod tests {
         let path = write_temp_file(source, "sandbox_deny");
         let result = command_sandbox(
             path.clone(),
-            false, false, false, false, false, false, false, false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         );
         let _ = std::fs::remove_file(&path);
         assert!(result.is_err(), "sandbox should deny console");
         let err = result.unwrap_err();
-        assert!(err.contains("Console"), "error should mention Console: {err}");
+        assert!(
+            err.contains("Console"),
+            "error should mention Console: {err}"
+        );
     }
 
     #[test]
@@ -1351,7 +1533,14 @@ mod tests {
         let path = write_temp_file(source, "sandbox_allow");
         let result = command_sandbox(
             path.clone(),
-            true, false, false, false, false, false, false, false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         );
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "sandbox should allow console: {result:?}");
@@ -1363,10 +1552,20 @@ mod tests {
         let path = write_temp_file(source, "sandbox_all");
         let result = command_sandbox(
             path.clone(),
-            false, false, false, false, false, false, false, true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
         );
         let _ = std::fs::remove_file(&path);
-        assert!(result.is_ok(), "sandbox --allow-all should permit: {result:?}");
+        assert!(
+            result.is_ok(),
+            "sandbox --allow-all should permit: {result:?}"
+        );
     }
 
     #[test]
@@ -1375,10 +1574,20 @@ mod tests {
         let path = write_temp_file(source, "sandbox_pure");
         let result = command_sandbox(
             path.clone(),
-            false, false, false, false, false, false, false, false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         );
         let _ = std::fs::remove_file(&path);
-        assert!(result.is_ok(), "pure code should run in sandbox: {result:?}");
+        assert!(
+            result.is_ok(),
+            "pure code should run in sandbox: {result:?}"
+        );
     }
 
     #[test]
@@ -1409,7 +1618,10 @@ mod tests {
         let path = write_temp_file(source, "audit_clean");
         let result = command_audit(path.clone());
         let _ = std::fs::remove_file(&path);
-        assert!(result.is_ok(), "audit should succeed with no FFI: {result:?}");
+        assert!(
+            result.is_ok(),
+            "audit should succeed with no FFI: {result:?}"
+        );
     }
 
     #[test]
@@ -1447,8 +1659,7 @@ mod tests {
     fn kernel_bootstrap_evaluates() {
         // Verify Stage 0 evaluator can run the kernel-subset bootstrap POC.
         let source = include_str!("../../../docs/kernel-bootstrap.nxl");
-        let nodes =
-            nexl_reader::read(source, meta::FileId::SYNTHETIC).expect("parse");
+        let nodes = nexl_reader::read(source, meta::FileId::SYNTHETIC).expect("parse");
         let env = nexl_eval::stdlib::standard_env();
         let mut last_result = None;
         for node in &nodes {
