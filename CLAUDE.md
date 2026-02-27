@@ -15,21 +15,22 @@ Nexl is a statically-typed, effect-tracked Lisp that compiles to WebAssembly and
 Cargo workspace under `crates/`, one crate per compiler phase.
 See `docs/crate-map.md` for the full dependency graph.
 
-## Key Crates (current)
+## Key Crates
 - `nexl-ast` — AST node types, spans, source locations
 - `nexl-reader` — Lexer + reader (text → s-expression AST)
 - `nexl-errors` — Diagnostic types (miette + thiserror)
-- `nexl-eval` — Tree-walk evaluator for dev mode (M1, temporary)
-- `nexl-runtime` — Value representation, built-in functions (M1)
-- `nexl-types` — Type representation, substitution, unification (M2)
-- `nexl-infer` — Bidirectional inference + effect row inference (M2)
-
-## Key Crates (planned, added as milestones begin)
-- `nexl-effects` — Effect declarations, evidence passing (M6)
-- `nexl-ir` — Intermediate representation, post-lowering (M8)
-- `nexl-wasm` — WASM code generation (M8)
-- `nexl-vm` — Bytecode VM for REPL/dev mode (M8)
-- `nexl-cli` — The `nexl` binary (M8)
+- `nexl-eval` — Tree-walk evaluator for dev mode
+- `nexl-runtime` — Value representation, built-in functions, sandbox
+- `nexl-stdlib` — Standard library modules (io, math, string, etc.)
+- `nexl-types` — Type representation, substitution, unification
+- `nexl-infer` — Bidirectional inference + effect row inference
+- `nexl-ir` — Intermediate representation, post-lowering
+- `nexl-wasm` — WASM code generation
+- `nexl-native` — Native code generation
+- `nexl-cli` — The `nexl` binary (run, repl, sandbox, audit, lsp, pkg, doc)
+- `nexl-lsp` — Language server (diagnostics, hover, go-to-def, completions)
+- `nexl-pkg` — Package manager (project.nexl, dependency resolution, definition store)
+- `nexl-doc` — Documentation generator (HTML output)
 
 ## Commands
 - Build: `cargo build`
@@ -70,8 +71,7 @@ the AI executes one test at a time; no one skips the Red step.
 - Keep functions focused — prefer small, well-named functions over long blocks
 
 ## Current Milestone
-See `docs/current-milestone.md` for active work.
-See `docs/todo-m2.md` for the task checklist.
+See `docs/current-milestone.md` for active work and the corresponding `docs/todo-m{N}.md`.
 Read `milestones.md` for the full plan.
 
 ## Spec Reference
@@ -98,8 +98,20 @@ ADRs are in `decisions/` (symlinked from design repo). Key ones:
 - ADR-011: Naming conventions (append/put/remove/each/etc.)
 - ADR-013: Def-form renames (defn-macro, defmacro-syntax, etc.)
 
+## Model Selection
+
+When spawning subagents via the Task tool, choose the model by task complexity:
+
+| Model | Use for | Examples |
+|-------|---------|----------|
+| **opus** | Architecture, novel implementation, spec interpretation, multi-file design | New compiler pass, type system feature, effect system design |
+| **sonnet** | Straightforward implementation, pattern-following code, moderate reasoning | Adding a stdlib function, scaffolding a crate, summarizing spec sections |
+| **haiku** | Mechanical tasks, file reads, running commands, simple edits | Running checks, updating todo lists, codebase exploration, counting items |
+
+Skills already have model frontmatter set. For ad-hoc Task tool calls, apply the same logic.
+
 ## Workflow
-1. Read `docs/current-milestone.md` and `docs/todo-m0.md`
+1. Read `docs/current-milestone.md` and the corresponding `docs/todo-m{N}.md`
 2. Work on the next unchecked item
 3. Run `cargo test -p nexl-{crate}` to verify
 4. Update the todo checklist

@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Update the current milestone's todo list.
 
 ## Arguments

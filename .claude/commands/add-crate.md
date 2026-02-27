@@ -1,3 +1,7 @@
+---
+model: sonnet
+---
+
 Add a new crate to the Cargo workspace.
 
 ## Arguments

@@ -1,3 +1,7 @@
+---
+model: sonnet
+---
+
 Look up a specific part of the Nexl language spec.
 
 ## Arguments

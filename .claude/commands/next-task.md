@@ -1,3 +1,7 @@
+---
+model: opus
+---
+
 Pick the next task from the current milestone's todo list and implement it,
 following the Beck Augmented Coding loop (test plan → one test at a time → human
 stays in the loop).

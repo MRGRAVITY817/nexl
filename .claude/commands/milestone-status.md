@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Summarize the current milestone's progress for session start.
 
 ## Instructions

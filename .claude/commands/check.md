@@ -1,3 +1,7 @@
+---
+model: haiku
+---
+
 Run a full validation pass on the workspace.
 
 ## Arguments

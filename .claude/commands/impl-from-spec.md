@@ -1,3 +1,7 @@
+---
+model: opus
+---
+
 Implement a feature by reading the relevant spec section and translating it to Rust.
 
 ## Arguments
@@ -26,4 +30,3 @@ $ARGUMENTS — What to implement (e.g. "integer literal lexing from §2", "chara
 
 8. After all tests pass: run `cargo clippy -p nexl-{crate}` and fix all warnings.
 9. Update `docs/todo-m{N}.md` if this completes a checklist item.
-8. Update `docs/todo-m{N}.md` if this completes a checklist item.

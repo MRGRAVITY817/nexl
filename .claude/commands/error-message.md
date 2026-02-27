@@ -1,3 +1,7 @@
+---
+model: opus
+---
+
 Design and implement a compiler error message following Principle 6: "The compiler is a conversational partner."
 
 ## Arguments
