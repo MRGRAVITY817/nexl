@@ -23,8 +23,8 @@
 - [x] Implement `textDocument/definition` (go-to-definition)
 - [x] Implement `textDocument/completion` (symbols in scope)
 - [x] Wire `nexl lsp` subcommand in CLI
-- [x] Create `nexl-pkg` crate with `project.nexl` schema (EDN format)
-- [x] Implement `project.nexl` parser (package name, version, deps, prefix)
+- [x] Create `nexl-pkg` crate with `project.nxl` schema (EDN format)
+- [x] Implement `project.nxl` parser (package name, version, deps, prefix)
 - [x] Implement dependency resolution (flat, no version conflicts for Stage 0)
 - [x] Wire `nexl pkg add/remove/lock` subcommands in CLI
 - [x] Content-addressed definition store (SQLite-backed hash→artifact)

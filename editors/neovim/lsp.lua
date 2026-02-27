@@ -13,7 +13,7 @@ return {
   default_config = {
     cmd = { 'nexl', 'lsp' },
     filetypes = { 'nexl' },
-    root_dir = util.root_pattern('project.nexl', '.git'),
+    root_dir = util.root_pattern('project.nxl', '.git'),
     single_file_support = true,
     settings = {},
   },
@@ -27,7 +27,7 @@ completion, and formatting for `.nxl` files.
 Install the `nexl` binary and ensure it is on your PATH.
 ]],
     default_config = {
-      root_dir = [[root_pattern("project.nexl", ".git")]],
+      root_dir = [[root_pattern("project.nxl", ".git")]],
     },
   },
 }

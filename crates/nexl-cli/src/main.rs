@@ -327,7 +327,7 @@ fn command_build(
     Ok(())
 }
 
-/// Walk up from `start` looking for a `project.nexl` file.
+/// Walk up from `start` looking for a `project.nxl` file.
 /// Returns the directory containing it, or `None`.
 fn find_project_root(start: &Path) -> Option<PathBuf> {
     let mut dir = if start.is_file() {
@@ -336,7 +336,7 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
         start.to_path_buf()
     };
     loop {
-        if dir.join("project.nexl").is_file() {
+        if dir.join("project.nxl").is_file() {
             return Some(dir);
         }
         if !dir.pop() {
@@ -376,12 +376,12 @@ fn discover_and_load_modules(
 
     // Find project root and read manifest for prefix
     let project_root = find_project_root(&entry_path)
-        .ok_or("no project.nexl found; multi-file modules require a project manifest")?;
+        .ok_or("no project.nxl found; multi-file modules require a project manifest")?;
 
-    let manifest_source = std::fs::read_to_string(project_root.join("project.nexl"))
-        .map_err(|e| format!("cannot read project.nexl: {e}"))?;
+    let manifest_source = std::fs::read_to_string(project_root.join("project.nxl"))
+        .map_err(|e| format!("cannot read project.nxl: {e}"))?;
     let manifest = parse_manifest(&manifest_source)
-        .map_err(|e| format!("invalid project.nexl: {e}"))?;
+        .map_err(|e| format!("invalid project.nxl: {e}"))?;
     let prefix = &manifest.package.prefix;
     let source_root = project_root.join(&manifest.package.source_dir);
 
@@ -1083,7 +1083,7 @@ fn command_pkg_lock() -> Result<(), String> {
 }
 
 fn manifest_path() -> PathBuf {
-    PathBuf::from("project.nexl")
+    PathBuf::from("project.nxl")
 }
 
 fn lockfile_path() -> PathBuf {
@@ -1807,7 +1807,7 @@ mod tests {
         let sub = root.join("src").join("app");
         std::fs::create_dir_all(&sub).expect("create subdirs");
         std::fs::write(
-            root.join("project.nexl"),
+            root.join("project.nxl"),
             "(project :name \"demo\" :version \"0.1.0\" :prefix \"demo\")",
         )
         .expect("write manifest");
@@ -1822,10 +1822,10 @@ mod tests {
         let dir = write_temp_dir("no_manifest");
         let found = find_project_root(&dir);
         let _ = std::fs::remove_dir_all(&dir);
-        // The temp dir has no project.nexl anywhere up the tree (well, it might
+        // The temp dir has no project.nxl anywhere up the tree (well, it might
         // find one in the real filesystem, but /tmp shouldn't have one).
         // We just verify the function doesn't panic and returns a path or None.
-        // In a controlled env without project.nexl in /tmp, this is None.
+        // In a controlled env without project.nxl in /tmp, this is None.
         assert!(found.is_none(), "expected None in temp dir without manifest");
     }
 
@@ -1849,7 +1849,7 @@ mod tests {
     #[test]
     fn discover_modules_loads_transitive_deps() {
         // Create a project structure:
-        // root/project.nexl
+        // root/project.nxl
         // root/demo/app.nxl     — imports demo.util
         // root/demo/util.nxl    — imports demo.math
         // root/demo/math.nxl    — no imports
@@ -1857,7 +1857,7 @@ mod tests {
         let demo = root.join("demo");
         std::fs::create_dir_all(&demo).expect("create demo dir");
         std::fs::write(
-            root.join("project.nexl"),
+            root.join("project.nxl"),
             "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
         )
         .expect("write manifest");
@@ -1900,7 +1900,7 @@ mod tests {
         let demo = root.join("demo");
         std::fs::create_dir_all(&demo).expect("create demo dir");
         std::fs::write(
-            root.join("project.nexl"),
+            root.join("project.nxl"),
             "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
         )
         .expect("write manifest");
@@ -1936,7 +1936,7 @@ mod tests {
         let demo = root.join("demo");
         std::fs::create_dir_all(&demo).expect("create demo dir");
         std::fs::write(
-            root.join("project.nexl"),
+            root.join("project.nxl"),
             "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\"}}",
         )
         .expect("write manifest");
@@ -1967,7 +1967,7 @@ mod tests {
         let src_demo = root.join("src").join("demo");
         std::fs::create_dir_all(&src_demo).expect("create src/demo dir");
         std::fs::write(
-            root.join("project.nexl"),
+            root.join("project.nxl"),
             "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\" :source-dir \"src\"}}",
         )
         .expect("write manifest");
