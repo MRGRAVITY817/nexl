@@ -1,0 +1,10 @@
+; Functions: defn, recursion, higher-order
+(defn square [x] (* x x))
+(io/println (square 7))
+
+(defn factorial [n]
+  (if (<= n 1)
+    1
+    (* n (factorial (- n 1)))))
+(io/println (factorial 5))
+(io/println (factorial 10))

@@ -4319,12 +4319,8 @@ mod tests {
     #[test]
     fn variadic_rest_collects_extra_args() {
         let env = crate::stdlib::standard_env();
-        let result =
-            eval_forms("(defn f [x & rest] rest) (f 1 2 3 4)", &env).unwrap();
-        assert_eq!(
-            result,
-            Value::Vec(Rc::new(vec![int(2), int(3), int(4)]))
-        );
+        let result = eval_forms("(defn f [x & rest] rest) (f 1 2 3 4)", &env).unwrap();
+        assert_eq!(result, Value::Vec(Rc::new(vec![int(2), int(3), int(4)])));
     }
 
     #[test]
@@ -4338,15 +4334,8 @@ mod tests {
     fn variadic_rest_works_with_apply_value() {
         let env = crate::stdlib::standard_env();
         // Use map with a variadic fn — map calls apply_value internally
-        let result = eval_forms(
-            "(defn my-list [& items] items) (my-list 10 20 30)",
-            &env,
-        )
-        .unwrap();
-        assert_eq!(
-            result,
-            Value::Vec(Rc::new(vec![int(10), int(20), int(30)]))
-        );
+        let result = eval_forms("(defn my-list [& items] items) (my-list 10 20 30)", &env).unwrap();
+        assert_eq!(result, Value::Vec(Rc::new(vec![int(10), int(20), int(30)])));
     }
 
     // -----------------------------------------------------------------------
@@ -4400,17 +4389,35 @@ mod tests {
     #[test]
     fn and_two_args_basic() {
         let env = crate::stdlib::standard_env();
-        assert_eq!(eval_forms("(and true true)", &env).unwrap(), Value::Bool(true));
-        assert_eq!(eval_forms("(and true false)", &env).unwrap(), Value::Bool(false));
-        assert_eq!(eval_forms("(and false true)", &env).unwrap(), Value::Bool(false));
+        assert_eq!(
+            eval_forms("(and true true)", &env).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_forms("(and true false)", &env).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(
+            eval_forms("(and false true)", &env).unwrap(),
+            Value::Bool(false)
+        );
     }
 
     #[test]
     fn or_two_args_basic() {
         let env = crate::stdlib::standard_env();
-        assert_eq!(eval_forms("(or false false)", &env).unwrap(), Value::Bool(false));
-        assert_eq!(eval_forms("(or true false)", &env).unwrap(), Value::Bool(true));
-        assert_eq!(eval_forms("(or false true)", &env).unwrap(), Value::Bool(true));
+        assert_eq!(
+            eval_forms("(or false false)", &env).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(
+            eval_forms("(or true false)", &env).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_forms("(or false true)", &env).unwrap(),
+            Value::Bool(true)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -4456,12 +4463,8 @@ mod tests {
     #[test]
     fn variadic_rest_in_anonymous_fn() {
         let env = crate::stdlib::standard_env();
-        let result =
-            eval_forms("((fn [& args] args) 5 6 7)", &env).unwrap();
-        assert_eq!(
-            result,
-            Value::Vec(Rc::new(vec![int(5), int(6), int(7)]))
-        );
+        let result = eval_forms("((fn [& args] args) 5 6 7)", &env).unwrap();
+        assert_eq!(result, Value::Vec(Rc::new(vec![int(5), int(6), int(7)])));
     }
 
     // -----------------------------------------------------------------------
@@ -4499,95 +4502,59 @@ mod tests {
     #[test]
     fn match_literal_bool() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match false true 1 false 2)",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match false true 1 false 2)", &env).unwrap();
         assert_eq!(result, int(2));
     }
 
     #[test]
     fn match_literal_keyword() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match :ok :err 0 :ok 1 _ 2)",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match :ok :err 0 :ok 1 _ 2)", &env).unwrap();
         assert_eq!(result, int(1));
     }
 
     #[test]
     fn match_wildcard() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match 999 _ 42)",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match 999 _ 42)", &env).unwrap();
         assert_eq!(result, int(42));
     }
 
     #[test]
     fn match_binding_var() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match 10 x (+ x 1))",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match 10 x (+ x 1))", &env).unwrap();
         assert_eq!(result, int(11));
     }
 
     #[test]
     fn match_constructor_some() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match (Some 5) (None) 0 (Some x) x)",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match (Some 5) (None) 0 (Some x) x)", &env).unwrap();
         assert_eq!(result, int(5));
     }
 
     #[test]
     fn match_constructor_none() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match None (None) 0 (Some x) x)",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match None (None) 0 (Some x) x)", &env).unwrap();
         assert_eq!(result, int(0));
     }
 
     #[test]
     fn match_constructor_ok_err() {
         let env = crate::stdlib::standard_env();
-        let ok_result = eval_forms(
-            "(match (Ok 42) (Ok v) v (Err e) 0)",
-            &env,
-        )
-        .unwrap();
+        let ok_result = eval_forms("(match (Ok 42) (Ok v) v (Err e) 0)", &env).unwrap();
         assert_eq!(ok_result, int(42));
 
-        let err_result = eval_forms(
-            r#"(match (Err "bad") (Ok v) 0 (Err e) e)"#,
-            &env,
-        )
-        .unwrap();
+        let err_result = eval_forms(r#"(match (Err "bad") (Ok v) 0 (Err e) e)"#, &env).unwrap();
         assert_eq!(err_result, Value::Str(Rc::from("bad")));
     }
 
     #[test]
     fn match_tuple_pattern() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match [1 2 3] [a b c] (+ a (+ b c)))",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match [1 2 3] [a b c] (+ a (+ b c)))", &env).unwrap();
         assert_eq!(result, int(6));
     }
 
@@ -4616,32 +4583,21 @@ mod tests {
     #[test]
     fn match_no_match_errors() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match 42 1 \"one\" 2 \"two\")",
-            &env,
-        );
+        let result = eval_forms("(match 42 1 \"one\" 2 \"two\")", &env);
         assert!(result.is_err());
     }
 
     #[test]
     fn match_unit_literal() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match unit unit 1 _ 2)",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match unit unit 1 _ 2)", &env).unwrap();
         assert_eq!(result, int(1));
     }
 
     #[test]
     fn match_or_pattern() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(match :b (| :a :b :c) 1 _ 2)",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(match :b (| :a :b :c) 1 _ 2)", &env).unwrap();
         assert_eq!(result, int(1));
     }
 
@@ -4782,24 +4738,14 @@ mod tests {
 
     #[test]
     fn sort_empty() {
-        assert_eq!(
-            eval_str("(sort [])").unwrap(),
-            Value::Vec(Rc::new(vec![]))
-        );
+        assert_eq!(eval_str("(sort [])").unwrap(), Value::Vec(Rc::new(vec![])));
     }
 
     #[test]
     fn sort_by_key() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(defn neg [x] (- 0 x))\n(sort-by neg [1 3 2])",
-            &env,
-        )
-        .unwrap();
-        assert_eq!(
-            result,
-            Value::Vec(Rc::new(vec![int(3), int(2), int(1)]))
-        );
+        let result = eval_forms("(defn neg [x] (- 0 x))\n(sort-by neg [1 3 2])", &env).unwrap();
+        assert_eq!(result, Value::Vec(Rc::new(vec![int(3), int(2), int(1)])));
     }
 
     // -- reverse --
@@ -4846,24 +4792,24 @@ mod tests {
 
     #[test]
     fn range_zero() {
-        assert_eq!(
-            eval_str("(range 0)").unwrap(),
-            Value::Vec(Rc::new(vec![]))
-        );
+        assert_eq!(eval_str("(range 0)").unwrap(), Value::Vec(Rc::new(vec![])));
     }
 
     // -- flat-map --
     #[test]
     fn flat_map_basic() {
         let env = crate::stdlib::standard_env();
-        let result = eval_forms(
-            "(defn dup [x] [x x])\n(flat-map dup [1 2 3])",
-            &env,
-        )
-        .unwrap();
+        let result = eval_forms("(defn dup [x] [x x])\n(flat-map dup [1 2 3])", &env).unwrap();
         assert_eq!(
             result,
-            Value::Vec(Rc::new(vec![int(1), int(1), int(2), int(2), int(3), int(3)]))
+            Value::Vec(Rc::new(vec![
+                int(1),
+                int(1),
+                int(2),
+                int(2),
+                int(3),
+                int(3)
+            ]))
         );
     }
 
@@ -4883,16 +4829,10 @@ mod tests {
                 // First group should be odd numbers (false), second even (true)
                 let (k0, v0) = &pairs[0];
                 assert_eq!(*k0, Value::Bool(false));
-                assert_eq!(
-                    *v0,
-                    Value::Vec(Rc::new(vec![int(1), int(3), int(5)]))
-                );
+                assert_eq!(*v0, Value::Vec(Rc::new(vec![int(1), int(3), int(5)])));
                 let (k1, v1) = &pairs[1];
                 assert_eq!(*k1, Value::Bool(true));
-                assert_eq!(
-                    *v1,
-                    Value::Vec(Rc::new(vec![int(2), int(4)]))
-                );
+                assert_eq!(*v1, Value::Vec(Rc::new(vec![int(2), int(4)])));
             }
             other => panic!("expected Map, got {other}"),
         }
@@ -4959,10 +4899,7 @@ mod tests {
             &env,
         )
         .unwrap();
-        assert_eq!(
-            result,
-            Value::Vec(Rc::new(vec![int(3), int(4), int(5)]))
-        );
+        assert_eq!(result, Value::Vec(Rc::new(vec![int(3), int(4), int(5)])));
     }
 
     // -- bitwise operations --

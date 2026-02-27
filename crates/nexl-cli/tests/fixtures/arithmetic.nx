@@ -1,0 +1,4 @@
+; Basic arithmetic operations
+(io/println (+ 2 3))
+(io/println (* 4 5))
+(io/println (- 10 3))

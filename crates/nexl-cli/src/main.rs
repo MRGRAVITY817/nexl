@@ -380,16 +380,16 @@ fn discover_and_load_modules(
 
     let manifest_source = std::fs::read_to_string(project_root.join("project.nx"))
         .map_err(|e| format!("cannot read project.nx: {e}"))?;
-    let manifest = parse_manifest(&manifest_source)
-        .map_err(|e| format!("invalid project.nx: {e}"))?;
+    let manifest =
+        parse_manifest(&manifest_source).map_err(|e| format!("invalid project.nx: {e}"))?;
     let prefix = &manifest.package.prefix;
     let source_root = project_root.join(&manifest.package.source_dir);
 
     // Parse entry file
     let entry_source = std::fs::read_to_string(&entry_path)
         .map_err(|e| format!("cannot read {:?}: {e}", entry_path))?;
-    let entry_nodes = nexl_reader::read(&entry_source, meta::FileId::SYNTHETIC)
-        .map_err(|diag| {
+    let entry_nodes =
+        nexl_reader::read(&entry_source, meta::FileId::SYNTHETIC).map_err(|diag| {
             format_reader_report(*diag, &entry_source, &entry_path.display().to_string())
         })?;
     let entry_module = nexl_eval::modules::parse_module_source(&entry_nodes)
@@ -410,13 +410,8 @@ fn discover_and_load_modules(
             }
             seen.insert(import.module_path.clone());
 
-            let rel_path =
-                nexl_modules::module_name_to_path(&import.module_path, prefix).map_err(|e| {
-                    format!(
-                        "cannot resolve module `{}`: {e}",
-                        import.module_path
-                    )
-                })?;
+            let rel_path = nexl_modules::module_name_to_path(&import.module_path, prefix)
+                .map_err(|e| format!("cannot resolve module `{}`: {e}", import.module_path))?;
             let abs_path = source_root.join(&rel_path);
 
             let source = std::fs::read_to_string(&abs_path).map_err(|e| {
@@ -1826,7 +1821,10 @@ mod tests {
         // find one in the real filesystem, but /tmp shouldn't have one).
         // We just verify the function doesn't panic and returns a path or None.
         // In a controlled env without project.nx in /tmp, this is None.
-        assert!(found.is_none(), "expected None in temp dir without manifest");
+        assert!(
+            found.is_none(),
+            "expected None in temp dir without manifest"
+        );
     }
 
     #[test]
@@ -1954,10 +1952,7 @@ mod tests {
         let entry = demo.join("app.nx");
         let result = command_run(entry);
         let _ = std::fs::remove_dir_all(&root);
-        assert!(
-            result.is_ok(),
-            "multi-file run should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "multi-file run should succeed: {result:?}");
     }
 
     #[test]
@@ -1997,9 +1992,6 @@ mod tests {
         let path = write_temp_file("(+ 40 2)", "run_single");
         let result = command_run(path.clone());
         let _ = std::fs::remove_file(&path);
-        assert!(
-            result.is_ok(),
-            "single-file run should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "single-file run should succeed: {result:?}");
     }
 }

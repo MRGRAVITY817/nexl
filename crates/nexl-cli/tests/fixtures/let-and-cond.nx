@@ -1,0 +1,14 @@
+; Let bindings and cond expressions
+(let [x 10
+      y 20]
+  (io/println (+ x y)))
+
+(defn classify [n]
+  (cond
+    (< n 0)  "negative"
+    (= n 0)  "zero"
+    :else    "positive"))
+
+(io/println (classify -5))
+(io/println (classify 0))
+(io/println (classify 42))

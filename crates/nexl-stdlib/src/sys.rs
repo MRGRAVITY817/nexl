@@ -28,7 +28,10 @@ fn sys_args(args: &[Value]) -> Result<Value, String> {
         ));
     }
     let argv = nexl_runtime::sys::get_program_args();
-    let values: Vec<Value> = argv.iter().map(|s| Value::Str(Rc::from(s.as_str()))).collect();
+    let values: Vec<Value> = argv
+        .iter()
+        .map(|s| Value::Str(Rc::from(s.as_str())))
+        .collect();
     Ok(Value::Vec(Rc::new(values)))
 }
 
@@ -41,13 +44,13 @@ fn sys_getenv(args: &[Value]) -> Result<Value, String> {
             return Err(format!(
                 "`sys/getenv` expected Str, got {}",
                 other.type_name()
-            ))
+            ));
         }
         _ => {
             return Err(format!(
                 "`sys/getenv` requires exactly 1 argument, got {}",
                 args.len()
-            ))
+            ));
         }
     };
     match std::env::var(name.as_ref()) {

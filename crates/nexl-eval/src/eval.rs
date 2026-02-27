@@ -83,7 +83,9 @@ fn eval_list<'a>(
     let head = &items[0];
     match &head.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "def" => eval_def(items, env),
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => eval_let(items, env, loop_state),
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "let" => {
+            eval_let(items, env, loop_state)
+        }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "do" => {
             eval_do(items, env, loop_state)
         }
@@ -327,9 +329,8 @@ fn eval_match<'a>(
     let arms = &items[2..];
     for pair in arms.chunks_exact(2) {
         let (pat_node, body_node) = (&pair[0], &pair[1]);
-        let pattern = parse_pattern(pat_node).map_err(|e| {
-            EvalError::NativeError(format!("match: {e}"))
-        })?;
+        let pattern =
+            parse_pattern(pat_node).map_err(|e| EvalError::NativeError(format!("match: {e}")))?;
 
         let mut bindings: Vec<(Rc<str>, Value)> = Vec::new();
         if match_pattern(&pattern, &scrutinee, &mut bindings) {
@@ -347,11 +348,7 @@ fn eval_match<'a>(
 }
 
 /// Try to match a pattern against a value, collecting bindings on success.
-fn match_pattern(
-    pattern: &Pattern,
-    value: &Value,
-    bindings: &mut Vec<(Rc<str>, Value)>,
-) -> bool {
+fn match_pattern(pattern: &Pattern, value: &Value, bindings: &mut Vec<(Rc<str>, Value)>) -> bool {
     match pattern {
         Pattern::Wildcard => true,
 
@@ -362,66 +359,60 @@ fn match_pattern(
 
         Pattern::Literal(atom) => match_literal(atom, value),
 
-        Pattern::Constructor { name, args } => {
-            match value {
-                Value::Adt { ctor, fields, .. } => {
-                    if ctor.as_ref() != name.as_str() {
-                        return false;
-                    }
-                    if fields.len() != args.len() {
-                        return false;
-                    }
-                    for (sub_pat, field_val) in args.iter().zip(fields.iter()) {
-                        if !match_pattern(sub_pat, field_val, bindings) {
-                            return false;
-                        }
-                    }
-                    true
+        Pattern::Constructor { name, args } => match value {
+            Value::Adt { ctor, fields, .. } => {
+                if ctor.as_ref() != name.as_str() {
+                    return false;
                 }
-                _ => false,
+                if fields.len() != args.len() {
+                    return false;
+                }
+                for (sub_pat, field_val) in args.iter().zip(fields.iter()) {
+                    if !match_pattern(sub_pat, field_val, bindings) {
+                        return false;
+                    }
+                }
+                true
             }
-        }
+            _ => false,
+        },
 
-        Pattern::Record { fields } => {
-            match value {
-                Value::Map(entries) => {
-                    for (field_name, sub_pat) in fields {
-                        let key = Value::Keyword {
-                            ns: None,
-                            name: Rc::from(field_name.as_str()),
-                        };
-                        let found = entries.iter().find(|(k, _)| *k == key);
-                        match found {
-                            Some((_, val)) => {
-                                if !match_pattern(sub_pat, val, bindings) {
-                                    return false;
-                                }
+        Pattern::Record { fields } => match value {
+            Value::Map(entries) => {
+                for (field_name, sub_pat) in fields {
+                    let key = Value::Keyword {
+                        ns: None,
+                        name: Rc::from(field_name.as_str()),
+                    };
+                    let found = entries.iter().find(|(k, _)| *k == key);
+                    match found {
+                        Some((_, val)) => {
+                            if !match_pattern(sub_pat, val, bindings) {
+                                return false;
                             }
-                            None => return false,
                         }
+                        None => return false,
                     }
-                    true
                 }
-                _ => false,
+                true
             }
-        }
+            _ => false,
+        },
 
-        Pattern::Tuple(pats) => {
-            match value {
-                Value::Vec(items) => {
-                    if items.len() != pats.len() {
+        Pattern::Tuple(pats) => match value {
+            Value::Vec(items) => {
+                if items.len() != pats.len() {
+                    return false;
+                }
+                for (sub_pat, item) in pats.iter().zip(items.iter()) {
+                    if !match_pattern(sub_pat, item, bindings) {
                         return false;
                     }
-                    for (sub_pat, item) in pats.iter().zip(items.iter()) {
-                        if !match_pattern(sub_pat, item, bindings) {
-                            return false;
-                        }
-                    }
-                    true
                 }
-                _ => false,
+                true
             }
-        }
+            _ => false,
+        },
 
         Pattern::Or(alternatives) => {
             for alt in alternatives {
@@ -434,7 +425,10 @@ fn match_pattern(
             false
         }
 
-        Pattern::As { pattern: inner, name } => {
+        Pattern::As {
+            pattern: inner,
+            name,
+        } => {
             if match_pattern(inner, value, bindings) {
                 bindings.push((Rc::from(name.as_str()), value.clone()));
                 true
@@ -455,11 +449,15 @@ fn match_literal(atom: &Atom, value: &Value) -> bool {
         (Atom::Char(c), Value::Char(v)) => c == v,
         (Atom::Unit, Value::Unit) => true,
         (
-            Atom::Keyword { ns: kns, name: kname },
-            Value::Keyword { ns: vns, name: vname },
-        ) => {
-            kns.as_deref() == vns.as_deref() && kname.as_str() == vname.as_ref()
-        }
+            Atom::Keyword {
+                ns: kns,
+                name: kname,
+            },
+            Value::Keyword {
+                ns: vns,
+                name: vname,
+            },
+        ) => kns.as_deref() == vns.as_deref() && kname.as_str() == vname.as_ref(),
         _ => false,
     }
 }

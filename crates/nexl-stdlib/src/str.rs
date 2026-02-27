@@ -467,9 +467,11 @@ mod tests {
 
     #[test]
     fn test_format_basic() {
-        let result =
-            str_format(&[Value::Str(Rc::from("Hello, {}!")), Value::Str(Rc::from("world"))])
-                .unwrap();
+        let result = str_format(&[
+            Value::Str(Rc::from("Hello, {}!")),
+            Value::Str(Rc::from("world")),
+        ])
+        .unwrap();
         assert_eq!(result, Value::Str(Rc::from("Hello, world!")));
     }
 

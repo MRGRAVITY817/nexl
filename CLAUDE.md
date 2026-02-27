@@ -16,7 +16,7 @@ Cargo workspace under `crates/`, one crate per compiler phase.
 See `docs/crate-map.md` for the full dependency graph.
 
 ## Key Crates
-- `nexl-ast` — AST node types, spans, source locations
+- `nexl-ast` — AST node types, spans, source locations, module declarations
 - `nexl-reader` — Lexer + reader (text → s-expression AST)
 - `nexl-errors` — Diagnostic types (miette + thiserror)
 - `nexl-eval` — Tree-walk evaluator for dev mode
@@ -24,6 +24,10 @@ See `docs/crate-map.md` for the full dependency graph.
 - `nexl-stdlib` — Standard library modules (io, math, string, etc.)
 - `nexl-types` — Type representation, substitution, unification
 - `nexl-infer` — Bidirectional inference + effect row inference
+- `nexl-effects` — Effect system types and checking
+- `nexl-modules` — Module path resolution, module graph
+- `nexl-macros` — Macro expansion
+- `nexl-memory` — Memory management (arena allocator, interning)
 - `nexl-ir` — Intermediate representation, post-lowering
 - `nexl-wasm` — WASM code generation
 - `nexl-native` — Native code generation
@@ -36,8 +40,10 @@ See `docs/crate-map.md` for the full dependency graph.
 - Build: `cargo build`
 - Test all: `cargo test`
 - Test one crate: `cargo test -p nexl-reader`
+- E2E tests: `cargo test -p nexl-cli --test e2e`
 - Clippy: `cargo clippy --all-targets`
 - Format: `cargo fmt`
+- Full check: `/check` (runs fmt + clippy + tests via skill)
 
 ## TDD Approach — Beck Augmented Coding Loop (ALWAYS follow)
 
@@ -70,9 +76,13 @@ the AI executes one test at a time; no one skips the Red step.
 - Test files live next to source: `mod tests { ... }` in each file
 - Keep functions focused — prefer small, well-named functions over long blocks
 
-## Current Milestone
+## Milestones & Stages
+- **Stage 0** (M0–M18): Bootstrap compiler — all core language features
+- **Stage 1** (M19–M22): Self-hosting preparation — collections, algorithms, eval completeness
+- **Stage 2** (M23–M26): Real-world readiness — WASI interop, production stack, DX, 1.0
+
 See `docs/current-milestone.md` for active work and the corresponding `docs/todo-m{N}.md`.
-Read `milestones.md` for the full plan.
+Read `milestones.md` for the Stage 0 plan, `docs/stage-2-milestones.md` for Stage 2.
 
 ## Spec Reference
 The full language spec is in `nexl-spec.md` (symlinked from the design repo).
@@ -116,3 +126,12 @@ Skills already have model frontmatter set. For ad-hoc Task tool calls, apply the
 3. Run `cargo test -p nexl-{crate}` to verify
 4. Update the todo checklist
 5. Commit with: `feat(nexl-{crate}): description [M{N}]`
+
+## CI
+GitHub Actions runs on every push and PR: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
+See `.github/workflows/ci.yml`.
+
+## E2E Tests
+End-to-end tests live in `crates/nexl-cli/tests/fixtures/`. Each test is a `.nx` file with a
+companion `.expected` file. The harness runs each `.nx` file via `nexl run` and compares stdout
+to `.expected`. Run with: `cargo test -p nexl-cli --test e2e`

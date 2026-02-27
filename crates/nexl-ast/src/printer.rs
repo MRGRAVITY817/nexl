@@ -536,8 +536,8 @@ impl PrettyPrinter {
                     body_indent + pat_len + 1
                 };
                 let body_len = self.flat_len(body);
-                let fits_inline = body_len != usize::MAX
-                    && body_col + body_len <= self.config.max_line_width;
+                let fits_inline =
+                    body_len != usize::MAX && body_col + body_len <= self.config.max_line_width;
                 if !fits_inline && is_compound(&body.kind) {
                     let arm_indent = body_indent + self.config.indent_width;
                     out.push('\n');
@@ -562,8 +562,8 @@ impl PrettyPrinter {
                     let pat_len = self.flat_len(&chunk[0]).min(40);
                     let body_col = body_indent + pat_len + 1;
                     let body_len = self.flat_len(&chunk[1]);
-                    let fits_inline = body_len != usize::MAX
-                        && body_col + body_len <= self.config.max_line_width;
+                    let fits_inline =
+                        body_len != usize::MAX && body_col + body_len <= self.config.max_line_width;
                     if !fits_inline && is_compound(&chunk[1].kind) {
                         let arm_indent = body_indent + self.config.indent_width;
                         out.push('\n');
@@ -584,13 +584,7 @@ impl PrettyPrinter {
     /// Keyword-value pairs are written together on each line. For `:imports`
     /// values the outer vector is broken so each inner import spec gets its
     /// own line, aligned under the first `[`.
-    fn write_module_form(
-        &self,
-        items: &[Node],
-        out: &mut String,
-        indent: usize,
-        _column: usize,
-    ) {
+    fn write_module_form(&self, items: &[Node], out: &mut String, indent: usize, _column: usize) {
         let body_indent = indent + self.config.indent_width;
         out.push('(');
 
@@ -1022,7 +1016,11 @@ fn needs_multiline_list(items: &[Node]) -> bool {
     match head_name {
         // let/loop: force multi-line when the binding vector has 2+ pairs.
         "let" | "loop" => {
-            if let Some(Node { kind: NodeKind::Vector(bindings), .. }) = items.get(1) {
+            if let Some(Node {
+                kind: NodeKind::Vector(bindings),
+                ..
+            }) = items.get(1)
+            {
                 return bindings.len() >= 4;
             }
             false

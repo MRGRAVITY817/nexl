@@ -85,7 +85,10 @@ pub fn standard_env() -> Rc<Env> {
     env.define("bit-xor", native("bit-xor", bit_xor));
     env.define("bit-not", native("bit-not", bit_not));
     env.define("bit-shift-left", native("bit-shift-left", bit_shift_left));
-    env.define("bit-shift-right", native("bit-shift-right", bit_shift_right));
+    env.define(
+        "bit-shift-right",
+        native("bit-shift-right", bit_shift_right),
+    );
 
     // Register §11.1 stdlib modules as qualified module aliases
     register_stdlib_modules(&env);
@@ -404,7 +407,6 @@ fn not(args: &[Value]) -> Result<Value, String> {
         other => Err(type_mismatch("not", "Bool", other)),
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // String

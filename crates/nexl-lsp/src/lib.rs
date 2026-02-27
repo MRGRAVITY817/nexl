@@ -4,8 +4,8 @@
 //! go-to-definition, and completion support for Nexl source files.
 
 use dashmap::DashMap;
-use nexl_ast::{Atom, FileId, ImportDecl, ImportKind, Node, NodeKind, Span};
 use nexl_ast::module::parse_module_decl;
+use nexl_ast::{Atom, FileId, ImportDecl, ImportKind, Node, NodeKind, Span};
 use nexl_errors::{Diagnostic as NexlDiagnostic, Severity as NexlSeverity};
 use nexl_infer::{Env, InferState};
 use nexl_types::{Type, TypeError, TypeErrorKind};
@@ -339,7 +339,9 @@ fn stdlib_doc(name: &str) -> Option<&'static str> {
         "sort" => "`(sort vec)` — Stable sort using default comparison (Int, Float, Str).",
         "sort-by" => "`(sort-by f vec)` — Stable sort by key function.",
         "reverse" => "`(reverse vec)` — Reverse a vector.",
-        "range" => "`(range n)` or `(range start end)` or `(range start end step)` — Generate integer range.",
+        "range" => {
+            "`(range n)` or `(range start end)` or `(range start end step)` — Generate integer range."
+        }
         "flat-map" => "`(flat-map f vec)` — Map then flatten one level.",
         "group-by" => "`(group-by f vec)` — Group elements by key function, returns Map.",
         "zip" => "`(zip a b)` — Zip two Vecs into a Vec of 2-element Vecs.",
@@ -369,7 +371,9 @@ fn stdlib_doc(name: &str) -> Option<&'static str> {
         "str/ends-with?" => "`(str/ends-with? s suffix)` — Check if string ends with suffix.",
         "str/contains?" => "`(str/contains? s sub)` — Check if string contains substring.",
         "str/replace" => "`(str/replace s from to)` — Replace all occurrences of `from` with `to`.",
-        "str/index-of" => "`(str/index-of s sub)` — Return `(Some Int)` of first occurrence, or `None`.",
+        "str/index-of" => {
+            "`(str/index-of s sub)` — Return `(Some Int)` of first occurrence, or `None`."
+        }
         "str/blank?" => "`(str/blank? s)` — True if empty or only whitespace.",
         "str/chars" => "`(str/chars s)` — Return Vec of Char (Unicode scalar values).",
         "str/graphemes" => "`(str/graphemes s)` — Return Vec of Str (grapheme clusters).",
@@ -400,15 +404,21 @@ fn stdlib_doc(name: &str) -> Option<&'static str> {
         // ── io module ───────────────────────────────────────────────
         "io/println" => "`(io/println s)` — Print string with newline.",
         "io/print" => "`(io/print s)` — Print string without newline.",
-        "io/read-file" => "`(io/read-file path)` — Read file contents as Str. Returns `(Result Str Str)`.",
-        "io/write-file" => "`(io/write-file path content)` — Write string to file. Returns `(Result Unit Str)`.",
+        "io/read-file" => {
+            "`(io/read-file path)` — Read file contents as Str. Returns `(Result Str Str)`."
+        }
+        "io/write-file" => {
+            "`(io/write-file path content)` — Write string to file. Returns `(Result Unit Str)`."
+        }
         "io/path-join" => "`(io/path-join parts...)` — Join path components.",
         // ── core module ─────────────────────────────────────────────
         "core/identity" => "`(core/identity x)` — Returns its argument unchanged.",
         "core/comp" => "`(core/comp f g)` — Returns a function that applies g then f.",
         "core/partial" => "`(core/partial f args...)` — Returns a function with args pre-applied.",
         "core/constantly" => "`(core/constantly x)` — Returns a function that always returns x.",
-        "core/juxt" => "`(core/juxt f g ...)` — Returns a function that applies each fn and collects results.",
+        "core/juxt" => {
+            "`(core/juxt f g ...)` — Returns a function that applies each fn and collects results."
+        }
         "core/apply" => "`(core/apply f args)` — Call f with args. Last argument must be a Vec.",
         _ => return None,
     })
@@ -433,7 +443,9 @@ fn special_form_doc(name: &str) -> Option<&'static str> {
         "defeffect" => "`(defeffect Name operations...)` — Define an effect type.",
         "defprotocol" => "`(defprotocol Name methods...)` — Define a protocol (interface).",
         "handle" => "`(handle expr handlers...)` — Handle effects from an expression.",
-        "module" => "`(module name :imports [[mod :as alias] ...] :exports [...])` — Declare module with imports.",
+        "module" => {
+            "`(module name :imports [[mod :as alias] ...] :exports [...])` — Declare module with imports."
+        }
         "import" => "`(import module-path :as alias)` — Import a module (standalone form).",
         "try" => "`(try expr (catch pattern body))` — Error handling.",
         "for" => "`(for [binding clause ...] body)` — List comprehension.",
@@ -490,14 +502,8 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
                 }
                 Err(err) => {
                     state.push_error(err);
-                    if is_target
-                        && let Some(name) = symbol_name(name_node)
-                    {
-                        return Some(build_simple_hover(
-                            &name,
-                            name_node.span,
-                            source,
-                        ));
+                    if is_target && let Some(name) = symbol_name(name_node) {
+                        return Some(build_simple_hover(&name, name_node.span, source));
                     }
                 }
             }
@@ -734,10 +740,7 @@ fn def_name_node(node: &Node) -> Option<&Node> {
 fn symbol_name(node: &Node) -> Option<String> {
     match &node.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) => Some(name.clone()),
-        NodeKind::Atom(Atom::Symbol {
-            ns: Some(ns),
-            name,
-        }) => Some(format!("{ns}/{name}")),
+        NodeKind::Atom(Atom::Symbol { ns: Some(ns), name }) => Some(format!("{ns}/{name}")),
         _ => None,
     }
 }
@@ -1098,11 +1101,10 @@ impl LanguageServer for Backend {
                 .and_then(|fp| find_definition_in_file(&fp, bare_name))
         } else {
             // Unqualified: find which import brings this name into scope.
-            find_import_for_unqualified_name(&imports, bare_name)
-                .and_then(|(mp, orig)| {
-                    let fp = resolve_module_to_file_path(mp, &ctx)?;
-                    find_definition_in_file(&fp, &orig)
-                })
+            find_import_for_unqualified_name(&imports, bare_name).and_then(|(mp, orig)| {
+                let fp = resolve_module_to_file_path(mp, &ctx)?;
+                find_definition_in_file(&fp, &orig)
+            })
         };
 
         match resolved {
@@ -1853,7 +1855,10 @@ mod tests {
             .expect("hover result");
 
         let value = hover_value(&hover);
-        assert!(value.contains("Says hello."), "should contain the docstring");
+        assert!(
+            value.contains("Says hello."),
+            "should contain the docstring"
+        );
     }
 
     // ── Hover on stdlib functions ───────────────────────────────────────
@@ -2085,10 +2090,7 @@ mod tests {
                 kind: ImportKind::Alias("util".to_string()),
             },
         ];
-        assert_eq!(
-            find_module_for_alias(&imports, "model"),
-            Some("todo.model")
-        );
+        assert_eq!(find_module_for_alias(&imports, "model"), Some("todo.model"));
         assert_eq!(find_module_for_alias(&imports, "util"), Some("todo.util"));
     }
 
@@ -2189,8 +2191,7 @@ mod tests {
     // Test 11: find_definition_in_file gracefully returns None for missing file
     #[test]
     fn test_find_definition_in_file_missing_file() {
-        let result =
-            find_definition_in_file(Path::new("/nonexistent/path/foo.nx"), "anything");
+        let result = find_definition_in_file(Path::new("/nonexistent/path/foo.nx"), "anything");
         assert!(result.is_none());
     }
 

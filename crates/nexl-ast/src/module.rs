@@ -122,9 +122,7 @@ pub fn parse_module_decl(items: &[Node]) -> Result<ModuleDecl, ModuleParseError>
             NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) if kw == "imports" => {
                 i += 1;
                 if i >= items.len() {
-                    return Err(ModuleParseError::new(
-                        ":imports requires a vector argument",
-                    ));
+                    return Err(ModuleParseError::new(":imports requires a vector argument"));
                 }
                 imports = parse_import_specs(&items[i])?;
             }
@@ -249,9 +247,7 @@ fn parse_import_spec(node: &Node) -> Result<ImportDecl, ModuleParseError> {
     match &node.kind {
         NodeKind::Vector(items) => {
             if items.is_empty() {
-                return Err(ModuleParseError::new(
-                    ":imports entry must not be empty",
-                ));
+                return Err(ModuleParseError::new(":imports entry must not be empty"));
             }
             let module_path = extract_symbol_or_dotted_name(&items[0])?;
             parse_import_options(&module_path, &items[1..])
@@ -598,10 +594,7 @@ mod tests {
         assert_eq!(decl.name, "todo.app");
         assert_eq!(decl.imports.len(), 1);
         assert_eq!(decl.imports[0].module_path, "todo.model");
-        assert_eq!(
-            decl.imports[0].kind,
-            ImportKind::Alias("model".to_string())
-        );
+        assert_eq!(decl.imports[0].kind, ImportKind::Alias("model".to_string()));
     }
 
     // ── Test 15 ──
@@ -689,10 +682,7 @@ mod tests {
         let decl = parse_module_decl(&items).unwrap();
         assert_eq!(decl.imports.len(), 3);
         assert_eq!(decl.imports[0].module_path, "todo.model");
-        assert_eq!(
-            decl.imports[0].kind,
-            ImportKind::Alias("model".to_string())
-        );
+        assert_eq!(decl.imports[0].kind, ImportKind::Alias("model".to_string()));
         assert_eq!(decl.imports[1].module_path, "todo.storage");
         assert_eq!(
             decl.imports[1].kind,
