@@ -46,6 +46,11 @@ impl Backend {
 }
 
 fn collect_diagnostics(uri: &Url, source: &str) -> Vec<Diagnostic> {
+    // Skip type-checking for project.nexl manifest files — they contain
+    // pure data (heterogeneous maps) that would produce false type errors.
+    if uri.path().ends_with("project.nexl") {
+        return Vec::new();
+    }
     match nexl_reader::read(source, FileId(0)) {
         Ok(nodes) => type_check_diagnostics(&nodes, source),
         Err(diag) => vec![reader_diagnostic_to_lsp(&diag, uri, source)],

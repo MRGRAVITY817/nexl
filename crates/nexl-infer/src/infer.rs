@@ -1868,6 +1868,11 @@ fn synth_question(items: &[Node], env: &Env, state: &mut InferState) -> Result<T
             })?;
             Ok(state.subst.apply(&inner_var))
         }
+        // Return type is an unresolved type variable — skip the check.
+        // This avoids false diagnostics when stdlib types are not loaded
+        // (e.g. in the LSP).  Full compilation will resolve the return type
+        // and re-check.
+        Type::Var(_) => Ok(state.fresh_var()),
         other => Err(TypeError::new(TypeErrorKind::MalformedForm {
             description: format!(
                 "? can only be used in functions returning (Result ...) or (Option ...), \
@@ -1882,11 +1887,11 @@ fn synth_question(items: &[Node], env: &Env, state: &mut InferState) -> Result<T
 /// Bindings are evaluated sequentially; each binding is in scope for
 /// subsequent bindings and for the body (spec §4.4).
 fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, TypeError> {
-    // Structure: (let <bindings-vec> <body>)
-    if items.len() != 3 {
+    // Structure: (let <bindings-vec> body...)
+    if items.len() < 3 {
         return Err(TypeError::new(TypeErrorKind::MalformedForm {
             description: format!(
-                "let expects (let [bindings...] body), got {} elements",
+                "let expects (let [bindings...] body...), got {} elements",
                 items.len()
             ),
         }));
@@ -2006,8 +2011,19 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         current_env = pattern_env;
     }
 
-    // Synthesize the body in the fully-extended env.
-    synth(&items[2], &current_env, state)
+    // Synthesize body expressions in the fully-extended env.
+    // Multiple body forms are allowed; the type of the last one is returned.
+    let mut last_ty = Type::Unit;
+    for item in &items[2..] {
+        match synth(item, &current_env, state) {
+            Ok(ty) => last_ty = ty,
+            Err(e) => {
+                state.push_error(e);
+                last_ty = state.fresh_var();
+            }
+        }
+    }
+    Ok(last_ty)
 }
 
 /// Synthesize a type for a literal atom.
@@ -2341,19 +2357,12 @@ pub fn infer_defn(
         }
     }
 
-    let body_node = items.get(idx).ok_or_else(|| {
-        TypeError::new(TypeErrorKind::MalformedForm {
-            description: "defn requires a body expression".to_string(),
-        })
-    })?;
-    if idx + 1 != items.len() {
+    if idx >= items.len() {
         return Err(TypeError::new(TypeErrorKind::MalformedForm {
-            description: format!(
-                "defn expects a single body expression, got {} trailing forms",
-                items.len().saturating_sub(idx)
-            ),
+            description: "defn requires at least one body expression".to_string(),
         }));
     }
+    let body_nodes = &items[idx..];
 
     // Parse params with optional `: Type` annotations (scan-style).
     let param_nodes = match &param_node.kind {
@@ -2405,13 +2414,22 @@ pub fn infer_defn(
     // Infer the body in the extended environment.
     // Push the declared return type (or a fresh var) so that `?` in the body
     // can determine which wrapper type to propagate.
+    // Multiple body forms are allowed; the type of the last one is returned.
     let ret_push = ret_annotation.clone().unwrap_or_else(|| state.fresh_var());
     state.return_type_stack.push(ret_push);
     state.push_effect_scope();
-    let body_ty = synth(body_node, &body_env, state);
+    let mut body_ty = Type::Unit;
+    for body_node in body_nodes {
+        match synth(body_node, &body_env, state) {
+            Ok(ty) => body_ty = ty,
+            Err(e) => {
+                state.push_error(e);
+                body_ty = state.fresh_var();
+            }
+        }
+    }
     let body_effects = state.pop_effect_scope();
     state.return_type_stack.pop();
-    let body_ty = body_ty?;
 
     // If a return annotation was provided, unify it with the body type.
     if let Some(ann_ret) = ret_annotation {
@@ -5592,13 +5610,15 @@ mod tests {
     // -- Test 5 (defn) --
     #[test]
     fn infer_defn_body_error() {
-        // (defn f [x] unknown) → UnboundVariable("unknown")
+        // (defn f [x] unknown) → body error collected in state
         let (env, mut state) = empty();
         let node = defn_node("f", vec!["x"], sym_node("unknown"));
-        let err = infer_defn(&node, &env, &mut state).unwrap_err();
+        let _result = infer_defn(&node, &env, &mut state).unwrap();
+        assert_eq!(state.errors.len(), 1, "one error should be collected");
         assert!(
-            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
-            "expected UnboundVariable(unknown), got {err:?}"
+            matches!(state.errors[0].kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {:?}",
+            state.errors[0]
         );
     }
 
@@ -7370,13 +7390,15 @@ mod tests {
     // -- Test 6 (let) --
     #[test]
     fn infer_let_body_error() {
-        // (let [x 42] unknown) → UnboundVariable("unknown")
+        // (let [x 42] unknown) → body error collected in state
         let (env, mut state) = empty();
         let node = let_node(vec![(sym_node("x"), int_node(42))], sym_node("unknown"));
-        let err = synth(&node, &env, &mut state).unwrap_err();
+        let _ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(state.errors.len(), 1, "one error should be collected");
         assert!(
-            matches!(err.kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
-            "expected UnboundVariable(unknown), got {err:?}"
+            matches!(state.errors[0].kind, TypeErrorKind::UnboundVariable { ref name } if name == "unknown"),
+            "expected UnboundVariable(unknown), got {:?}",
+            state.errors[0]
         );
     }
 

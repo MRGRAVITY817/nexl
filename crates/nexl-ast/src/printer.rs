@@ -91,7 +91,12 @@ impl PrettyPrinter {
     fn flat_len_kind(&self, kind: &NodeKind) -> usize {
         match kind {
             NodeKind::Atom(atom) => flat_len_atom(atom),
-            NodeKind::List(items) => flat_len_seq(items, self, '(', ')'),
+            NodeKind::List(items) => {
+                if needs_multiline_list(items) {
+                    return usize::MAX;
+                }
+                flat_len_seq(items, self, '(', ')')
+            }
             NodeKind::Vector(items) => flat_len_seq(items, self, '[', ']'),
             NodeKind::Set(items) => {
                 // "#{" + items + "}"
@@ -270,7 +275,11 @@ impl PrettyPrinter {
         // Write body items, each on its own line
         for item in &items[leading_count..] {
             out.push('\n');
-            push_indent(out, body_indent);
+            // Skip caller indent when the item has leading comments —
+            // write_node_indented handles its own indent for comments.
+            if item.leading_comments.is_empty() {
+                push_indent(out, body_indent);
+            }
             self.write_node_indented(item, out, body_indent, body_indent);
         }
         out.push(')');
@@ -305,7 +314,9 @@ impl PrettyPrinter {
         // Body forms
         for item in items.iter().skip(2) {
             out.push('\n');
-            push_indent(out, body_indent);
+            if item.leading_comments.is_empty() {
+                push_indent(out, body_indent);
+            }
             self.write_node_indented(item, out, body_indent, body_indent);
         }
         out.push(')');
@@ -377,7 +388,9 @@ impl PrettyPrinter {
         // then and else on their own lines
         for item in items.iter().skip(2) {
             out.push('\n');
-            push_indent(out, body_indent);
+            if item.leading_comments.is_empty() {
+                push_indent(out, body_indent);
+            }
             self.write_node_indented(item, out, body_indent, body_indent);
         }
         out.push(')');
@@ -884,6 +897,48 @@ fn flat_len_seq(items: &[Node], pp: &PrettyPrinter, _open: char, _close: char) -
 fn push_indent(out: &mut String, n: usize) {
     for _ in 0..n {
         out.push(' ');
+    }
+}
+
+/// Check if a node kind is a compound form (list, vector, map, or set).
+fn is_compound(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::List(_) | NodeKind::Vector(_) | NodeKind::Map(_) | NodeKind::Set(_)
+    )
+}
+
+/// Check if a list form should be forced to multi-line regardless of width.
+///
+/// Special forms with structural complexity (multiple binding pairs, compound
+/// body expressions) should always use multi-line formatting for readability.
+fn needs_multiline_list(items: &[Node]) -> bool {
+    if items.is_empty() {
+        return false;
+    }
+    let head_name = match &items[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.as_str(),
+        _ => return false,
+    };
+
+    match head_name {
+        // let/loop: force multi-line when the binding vector has 2+ pairs.
+        "let" | "loop" => {
+            if let Some(Node { kind: NodeKind::Vector(bindings), .. }) = items.get(1) {
+                return bindings.len() >= 4;
+            }
+            false
+        }
+        // Body-indent forms: force multi-line when any body item is compound.
+        name if is_body_indent_form(name) => {
+            let leading = body_form_leading_count(name, items);
+            items[leading..].iter().any(|item| is_compound(&item.kind))
+        }
+        // if/cond/match: force multi-line when any branch is compound.
+        "if" | "cond" | "match" => {
+            items.len() > 2 && items[2..].iter().any(|item| is_compound(&item.kind))
+        }
+        _ => false,
     }
 }
 
