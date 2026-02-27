@@ -330,14 +330,10 @@ impl PrettyPrinter {
             .max()
             .unwrap_or(0);
 
-        // Check if aligned version exceeds line width
-        let max_val_width = pairs
-            .iter()
-            .map(|(_, val)| self.flat_len(val).min(self.config.max_line_width))
-            .max()
-            .unwrap_or(0);
-        let aligned_width = start_col + 1 + max_name_width + 1 + max_val_width + 1;
-        let use_alignment = aligned_width <= self.config.max_line_width;
+        // Always align names as long as the name column is reasonable.
+        // Values that are too long will wrap naturally via write_node_indented.
+        let val_start_col = start_col + 1 + max_name_width + 1;
+        let use_alignment = val_start_col <= self.config.max_line_width / 2;
 
         out.push('[');
         for (i, (name, val)) in pairs.iter().enumerate() {

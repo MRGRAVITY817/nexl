@@ -82,11 +82,27 @@ fn type_check_diagnostics(nodes: &[Node], source: &str) -> Vec<Diagnostic> {
         }
     }
 
+    // The type checker doesn't have stdlib type signatures, so UnboundVariable
+    // errors cascade into Mismatch/ArityMismatch noise.  Only surface
+    // MalformedForm errors (structural problems the checker CAN detect
+    // without stdlib) until the inference env is populated with stdlib types.
+    let has_unbound = state
+        .errors
+        .iter()
+        .chain(state.warnings.iter())
+        .any(|e| matches!(e.kind, TypeErrorKind::UnboundVariable { .. }));
+
     let mut diagnostics = Vec::new();
     for err in &state.errors {
+        if has_unbound && !matches!(err.kind, TypeErrorKind::MalformedForm { .. }) {
+            continue;
+        }
         diagnostics.push(type_error_to_lsp(err, DiagnosticSeverity::ERROR, source));
     }
     for warning in &state.warnings {
+        if has_unbound && !matches!(warning.kind, TypeErrorKind::MalformedForm { .. }) {
+            continue;
+        }
         diagnostics.push(type_error_to_lsp(
             warning,
             DiagnosticSeverity::WARNING,
@@ -889,6 +905,35 @@ mod tests {
         let backend = service.inner();
         let uri = test_uri("type-error.nexl");
 
+        // (def) is a malformed form — too few elements.
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: "(def)".to_string(),
+                },
+            })
+            .await;
+
+        let params = next_publish_diagnostics(&mut socket).await;
+        assert_eq!(params.uri, uri);
+        assert_eq!(params.diagnostics.len(), 1);
+        let diag = &params.diagnostics[0];
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+        assert!(diag.message.contains("def expects"));
+    }
+
+    #[tokio::test]
+    async fn test_unbound_variable_suppressed() {
+        let (mut service, mut socket) = LspService::new(Backend::new);
+        initialize_service(&mut service).await;
+        let backend = service.inner();
+        let uri = test_uri("unbound.nexl");
+
+        // A bare unknown symbol would normally produce UnboundVariable,
+        // but the LSP suppresses those since stdlib types aren't loaded.
         backend
             .did_open(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
@@ -902,14 +947,7 @@ mod tests {
 
         let params = next_publish_diagnostics(&mut socket).await;
         assert_eq!(params.uri, uri);
-        assert_eq!(params.diagnostics.len(), 1);
-        let diag = &params.diagnostics[0];
-        assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
-        assert!(diag.message.contains("unbound variable"));
-        assert_eq!(diag.range.start.line, 0);
-        assert_eq!(diag.range.start.character, 0);
-        assert_eq!(diag.range.end.line, 0);
-        assert_eq!(diag.range.end.character, 7);
+        assert_eq!(params.diagnostics.len(), 0);
     }
 
     #[tokio::test]
