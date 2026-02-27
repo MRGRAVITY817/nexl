@@ -102,7 +102,10 @@ nexl-cli (updated)
 └── nexl-lsp (M15)
 
 nexl-doc
-(no workspace-crate dependencies — HTML generation)
+├── nexl-reader (M0)
+├── nexl-ast (M0)
+├── nexl-infer (M2)
+└── thiserror (external)
 ```
 
 ## Planned (future milestones)

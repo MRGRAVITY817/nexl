@@ -3,7 +3,6 @@
 ## Package Manager Foundation
 
 ## Documentation
-- [ ] Extract doc comments, type signatures, effects, contracts from source
 - [ ] Generate per-module HTML pages with cross-links
 - [ ] Wire `nexl doc` subcommand in CLI
 
@@ -32,3 +31,4 @@
 - [x] Wire `nexl pkg add/remove/lock` subcommands in CLI
 - [x] Content-addressed definition store (SQLite-backed hash→artifact)
 - [x] Create `nexl-doc` crate with HTML generation
+- [x] Extract doc comments, type signatures, effects, contracts from source
