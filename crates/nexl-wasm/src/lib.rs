@@ -8,6 +8,7 @@
 
 pub mod canonical_abi;
 mod emit;
+pub mod gc_emit;
 pub mod marshal;
 pub mod wit;
 

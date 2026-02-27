@@ -33,6 +33,12 @@ enum Command {
         /// Target: "wasm" (default) or "native"
         #[arg(short = 't', long = "target", default_value = "wasm")]
         target: String,
+        /// GC mode: "rc" (default), "gc" (WASM GC), or "none" (arena/no GC)
+        #[arg(long = "gc", default_value = "rc")]
+        gc: String,
+        /// Disable optimizations
+        #[arg(long = "no-opt")]
+        no_opt: bool,
     },
     Run {
         #[arg(value_name = "FILE")]
@@ -110,8 +116,8 @@ enum PkgCommand {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::Build { input, output, target } => {
-            if let Err(message) = command_build(input, output, &target) {
+        Command::Build { input, output, target, gc, no_opt } => {
+            if let Err(message) = command_build(input, output, &target, &gc, no_opt) {
                 print_error(&message);
                 process::exit(1);
             }
@@ -198,7 +204,15 @@ fn command_build(
     input_path: PathBuf,
     output_override: Option<PathBuf>,
     target: &str,
+    gc: &str,
+    no_opt: bool,
 ) -> Result<(), String> {
+    // Validate gc mode.
+    match gc {
+        "rc" | "gc" | "none" => {}
+        other => return Err(format!("unknown gc mode: {other} (expected \"rc\", \"gc\", or \"none\")")),
+    }
+
     let default_ext = match target {
         "wasm" => "wasm",
         "native" => "o",
@@ -222,6 +236,18 @@ fn command_build(
     let ir_module = nexl_ir::Lowerer::new(&module_name)
         .lower_module(&nodes)
         .map_err(|e| format!("lowering error: {e}"))?;
+
+    // Run optimization passes unless --no-opt.
+    let ir_module = if no_opt {
+        ir_module
+    } else {
+        nexl_ir::optimize::optimize(&ir_module)
+    };
+
+    if gc == "none" {
+        // Arena mode: log that GC is disabled.
+        eprintln!("nexl: arena mode (--gc none) — no GC, no reference counting");
+    }
 
     let bytes = match target {
         "wasm" => nexl_wasm::Emitter::new()
@@ -960,6 +986,8 @@ mod tests {
                 input: PathBuf::from("main.nexl"),
                 output: None,
                 target: "wasm".to_string(),
+                gc: "rc".to_string(),
+                no_opt: false,
             }
         );
     }
@@ -974,6 +1002,8 @@ mod tests {
                 input: PathBuf::from("main.nexl"),
                 output: Some(PathBuf::from("out.wasm")),
                 target: "wasm".to_string(),
+                gc: "rc".to_string(),
+                no_opt: false,
             }
         );
     }
@@ -988,6 +1018,8 @@ mod tests {
                 input: PathBuf::from("main.nexl"),
                 output: None,
                 target: "native".to_string(),
+                gc: "rc".to_string(),
+                no_opt: false,
             }
         );
     }
@@ -996,7 +1028,7 @@ mod tests {
     fn build_native_produces_object_file() {
         let path = write_temp_file("(defn f [x] x)", "build_native");
         let out = path.with_extension("o");
-        let result = command_build(path.clone(), Some(out.clone()), "native");
+        let result = command_build(path.clone(), Some(out.clone()), "native", "rc", false);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&out);
         assert!(result.is_ok(), "native build should succeed, got: {result:?}");

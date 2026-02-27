@@ -10,6 +10,7 @@
 //! Pipeline position: Lowering → **nexl-ir** → Optimization → WASM / Native / Bytecode.
 
 pub mod lower;
+pub mod optimize;
 pub use lower::{LowerError, Lowerer};
 
 use std::rc::Rc;
