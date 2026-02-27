@@ -1055,6 +1055,8 @@ dependencies = [
  "nexl-ast",
  "nexl-errors",
  "nexl-infer",
+ "nexl-modules",
+ "nexl-pkg",
  "nexl-reader",
  "nexl-types",
  "serde_json",

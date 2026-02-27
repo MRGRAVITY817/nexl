@@ -13,6 +13,8 @@ nexl-ast = { path = "../nexl-ast" }
 nexl-errors = { path = "../nexl-errors" }
 nexl-infer = { path = "../nexl-infer" }
 nexl-types = { path = "../nexl-types" }
+nexl-modules = { path = "../nexl-modules" }
+nexl-pkg = { path = "../nexl-pkg" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

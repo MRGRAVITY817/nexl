@@ -4,12 +4,14 @@
 //! go-to-definition, and completion support for Nexl source files.
 
 use dashmap::DashMap;
-use nexl_ast::{Atom, FileId, Node, NodeKind, Span};
+use nexl_ast::{Atom, FileId, ImportDecl, ImportKind, Node, NodeKind, Span};
+use nexl_ast::module::parse_module_decl;
 use nexl_errors::{Diagnostic as NexlDiagnostic, Severity as NexlSeverity};
 use nexl_infer::{Env, InferState};
 use nexl_types::{Type, TypeError, TypeErrorKind};
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -849,6 +851,115 @@ fn list_head_is(node: &Node, name: &str) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Cross-module go-to-definition helpers
+// ---------------------------------------------------------------------------
+
+/// Walk up from `start` looking for a `project.nx` file.
+fn find_project_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if dir.join("project.nx").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Resolved project context needed for cross-module navigation.
+struct ProjectContext {
+    /// The package prefix from the manifest (e.g. `"my-app"`).
+    prefix: String,
+    /// The absolute source root: `project_root.join(source_dir)`.
+    source_root: PathBuf,
+}
+
+/// Read `project.nx` and extract prefix + source root.
+fn resolve_project_context(file_path: &Path) -> Option<ProjectContext> {
+    let project_root = find_project_root(file_path)?;
+    let manifest_path = project_root.join("project.nx");
+    let manifest_src = std::fs::read_to_string(&manifest_path).ok()?;
+    let manifest = nexl_pkg::parse_manifest(&manifest_src).ok()?;
+    let source_root = project_root.join(&manifest.package.source_dir);
+    Some(ProjectContext {
+        prefix: manifest.package.prefix,
+        source_root,
+    })
+}
+
+/// Extract import declarations from the first top-level `(module ...)` form.
+fn extract_module_imports(nodes: &[Node]) -> Option<Vec<ImportDecl>> {
+    let first = nodes.first()?;
+    if !list_head_is(first, "module") {
+        return None;
+    }
+    let NodeKind::List(items) = &first.kind else {
+        return None;
+    };
+    let decl = parse_module_decl(items).ok()?;
+    Some(decl.imports)
+}
+
+/// Find the module path for a given alias in imports.
+fn find_module_for_alias<'a>(imports: &'a [ImportDecl], alias: &str) -> Option<&'a str> {
+    imports.iter().find_map(|imp| match &imp.kind {
+        ImportKind::Alias(a) if a == alias => Some(imp.module_path.as_str()),
+        _ => None,
+    })
+}
+
+/// Find which import brings an unqualified name into scope.
+/// Returns `(module_path, original_name_in_that_module)`.
+fn find_import_for_unqualified_name<'a>(
+    imports: &'a [ImportDecl],
+    name: &str,
+) -> Option<(&'a str, String)> {
+    for imp in imports {
+        match &imp.kind {
+            ImportKind::Refer(names) if names.iter().any(|n| n == name) => {
+                return Some((&imp.module_path, name.to_string()));
+            }
+            ImportKind::All => {
+                return Some((&imp.module_path, name.to_string()));
+            }
+            ImportKind::Exclude(excluded) if !excluded.iter().any(|n| n == name) => {
+                return Some((&imp.module_path, name.to_string()));
+            }
+            ImportKind::Rename(renames) => {
+                for (old, new) in renames {
+                    if new == name {
+                        return Some((&imp.module_path, old.clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Convert a dotted module path to a file path via `nexl_modules`.
+fn resolve_module_to_file_path(module_path: &str, ctx: &ProjectContext) -> Option<PathBuf> {
+    let rel = nexl_modules::module_name_to_path(module_path, &ctx.prefix).ok()?;
+    let abs = ctx.source_root.join(rel);
+    if abs.is_file() { Some(abs) } else { None }
+}
+
+/// Read a file, parse it, and search for a definition by name.
+fn find_definition_in_file(path: &Path, name: &str) -> Option<(Url, Range)> {
+    let source = std::fs::read_to_string(path).ok()?;
+    let nodes = nexl_reader::read(&source, FileId(0)).ok()?;
+    let range = find_definition_range(&nodes, name, &source)?;
+    let url = Url::from_file_path(path).ok()?;
+    Some((url, range))
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -952,19 +1063,55 @@ impl LanguageServer for Backend {
             Some(node) => node,
             None => return Ok(None),
         };
-        let name = match symbol_name(symbol_node) {
-            Some(name) => name,
-            None => return Ok(None),
+
+        // Decompose the symbol into namespace (alias) and bare name.
+        let (ns, bare_name) = match &symbol_node.kind {
+            NodeKind::Atom(Atom::Symbol { ns, name }) => (ns.as_deref(), name.as_str()),
+            _ => return Ok(None),
         };
-        let range = match find_definition_range(&nodes, &name, &source) {
-            Some(range) => range,
-            None => return Ok(None),
+        let full_name = match ns {
+            Some(prefix) => format!("{prefix}/{bare_name}"),
+            None => bare_name.to_string(),
         };
-        let location = Location {
-            uri: text_document.uri,
-            range,
+
+        // 1. Try same-file lookup first (existing behaviour).
+        if let Some(range) = find_definition_range(&nodes, &full_name, &source) {
+            let location = Location {
+                uri: text_document.uri,
+                range,
+            };
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+
+        // 2. Cross-module resolution — requires a project context.
+        let file_path = text_document.uri.to_file_path().ok();
+        let ctx = file_path.as_deref().and_then(resolve_project_context);
+        let (ctx, imports) = match (ctx, extract_module_imports(&nodes)) {
+            (Some(ctx), Some(imports)) => (ctx, imports),
+            _ => return Ok(None),
         };
-        Ok(Some(GotoDefinitionResponse::Scalar(location)))
+
+        let resolved = if let Some(alias) = ns {
+            // Qualified: alias/name → find module for alias → look up bare_name.
+            find_module_for_alias(&imports, alias)
+                .and_then(|mp| resolve_module_to_file_path(mp, &ctx))
+                .and_then(|fp| find_definition_in_file(&fp, bare_name))
+        } else {
+            // Unqualified: find which import brings this name into scope.
+            find_import_for_unqualified_name(&imports, bare_name)
+                .and_then(|(mp, orig)| {
+                    let fp = resolve_module_to_file_path(mp, &ctx)?;
+                    find_definition_in_file(&fp, &orig)
+                })
+        };
+
+        match resolved {
+            Some((url, range)) => Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: url,
+                range,
+            }))),
+            None => Ok(None),
+        }
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -1893,5 +2040,240 @@ mod tests {
         assert!(special_form_doc("if").is_some());
         assert!(special_form_doc("match").is_some());
         assert!(special_form_doc("nonexistent").is_none());
+    }
+
+    // ── Cross-module go-to-definition tests ──────────────────────────────
+
+    fn parse_nodes(src: &str) -> Vec<Node> {
+        nexl_reader::read(src, FileId(0)).expect("parse failed")
+    }
+
+    // Test 1: extract_module_imports from a module declaration
+    #[test]
+    fn test_extract_module_imports_basic() {
+        let nodes = parse_nodes(
+            "(module todo.app :imports [[todo.model :as model] [todo.util :refer [helper]]])",
+        );
+        let imports = extract_module_imports(&nodes).expect("should extract imports");
+        assert_eq!(imports.len(), 2);
+        assert_eq!(imports[0].module_path, "todo.model");
+        assert_eq!(imports[0].kind, ImportKind::Alias("model".to_string()));
+        assert_eq!(imports[1].module_path, "todo.util");
+        assert_eq!(
+            imports[1].kind,
+            ImportKind::Refer(vec!["helper".to_string()])
+        );
+    }
+
+    // Test 2: extract_module_imports returns None for non-module files
+    #[test]
+    fn test_extract_module_imports_no_module_decl() {
+        let nodes = parse_nodes("(defn foo [] 42)");
+        assert!(extract_module_imports(&nodes).is_none());
+    }
+
+    // Test 3: find_module_for_alias hit
+    #[test]
+    fn test_find_module_for_alias_found() {
+        let imports = vec![
+            ImportDecl {
+                module_path: "todo.model".to_string(),
+                kind: ImportKind::Alias("model".to_string()),
+            },
+            ImportDecl {
+                module_path: "todo.util".to_string(),
+                kind: ImportKind::Alias("util".to_string()),
+            },
+        ];
+        assert_eq!(
+            find_module_for_alias(&imports, "model"),
+            Some("todo.model")
+        );
+        assert_eq!(find_module_for_alias(&imports, "util"), Some("todo.util"));
+    }
+
+    // Test 4: find_module_for_alias miss
+    #[test]
+    fn test_find_module_for_alias_not_found() {
+        let imports = vec![ImportDecl {
+            module_path: "todo.model".to_string(),
+            kind: ImportKind::Alias("model".to_string()),
+        }];
+        assert_eq!(find_module_for_alias(&imports, "unknown"), None);
+    }
+
+    // Test 5: find_import_for_unqualified_name — :refer
+    #[test]
+    fn test_find_import_for_unqualified_refer() {
+        let imports = vec![ImportDecl {
+            module_path: "todo.model".to_string(),
+            kind: ImportKind::Refer(vec!["Task".to_string(), "Priority".to_string()]),
+        }];
+        let result = find_import_for_unqualified_name(&imports, "Task");
+        assert_eq!(result, Some(("todo.model", "Task".to_string())));
+        assert!(find_import_for_unqualified_name(&imports, "Unknown").is_none());
+    }
+
+    // Test 6: find_import_for_unqualified_name — :all
+    #[test]
+    fn test_find_import_for_unqualified_all() {
+        let imports = vec![ImportDecl {
+            module_path: "todo.model".to_string(),
+            kind: ImportKind::All,
+        }];
+        let result = find_import_for_unqualified_name(&imports, "anything");
+        assert_eq!(result, Some(("todo.model", "anything".to_string())));
+    }
+
+    // Test 7: find_import_for_unqualified_name — :exclude
+    #[test]
+    fn test_find_import_for_unqualified_exclude() {
+        let imports = vec![ImportDecl {
+            module_path: "todo.model".to_string(),
+            kind: ImportKind::Exclude(vec!["internal".to_string()]),
+        }];
+        // "public-fn" is not excluded, should match
+        let result = find_import_for_unqualified_name(&imports, "public-fn");
+        assert_eq!(result, Some(("todo.model", "public-fn".to_string())));
+        // "internal" is excluded, should not match
+        assert!(find_import_for_unqualified_name(&imports, "internal").is_none());
+    }
+
+    // Test 8: find_import_for_unqualified_name — :rename
+    #[test]
+    fn test_find_import_for_unqualified_rename() {
+        let imports = vec![ImportDecl {
+            module_path: "todo.model".to_string(),
+            kind: ImportKind::Rename(vec![("create-task".to_string(), "new-task".to_string())]),
+        }];
+        let result = find_import_for_unqualified_name(&imports, "new-task");
+        assert_eq!(result, Some(("todo.model", "create-task".to_string())));
+        // The original name should not be in scope
+        assert!(find_import_for_unqualified_name(&imports, "create-task").is_none());
+    }
+
+    // Test 9: find_import_for_unqualified_name — no match
+    #[test]
+    fn test_find_import_for_unqualified_not_found() {
+        let imports = vec![ImportDecl {
+            module_path: "todo.model".to_string(),
+            kind: ImportKind::Refer(vec!["Task".to_string()]),
+        }];
+        assert!(find_import_for_unqualified_name(&imports, "NotImported").is_none());
+    }
+
+    // Test 10: find_definition_in_file on a real temp file
+    #[test]
+    fn test_find_definition_in_file_basic() {
+        let dir = std::env::temp_dir().join("nexl-lsp-test-def-in-file");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("model.nx");
+        std::fs::write(&file, "(defn create-task [name] name)\n(def MAX 100)\n")
+            .expect("write temp file");
+
+        let result = find_definition_in_file(&file, "create-task");
+        assert!(result.is_some());
+        let (url, range) = result.unwrap();
+        assert!(url.path().ends_with("model.nx"));
+        // "create-task" starts at column 6 on line 0
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 6);
+
+        let result2 = find_definition_in_file(&file, "MAX");
+        assert!(result2.is_some());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Test 11: find_definition_in_file gracefully returns None for missing file
+    #[test]
+    fn test_find_definition_in_file_missing_file() {
+        let result =
+            find_definition_in_file(Path::new("/nonexistent/path/foo.nx"), "anything");
+        assert!(result.is_none());
+    }
+
+    // Test 12: same-file go-to-def still works (regression test)
+    #[tokio::test]
+    async fn test_goto_definition_same_file_regression() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("same-file-regression.nexl");
+        let source = "(defn greet [name] name)\n(greet \"world\")";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let usage_offset = source.rfind("greet").expect("greet usage");
+        let position = offset_to_position(source, usage_offset);
+        let response = backend
+            .goto_definition(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            })
+            .await
+            .expect("definition request")
+            .expect("definition result");
+
+        let def_offset = source.find("greet").expect("greet def");
+        let expected_start = offset_to_position(source, def_offset);
+        let expected_end = offset_to_position(source, def_offset + "greet".len());
+        match response {
+            GotoDefinitionResponse::Scalar(loc) => {
+                assert_eq!(loc.uri, uri);
+                assert_eq!(loc.range, Range::new(expected_start, expected_end));
+            }
+            _ => panic!("expected scalar response"),
+        }
+    }
+
+    // Test 13: qualified symbol without project context returns None
+    #[tokio::test]
+    async fn test_goto_definition_qualified_no_project() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        // Use file:///tmp/ URI — no project.nx will exist there.
+        let uri = test_uri("no-project.nexl");
+        let source = "(module test.app :imports [[test.model :as model]])\n(model/create)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let offset = source.find("model/create").expect("model/create");
+        let position = offset_to_position(source, offset);
+        let response = backend
+            .goto_definition(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            })
+            .await
+            .expect("definition request");
+
+        assert!(response.is_none(), "should return None without project.nx");
     }
 }
