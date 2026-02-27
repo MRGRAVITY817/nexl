@@ -40,6 +40,8 @@ pub struct PackageSection {
     pub description: Option<String>,
     /// Package prefix for module names.
     pub prefix: String,
+    /// Source directory relative to project root (default `"."`).
+    pub source_dir: String,
 }
 
 /// A dependency entry in `:dependencies` / `:dev-dependencies`.
@@ -326,6 +328,7 @@ fn parse_package_section(node: &Node) -> Result<PackageSection, ManifestError> {
     let mut version = None;
     let mut description = None;
     let mut prefix = None;
+    let mut source_dir = None;
 
     for (key, value) in pairs {
         match keyword_name(key) {
@@ -333,6 +336,7 @@ fn parse_package_section(node: &Node) -> Result<PackageSection, ManifestError> {
             Some("version") => version = Some(expect_string(value, "package.version")?),
             Some("description") => description = Some(expect_string(value, "package.description")?),
             Some("prefix") => prefix = Some(expect_string(value, "package.prefix")?),
+            Some("source-dir") => source_dir = Some(expect_string(value, "package.source-dir")?),
             Some(other) => {
                 return Err(ManifestError::Parse(format!(
                     "unknown package field :{other}"
@@ -352,6 +356,7 @@ fn parse_package_section(node: &Node) -> Result<PackageSection, ManifestError> {
             .ok_or_else(|| ManifestError::MissingField("package.version".to_string()))?,
         description,
         prefix: prefix.ok_or_else(|| ManifestError::MissingField("package.prefix".to_string()))?,
+        source_dir: source_dir.unwrap_or_else(|| ".".to_string()),
     })
 }
 
@@ -1673,6 +1678,7 @@ mod tests {
                 version: "0.1.0".to_string(),
                 description: None,
                 prefix: "demo".to_string(),
+                source_dir: ".".to_string(),
             },
             dependencies: BTreeMap::new(),
             dev_dependencies: BTreeMap::new(),

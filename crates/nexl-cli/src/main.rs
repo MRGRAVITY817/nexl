@@ -383,6 +383,7 @@ fn discover_and_load_modules(
     let manifest = parse_manifest(&manifest_source)
         .map_err(|e| format!("invalid project.nexl: {e}"))?;
     let prefix = &manifest.package.prefix;
+    let source_root = project_root.join(&manifest.package.source_dir);
 
     // Parse entry file
     let entry_source = std::fs::read_to_string(&entry_path)
@@ -416,7 +417,7 @@ fn discover_and_load_modules(
                         import.module_path
                     )
                 })?;
-            let abs_path = project_root.join(&rel_path);
+            let abs_path = source_root.join(&rel_path);
 
             let source = std::fs::read_to_string(&abs_path).map_err(|e| {
                 format!(
@@ -1956,6 +1957,37 @@ mod tests {
         assert!(
             result.is_ok(),
             "multi-file run should succeed: {result:?}"
+        );
+    }
+
+    #[test]
+    fn command_run_multifile_source_dir() {
+        // Modules live under src/ with :source-dir "src" in manifest.
+        let root = write_temp_dir("run_multi_src");
+        let src_demo = root.join("src").join("demo");
+        std::fs::create_dir_all(&src_demo).expect("create src/demo dir");
+        std::fs::write(
+            root.join("project.nexl"),
+            "{:package {:name \"demo\" :version \"0.1.0\" :prefix \"demo\" :source-dir \"src\"}}",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            src_demo.join("app.nxl"),
+            "(module demo.app)\n(import demo.lib :refer [double])\n(double 21)",
+        )
+        .expect("write app");
+        std::fs::write(
+            src_demo.join("lib.nxl"),
+            "(module demo.lib :exports [double])\n(defn double [x] (* x 2))",
+        )
+        .expect("write lib");
+
+        let entry = src_demo.join("app.nxl");
+        let result = command_run(entry);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            result.is_ok(),
+            "multi-file run with source-dir should succeed: {result:?}"
         );
     }
 
