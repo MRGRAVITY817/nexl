@@ -5,6 +5,8 @@
 //! If no output path is given, the output file is derived from the input
 //! by replacing the extension with `.wasm`.
 
+mod repl_protocol;
+
 use clap::{Parser, Subcommand};
 use meta::{Atom, Node, NodeKind};
 use nexl_doc::{extract_module_doc, render_module_pages};
@@ -44,7 +46,11 @@ enum Command {
         #[arg(value_name = "FILE")]
         input: PathBuf,
     },
-    Repl,
+    Repl {
+        /// Use structured JSON protocol mode (§14.3) instead of interactive REPL.
+        #[arg(long = "protocol")]
+        protocol: bool,
+    },
     Check {
         #[arg(value_name = "FILE")]
         input: PathBuf,
@@ -128,8 +134,13 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Repl => {
-            if let Err(message) = command_repl() {
+        Command::Repl { protocol } => {
+            if protocol {
+                if let Err(message) = command_repl_protocol() {
+                    print_error(&message);
+                    process::exit(1);
+                }
+            } else if let Err(message) = command_repl() {
                 print_error(&message);
                 process::exit(1);
             }
@@ -444,7 +455,7 @@ fn write_repl_help<W: Write>(output: &mut W) -> io::Result<()> {
     Ok(())
 }
 
-fn infer_repl_type(expr: &str, env: &nexl_infer::Env) -> Result<String, String> {
+pub(crate) fn infer_repl_type(expr: &str, env: &nexl_infer::Env) -> Result<String, String> {
     let nodes =
         nexl_reader::read(expr, meta::FileId::SYNTHETIC).map_err(|e| format!("{e}"))?;
     if nodes.len() != 1 {
@@ -465,7 +476,7 @@ fn infer_repl_type(expr: &str, env: &nexl_infer::Env) -> Result<String, String> 
     Ok(state.subst.apply(&ty).to_string())
 }
 
-fn update_repl_type_env(
+pub(crate) fn update_repl_type_env(
     nodes: &[Node],
     env: &mut nexl_infer::Env,
     state: &mut nexl_infer::InferState,
@@ -582,6 +593,13 @@ fn command_repl() -> Result<(), String> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     repl_loop(stdin.lock(), stdout.lock()).map_err(|e| format!("repl error: {e}"))
+}
+
+fn command_repl_protocol() -> Result<(), String> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    repl_protocol::protocol_loop(stdin.lock(), stdout.lock())
+        .map_err(|e| format!("protocol error: {e}"))
 }
 
 fn command_check(input_path: PathBuf) -> Result<(), String> {
@@ -1048,7 +1066,12 @@ mod tests {
     #[test]
     fn parse_repl_without_args() {
         let cli = Cli::try_parse_from(["nexl", "repl"]).expect("parse");
-        assert_eq!(cli.command, Command::Repl);
+        assert_eq!(
+            cli.command,
+            Command::Repl {
+                protocol: false,
+            }
+        );
     }
 
     #[test]
@@ -1399,5 +1422,44 @@ mod tests {
         let result = command_audit(path.clone());
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "audit should succeed: {result:?}");
+    }
+
+    // --- Kernel subset bootstrap tests ---
+
+    #[test]
+    fn kernel_bootstrap_parses_successfully() {
+        // Verify Stage 0 can parse the kernel-subset bootstrap POC.
+        let source = include_str!("../../../docs/kernel-bootstrap.nxl");
+        let nodes = nexl_reader::read(source, meta::FileId::SYNTHETIC);
+        assert!(
+            nodes.is_ok(),
+            "kernel-bootstrap.nxl must parse: {:?}",
+            nodes.err()
+        );
+        let nodes = nodes.unwrap();
+        assert!(
+            !nodes.is_empty(),
+            "kernel-bootstrap.nxl should contain definitions"
+        );
+    }
+
+    #[test]
+    fn kernel_bootstrap_evaluates() {
+        // Verify Stage 0 evaluator can run the kernel-subset bootstrap POC.
+        let source = include_str!("../../../docs/kernel-bootstrap.nxl");
+        let nodes =
+            nexl_reader::read(source, meta::FileId::SYNTHETIC).expect("parse");
+        let env = nexl_eval::stdlib::standard_env();
+        let mut last_result = None;
+        for node in &nodes {
+            match nexl_eval::eval::eval(node, &env) {
+                Ok(value) => last_result = Some(value),
+                Err(err) => panic!("kernel-bootstrap eval error: {err}"),
+            }
+        }
+        assert!(
+            last_result.is_some(),
+            "kernel-bootstrap should produce a result"
+        );
     }
 }

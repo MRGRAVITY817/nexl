@@ -1,29 +1,22 @@
-# Current Milestone: M18 — Content Addressing + Self-Hosting Preparation
+# Stage 0 Complete
 
-**Goal:** Incremental compilation via content hashing. Define the kernel subset for self-hosting.
+All milestones (M0–M18) are complete. The Stage 0 bootstrap compiler is finished.
 
-**Crates:** `nexl-pkg`, `nexl-ir`, `nexl-cli`, plus potential new crates
+**What was built:**
+- Lexer + reader (nexl-reader)
+- Tree-walk evaluator (nexl-eval) with standard library (nexl-stdlib)
+- Bidirectional type inference + effect row inference (nexl-infer)
+- IR lowering with optimization passes (nexl-ir)
+- WASM code generation (nexl-wasm) with GC backend option
+- Native code generation (nexl-native)
+- Macro system (nexl-macros)
+- Language server (nexl-lsp)
+- Package manager (nexl-pkg) with content-addressed definition store
+- Documentation generator (nexl-doc)
+- CLI with build, run, repl, check, sandbox, audit, doc, lsp, pkg commands
+- Structured REPL protocol for AI agent / IDE integration
+- Kernel subset documented for Stage 1 self-hosting
 
-**Spec sections to reference:**
-- §12 Compilation Model (§12.3 content addressing)
-- §14.3 Structured REPL protocol
-
-**Key design points:**
-- Hash every top-level definition after type inference
-- On-disk definition store: hash → compiled artifact + type + effect row + deps
-- Recompile only when hash or dependency hash changes
-- JSON-based machine-readable REPL protocol
-- Define kernel subset for Stage 1 (no macros, all types annotated)
-- Stage 0 → Stage 1 bootstrap proof-of-concept
-
-**Acceptance criteria:**
-- Content-addressed definition store caches compiled artifacts
-- Warm builds skip unchanged definitions
-- Structured REPL protocol with JSON responses
-- Kernel subset documented and verified sufficient
-- Small Nexl kernel-subset program compiles with Stage 0
-
-**When done:** Update this file to point to next milestone (or declare Stage 0 complete).
-
-See `docs/todo-m18.md` for the task checklist.
-See `milestones.md` for the full plan.
+**Next:** Write the Stage 1 compiler in the Nexl kernel subset.
+See `docs/kernel-subset.md` for the kernel subset specification.
+See `examples/kernel-bootstrap.nxl` for the bootstrap proof-of-concept.

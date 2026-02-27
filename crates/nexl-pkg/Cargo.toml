@@ -9,3 +9,6 @@ nexl-reader = { path = "../nexl-reader" }
 meta = { package = "nexl-ast", path = "../nexl-ast" }
 thiserror = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

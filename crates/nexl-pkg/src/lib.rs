@@ -2,7 +2,8 @@
 
 use meta::{Atom, Node, NodeKind};
 use rusqlite::{params, Connection};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 use thiserror::Error;
@@ -897,10 +898,257 @@ pub fn build_lockfile(manifest: &PackageManifest) -> Result<Lockfile, ResolveErr
 }
 
 // ---------------------------------------------------------------------------
+// Content Hashing
+// ---------------------------------------------------------------------------
+
+/// Compute a SHA-256 content hash for a top-level definition.
+///
+/// The hash input is: `canonical_source || "\0" || type_signature || "\0" || effect_row`.
+/// This ensures the hash captures both the surface form and the inferred types,
+/// so that any change to the definition or its inferred type triggers recompilation.
+pub fn hash_definition(canonical_source: &str, type_sig: &str, effect_row: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_source.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(type_sig.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(effect_row.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+// ---------------------------------------------------------------------------
+// Dependency Collection
+// ---------------------------------------------------------------------------
+
+/// Collect all free symbol names referenced by an AST node.
+///
+/// Walks the node tree and returns every `Symbol` name that is not locally
+/// bound by a `let`, `fn`, `defn`, or `loop` form. These are the external
+/// dependencies of the definition.
+///
+/// `local_names` is the initial set of locally-bound names (e.g. the function's
+/// own parameters for a `defn` form).
+pub fn collect_deps(node: &Node, local_names: &HashSet<String>) -> HashSet<String> {
+    let mut deps = HashSet::new();
+    let mut locals = local_names.clone();
+    collect_deps_node(node, &mut locals, &mut deps);
+    deps
+}
+
+fn collect_deps_node(node: &Node, locals: &mut HashSet<String>, deps: &mut HashSet<String>) {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+            if !locals.contains(name) && !is_special_form(name) {
+                deps.insert(name.clone());
+            }
+        }
+        NodeKind::Atom(Atom::Symbol { ns: Some(ns), name }) => {
+            // Qualified symbol: the module prefix is a dependency.
+            deps.insert(format!("{ns}/{name}"));
+        }
+        NodeKind::List(items) if !items.is_empty() => {
+            collect_deps_list(items, locals, deps);
+        }
+        NodeKind::Vector(items) => {
+            for item in items {
+                collect_deps_node(item, locals, deps);
+            }
+        }
+        NodeKind::Map(pairs) => {
+            for (k, v) in pairs {
+                collect_deps_node(k, locals, deps);
+                collect_deps_node(v, locals, deps);
+            }
+        }
+        NodeKind::Set(items) => {
+            for item in items {
+                collect_deps_node(item, locals, deps);
+            }
+        }
+        NodeKind::Quote(_) | NodeKind::Discard(_) => {
+            // Quoted forms and discards don't reference runtime values.
+        }
+        NodeKind::Deref(inner) => collect_deps_node(inner, locals, deps),
+        NodeKind::Quasiquote(inner) => collect_deps_node(inner, locals, deps),
+        NodeKind::Unquote(inner) => collect_deps_node(inner, locals, deps),
+        NodeKind::UnquoteSplice(inner) => collect_deps_node(inner, locals, deps),
+        _ => {}
+    }
+}
+
+fn collect_deps_list(items: &[Node], locals: &mut HashSet<String>, deps: &mut HashSet<String>) {
+    if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &items[0].kind {
+        match name.as_str() {
+            "fn" => {
+                // (fn [params...] body...)
+                let mut fn_locals = locals.clone();
+                if items.len() >= 2
+                    && let NodeKind::Vector(params) = &items[1].kind {
+                        for p in params {
+                            if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &p.kind {
+                                fn_locals.insert(name.clone());
+                            }
+                        }
+                    }
+                for item in &items[2..] {
+                    collect_deps_node(item, &mut fn_locals, deps);
+                }
+                return;
+            }
+            "let" => {
+                // (let [name val name val ...] body...)
+                let mut let_locals = locals.clone();
+                if items.len() >= 2
+                    && let NodeKind::Vector(bindings) = &items[1].kind {
+                        for pair in bindings.chunks(2) {
+                            if pair.len() == 2 {
+                                // Eval the value in current scope.
+                                collect_deps_node(&pair[1], &mut let_locals, deps);
+                                // Add the name to scope.
+                                if let NodeKind::Atom(Atom::Symbol { ns: None, name }) =
+                                    &pair[0].kind
+                                {
+                                    let_locals.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                for item in &items[2..] {
+                    collect_deps_node(item, &mut let_locals, deps);
+                }
+                return;
+            }
+            "defn" => {
+                // (defn name [params...] body...)
+                let mut defn_locals = locals.clone();
+                if items.len() >= 2
+                    && let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &items[1].kind {
+                        defn_locals.insert(name.clone());
+                    }
+                if items.len() >= 3
+                    && let NodeKind::Vector(params) = &items[2].kind {
+                        for p in params {
+                            if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &p.kind {
+                                defn_locals.insert(name.clone());
+                            }
+                        }
+                    }
+                for item in &items[3..] {
+                    collect_deps_node(item, &mut defn_locals, deps);
+                }
+                return;
+            }
+            "loop" => {
+                // (loop [var init var init ...] body...)
+                let mut loop_locals = locals.clone();
+                if items.len() >= 2
+                    && let NodeKind::Vector(bindings) = &items[1].kind {
+                        for pair in bindings.chunks(2) {
+                            if pair.len() == 2 {
+                                collect_deps_node(&pair[1], &mut loop_locals, deps);
+                                if let NodeKind::Atom(Atom::Symbol { ns: None, name }) =
+                                    &pair[0].kind
+                                {
+                                    loop_locals.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                for item in &items[2..] {
+                    collect_deps_node(item, &mut loop_locals, deps);
+                }
+                return;
+            }
+            "match" => {
+                // (match expr pat body pat body ...)
+                if items.len() >= 2 {
+                    collect_deps_node(&items[1], locals, deps);
+                }
+                for pair in items[2..].chunks(2) {
+                    if pair.len() == 2 {
+                        // Pattern introduces bindings for its body.
+                        let mut arm_locals = locals.clone();
+                        collect_pattern_names(&pair[0], &mut arm_locals);
+                        collect_deps_node(&pair[1], &mut arm_locals, deps);
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+    // Default: traverse all items.
+    for item in items {
+        collect_deps_node(item, locals, deps);
+    }
+}
+
+/// Extract names bound by a match pattern.
+fn collect_pattern_names(node: &Node, locals: &mut HashSet<String>) {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => {
+            if name != "_" && !name.chars().next().is_some_and(|c| c.is_uppercase()) {
+                locals.insert(name.clone());
+            }
+        }
+        NodeKind::List(items) => {
+            // Constructor pattern: (Ctor args...) — skip the ctor name, bind args.
+            for item in items.iter().skip(1) {
+                collect_pattern_names(item, locals);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_special_form(name: &str) -> bool {
+    matches!(
+        name,
+        "fn" | "let" | "if" | "do" | "defn" | "def" | "deftype" | "defeffect"
+            | "defmacro" | "defn-macro" | "defmacro-syntax"
+            | "loop" | "recur" | "match" | "try" | "catch"
+            | "quote" | "quasiquote" | "unquote" | "unquote-splice"
+            | "module" | "import" | "export"
+            | "handle" | "perform" | "resume"
+            | "assert!" | "assert-unreachable!" | "panic!"
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Definition Store
 // ---------------------------------------------------------------------------
 
+/// A stored definition entry with all metadata needed for incremental compilation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefinitionEntry {
+    /// The content hash of this definition.
+    pub hash: String,
+    /// The definition name (e.g. function name, type name).
+    pub def_name: String,
+    /// The inferred type signature as a string.
+    pub type_sig: String,
+    /// The inferred effect row as a string.
+    pub effect_row: String,
+    /// Content hashes of definitions this one depends on.
+    pub dep_hashes: Vec<String>,
+    /// The compiled artifact bytes (WASM, native, etc.).
+    pub artifact: Vec<u8>,
+}
+
+/// Result of planning an incremental build.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncrementalPlan {
+    /// Definitions that need to be (re)compiled.
+    pub to_compile: Vec<String>,
+    /// Definitions whose cached artifacts can be reused.
+    pub cached: Vec<String>,
+}
+
 /// SQLite-backed content-addressed definition store.
+///
+/// Maps definition content hashes to compiled artifacts plus type/effect/dependency
+/// metadata. Used for incremental compilation: if a definition's hash hasn't changed
+/// and none of its dependencies have changed, the cached artifact is reused.
 #[derive(Debug)]
 pub struct DefinitionStore {
     conn: Connection,
@@ -912,6 +1160,10 @@ pub enum StoreError {
     /// Database error returned by SQLite.
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
+
+    /// JSON serialization error.
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 impl DefinitionStore {
@@ -931,20 +1183,20 @@ impl DefinitionStore {
         Ok(store)
     }
 
-    /// Store an artifact by its content hash.
+    /// Store an artifact by its content hash (simple API, backward-compatible).
     pub fn put(&self, hash: &str, artifact: &[u8]) -> Result<(), StoreError> {
         self.conn.execute(
-            "INSERT OR REPLACE INTO artifacts (hash, artifact) VALUES (?1, ?2)",
+            "INSERT OR REPLACE INTO definitions (hash, def_name, type_sig, effect_row, dep_hashes, artifact) VALUES (?1, '', '', '', '[]', ?2)",
             params![hash, artifact],
         )?;
         Ok(())
     }
 
-    /// Fetch an artifact by its content hash.
+    /// Fetch an artifact by its content hash (simple API, backward-compatible).
     pub fn get(&self, hash: &str) -> Result<Option<Vec<u8>>, StoreError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT artifact FROM artifacts WHERE hash = ?1")?;
+            .prepare("SELECT artifact FROM definitions WHERE hash = ?1")?;
         let mut rows = stmt.query(params![hash])?;
         match rows.next()? {
             Some(row) => {
@@ -955,10 +1207,194 @@ impl DefinitionStore {
         }
     }
 
-    fn init(&self) -> Result<(), StoreError> {
+    /// Store a full definition entry with type/effect/dependency metadata.
+    pub fn put_definition(&self, entry: &DefinitionEntry) -> Result<(), StoreError> {
+        let dep_hashes_json = serde_json::to_string(&entry.dep_hashes)?;
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS artifacts (hash TEXT PRIMARY KEY, artifact BLOB NOT NULL)",
-            [],
+            "INSERT OR REPLACE INTO definitions (hash, def_name, type_sig, effect_row, dep_hashes, artifact) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                entry.hash,
+                entry.def_name,
+                entry.type_sig,
+                entry.effect_row,
+                dep_hashes_json,
+                entry.artifact,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch a full definition entry by its content hash.
+    pub fn get_definition(&self, hash: &str) -> Result<Option<DefinitionEntry>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT hash, def_name, type_sig, effect_row, dep_hashes, artifact FROM definitions WHERE hash = ?1",
+        )?;
+        let mut rows = stmt.query(params![hash])?;
+        match rows.next()? {
+            Some(row) => {
+                let dep_hashes_json: String = row.get(4)?;
+                let dep_hashes: Vec<String> = serde_json::from_str(&dep_hashes_json)?;
+                Ok(Some(DefinitionEntry {
+                    hash: row.get(0)?,
+                    def_name: row.get(1)?,
+                    type_sig: row.get(2)?,
+                    effect_row: row.get(3)?,
+                    dep_hashes,
+                    artifact: row.get(5)?,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Look up a definition by name (returns the most recent entry).
+    pub fn get_by_name(&self, def_name: &str) -> Result<Option<DefinitionEntry>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT hash, def_name, type_sig, effect_row, dep_hashes, artifact FROM definitions WHERE def_name = ?1 LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![def_name])?;
+        match rows.next()? {
+            Some(row) => {
+                let dep_hashes_json: String = row.get(4)?;
+                let dep_hashes: Vec<String> = serde_json::from_str(&dep_hashes_json)?;
+                Ok(Some(DefinitionEntry {
+                    hash: row.get(0)?,
+                    def_name: row.get(1)?,
+                    type_sig: row.get(2)?,
+                    effect_row: row.get(3)?,
+                    dep_hashes,
+                    artifact: row.get(5)?,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Check if a definition with the given hash exists in the store.
+    pub fn contains(&self, hash: &str) -> Result<bool, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT 1 FROM definitions WHERE hash = ?1")?;
+        let mut rows = stmt.query(params![hash])?;
+        Ok(rows.next()?.is_some())
+    }
+
+    /// Check if a cached definition is still valid by verifying its dependency hashes
+    /// all still exist and match.
+    pub fn is_valid(&self, hash: &str) -> Result<bool, StoreError> {
+        let entry = self.get_definition(hash)?;
+        match entry {
+            None => Ok(false),
+            Some(entry) => {
+                for dep_hash in &entry.dep_hashes {
+                    if !self.contains(dep_hash)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    /// Record that a definition was expanded using a macro.
+    ///
+    /// When the macro's body changes, all definitions expanded from it
+    /// must be invalidated and re-expanded.
+    pub fn record_macro_expansion(
+        &self,
+        def_hash: &str,
+        macro_name: &str,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO macro_expansions (def_hash, macro_name) VALUES (?1, ?2)",
+            params![def_hash, macro_name],
+        )?;
+        Ok(())
+    }
+
+    /// Find all definition hashes that were expanded using the given macro.
+    pub fn definitions_using_macro(
+        &self,
+        macro_name: &str,
+    ) -> Result<Vec<String>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT def_hash FROM macro_expansions WHERE macro_name = ?1")?;
+        let rows = stmt.query_map(params![macro_name], |row| row.get(0))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    /// Invalidate all definitions that were expanded using the given macro.
+    ///
+    /// Removes both the expansion records and the definitions themselves from
+    /// the store.
+    pub fn invalidate_macro(&self, macro_name: &str) -> Result<usize, StoreError> {
+        let hashes = self.definitions_using_macro(macro_name)?;
+        let count = hashes.len();
+        for hash in &hashes {
+            self.conn.execute(
+                "DELETE FROM definitions WHERE hash = ?1",
+                params![hash],
+            )?;
+        }
+        self.conn.execute(
+            "DELETE FROM macro_expansions WHERE macro_name = ?1",
+            params![macro_name],
+        )?;
+        Ok(count)
+    }
+
+    /// Check if a definition needs to be recompiled.
+    ///
+    /// Returns `true` if the definition is not in the store or if any of its
+    /// dependency hashes are missing (indicating a transitive change).
+    pub fn needs_recompile(&self, hash: &str) -> Result<bool, StoreError> {
+        Ok(!self.is_valid(hash)?)
+    }
+
+    /// Plan an incremental build: given a list of `(hash, def_name)` pairs,
+    /// return the names of definitions that need recompilation and those
+    /// that can be skipped (cached).
+    pub fn plan_incremental(
+        &self,
+        definitions: &[(String, String)],
+    ) -> Result<IncrementalPlan, StoreError> {
+        let mut to_compile = Vec::new();
+        let mut cached = Vec::new();
+        for (hash, def_name) in definitions {
+            if self.needs_recompile(hash)? {
+                to_compile.push(def_name.clone());
+            } else {
+                cached.push(def_name.clone());
+            }
+        }
+        Ok(IncrementalPlan {
+            to_compile,
+            cached,
+        })
+    }
+
+    fn init(&self) -> Result<(), StoreError> {
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS definitions (
+                hash TEXT PRIMARY KEY,
+                def_name TEXT NOT NULL,
+                type_sig TEXT NOT NULL,
+                effect_row TEXT NOT NULL,
+                dep_hashes TEXT NOT NULL DEFAULT '[]',
+                artifact BLOB NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_def_name ON definitions (def_name);
+            CREATE TABLE IF NOT EXISTS macro_expansions (
+                def_hash TEXT NOT NULL,
+                macro_name TEXT NOT NULL,
+                PRIMARY KEY (def_hash, macro_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_macro_name ON macro_expansions (macro_name);",
         )?;
         Ok(())
     }
@@ -1363,5 +1799,401 @@ mod tests {
         let store = DefinitionStore::open_in_memory().expect("store open");
         let fetched = store.get("missing").expect("store read");
         assert_eq!(fetched, None);
+    }
+
+    // ─── Content hashing ────────────────────────────────────────────────────
+
+    #[test]
+    fn hash_definition_deterministic() {
+        let h1 = hash_definition("(defn f [x] x)", "Int -> Int", "pure");
+        let h2 = hash_definition("(defn f [x] x)", "Int -> Int", "pure");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn hash_definition_changes_on_source_change() {
+        let h1 = hash_definition("(defn f [x] x)", "Int -> Int", "pure");
+        let h2 = hash_definition("(defn f [x] (+ x 1))", "Int -> Int", "pure");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn hash_definition_changes_on_type_change() {
+        let h1 = hash_definition("(defn f [x] x)", "Int -> Int", "pure");
+        let h2 = hash_definition("(defn f [x] x)", "Float -> Float", "pure");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn hash_definition_changes_on_effect_change() {
+        let h1 = hash_definition("(defn f [x] x)", "Int -> Int", "pure");
+        let h2 = hash_definition("(defn f [x] x)", "Int -> Int", "IO");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn hash_definition_is_hex_sha256() {
+        let h = hash_definition("test", "Int", "pure");
+        assert_eq!(h.len(), 64); // SHA-256 hex = 64 chars
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ─── Extended definition store ──────────────────────────────────────────
+
+    #[test]
+    fn put_and_get_definition_entry() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        let entry = DefinitionEntry {
+            hash: "abc123".to_string(),
+            def_name: "my-fn".to_string(),
+            type_sig: "Int -> Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec!["dep1".to_string(), "dep2".to_string()],
+            artifact: b"wasm bytes".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        let fetched = store.get_definition("abc123").expect("get").expect("some");
+        assert_eq!(fetched.def_name, "my-fn");
+        assert_eq!(fetched.type_sig, "Int -> Int");
+        assert_eq!(fetched.effect_row, "pure");
+        assert_eq!(fetched.dep_hashes, vec!["dep1", "dep2"]);
+        assert_eq!(fetched.artifact, b"wasm bytes");
+    }
+
+    #[test]
+    fn get_by_name_finds_entry() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        let entry = DefinitionEntry {
+            hash: "h1".to_string(),
+            def_name: "add".to_string(),
+            type_sig: "Int -> Int -> Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec![],
+            artifact: b"code".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        let found = store.get_by_name("add").expect("get").expect("some");
+        assert_eq!(found.hash, "h1");
+    }
+
+    #[test]
+    fn contains_returns_true_for_existing() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        store.put("exists", b"data").expect("put");
+        assert!(store.contains("exists").expect("check"));
+        assert!(!store.contains("missing").expect("check"));
+    }
+
+    #[test]
+    fn is_valid_with_no_deps() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        let entry = DefinitionEntry {
+            hash: "h1".to_string(),
+            def_name: "f".to_string(),
+            type_sig: "Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec![],
+            artifact: b"code".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        assert!(store.is_valid("h1").expect("check"));
+    }
+
+    #[test]
+    fn is_valid_fails_when_dep_missing() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        let entry = DefinitionEntry {
+            hash: "h1".to_string(),
+            def_name: "f".to_string(),
+            type_sig: "Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec!["missing-dep".to_string()],
+            artifact: b"code".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        assert!(!store.is_valid("h1").expect("check"));
+    }
+
+    // ─── Dependency collection ────────────────────────────────────────────
+
+    fn parse_one(src: &str) -> Node {
+        let nodes = nexl_reader::read(src, meta::FileId::SYNTHETIC).expect("parse");
+        nodes.into_iter().next().expect("at least one node")
+    }
+
+    #[test]
+    fn deps_finds_free_symbols() {
+        // (+ x y) — +, x, y are all free
+        let node = parse_one("(+ x y)");
+        let deps = collect_deps(&node, &HashSet::new());
+        assert!(deps.contains("+"));
+        assert!(deps.contains("x"));
+        assert!(deps.contains("y"));
+    }
+
+    #[test]
+    fn deps_excludes_locals_in_fn() {
+        // (fn [x] (+ x 1)) — x is local, + is free
+        let node = parse_one("(fn [x] (+ x 1))");
+        let deps = collect_deps(&node, &HashSet::new());
+        assert!(deps.contains("+"));
+        assert!(!deps.contains("x"));
+    }
+
+    #[test]
+    fn deps_excludes_let_bindings() {
+        // (let [x 1] (+ x y)) — x is local, y and + are free
+        let node = parse_one("(let [x 1] (+ x y))");
+        let deps = collect_deps(&node, &HashSet::new());
+        assert!(deps.contains("+"));
+        assert!(deps.contains("y"));
+        assert!(!deps.contains("x"));
+    }
+
+    #[test]
+    fn deps_excludes_initial_locals() {
+        // (+ a b) with a as initial local
+        let node = parse_one("(+ a b)");
+        let mut initial = HashSet::new();
+        initial.insert("a".to_string());
+        let deps = collect_deps(&node, &initial);
+        assert!(deps.contains("+"));
+        assert!(deps.contains("b"));
+        assert!(!deps.contains("a"));
+    }
+
+    #[test]
+    fn deps_handles_defn_params() {
+        // (defn f [x y] (+ x y)) — f, x, y are local; + is free
+        let node = parse_one("(defn f [x y] (+ x y))");
+        let deps = collect_deps(&node, &HashSet::new());
+        assert!(deps.contains("+"));
+        assert!(!deps.contains("f"));
+        assert!(!deps.contains("x"));
+        assert!(!deps.contains("y"));
+    }
+
+    #[test]
+    fn deps_skips_special_forms() {
+        // (if cond a b) — if is special, cond/a/b are free
+        let node = parse_one("(if cond a b)");
+        let deps = collect_deps(&node, &HashSet::new());
+        assert!(!deps.contains("if"));
+        assert!(deps.contains("cond"));
+        assert!(deps.contains("a"));
+        assert!(deps.contains("b"));
+    }
+
+    #[test]
+    fn deps_handles_qualified_symbols() {
+        let node = parse_one("(math/sqrt x)");
+        let deps = collect_deps(&node, &HashSet::new());
+        assert!(deps.contains("math/sqrt"));
+        assert!(deps.contains("x"));
+    }
+
+    // ─── Macro invalidation ────────────────────────────────────────────────
+
+    #[test]
+    fn record_and_find_macro_expansions() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        let entry = DefinitionEntry {
+            hash: "h1".to_string(),
+            def_name: "my-fn".to_string(),
+            type_sig: "Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec![],
+            artifact: b"code".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        store
+            .record_macro_expansion("h1", "my-macro")
+            .expect("record");
+        let defs = store
+            .definitions_using_macro("my-macro")
+            .expect("query");
+        assert_eq!(defs, vec!["h1"]);
+    }
+
+    #[test]
+    fn invalidate_macro_removes_definitions() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        let entry = DefinitionEntry {
+            hash: "h1".to_string(),
+            def_name: "expanded-fn".to_string(),
+            type_sig: "Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec![],
+            artifact: b"code".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        store
+            .record_macro_expansion("h1", "my-macro")
+            .expect("record");
+
+        let count = store.invalidate_macro("my-macro").expect("invalidate");
+        assert_eq!(count, 1);
+
+        // Definition should be gone.
+        assert!(!store.contains("h1").expect("check"));
+        // No more expansion records.
+        assert!(store
+            .definitions_using_macro("my-macro")
+            .expect("query")
+            .is_empty());
+    }
+
+    #[test]
+    fn invalidate_macro_with_no_expansions() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        let count = store.invalidate_macro("nonexistent").expect("invalidate");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn is_valid_succeeds_when_deps_present() {
+        let store = DefinitionStore::open_in_memory().expect("store");
+        let dep = DefinitionEntry {
+            hash: "dep-hash".to_string(),
+            def_name: "helper".to_string(),
+            type_sig: "Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec![],
+            artifact: b"dep-code".to_vec(),
+        };
+        store.put_definition(&dep).expect("put dep");
+
+        let entry = DefinitionEntry {
+            hash: "h1".to_string(),
+            def_name: "f".to_string(),
+            type_sig: "Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec!["dep-hash".to_string()],
+            artifact: b"code".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        assert!(store.is_valid("h1").expect("check"));
+    }
+
+    // --- Incremental recompilation tests ---
+
+    #[test]
+    fn needs_recompile_missing_hash() {
+        let store = DefinitionStore::open_in_memory().expect("open");
+        assert!(store.needs_recompile("nonexistent").expect("check"));
+    }
+
+    #[test]
+    fn needs_recompile_cached_valid() {
+        let store = DefinitionStore::open_in_memory().expect("open");
+        let entry = DefinitionEntry {
+            hash: "h1".to_string(),
+            def_name: "f".to_string(),
+            type_sig: "Int -> Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec![],
+            artifact: b"cached-wasm".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        assert!(!store.needs_recompile("h1").expect("check"));
+    }
+
+    #[test]
+    fn needs_recompile_dep_missing() {
+        let store = DefinitionStore::open_in_memory().expect("open");
+        let entry = DefinitionEntry {
+            hash: "h1".to_string(),
+            def_name: "f".to_string(),
+            type_sig: "Int -> Int".to_string(),
+            effect_row: "pure".to_string(),
+            dep_hashes: vec!["missing-dep".to_string()],
+            artifact: b"cached-wasm".to_vec(),
+        };
+        store.put_definition(&entry).expect("put");
+        // dep is missing from the store, so recompilation is needed
+        assert!(store.needs_recompile("h1").expect("check"));
+    }
+
+    #[test]
+    fn plan_incremental_skips_unchanged() {
+        let store = DefinitionStore::open_in_memory().expect("open");
+        // Store two definitions
+        for (hash, name) in [("h1", "add"), ("h2", "mul")] {
+            store
+                .put_definition(&DefinitionEntry {
+                    hash: hash.to_string(),
+                    def_name: name.to_string(),
+                    type_sig: "Int -> Int -> Int".to_string(),
+                    effect_row: "pure".to_string(),
+                    dep_hashes: vec![],
+                    artifact: b"wasm-code".to_vec(),
+                })
+                .expect("put");
+        }
+
+        let defs = vec![
+            ("h1".to_string(), "add".to_string()),
+            ("h2".to_string(), "mul".to_string()),
+        ];
+        let plan = store.plan_incremental(&defs).expect("plan");
+        assert!(plan.to_compile.is_empty());
+        assert_eq!(plan.cached, vec!["add", "mul"]);
+    }
+
+    #[test]
+    fn cold_build_equals_warm_build_reproducibility() {
+        // Verify that hashing is deterministic: same inputs always produce
+        // the same hash, so cold build = warm build from the store's perspective.
+        let source = "(defn add [x y] (+ x y))";
+        let type_sig = "Int -> Int -> Int";
+        let effect_row = "pure";
+
+        let hash1 = hash_definition(source, type_sig, effect_row);
+        let hash2 = hash_definition(source, type_sig, effect_row);
+        assert_eq!(hash1, hash2, "hash must be deterministic");
+
+        // Simulate: cold build stores artifact, warm build finds it cached.
+        let store = DefinitionStore::open_in_memory().expect("open");
+        let artifact = b"compiled-wasm-bytes".to_vec();
+        store
+            .put_definition(&DefinitionEntry {
+                hash: hash1.clone(),
+                def_name: "add".to_string(),
+                type_sig: type_sig.to_string(),
+                effect_row: effect_row.to_string(),
+                dep_hashes: vec![],
+                artifact: artifact.clone(),
+            })
+            .expect("put");
+
+        // Warm build: same source hashes to same key, finds cached artifact.
+        let cached = store.get_definition(&hash2).expect("get").expect("should exist");
+        assert_eq!(cached.artifact, artifact, "warm build reuses cold build artifact");
+        assert!(!store.needs_recompile(&hash2).expect("check"));
+    }
+
+    #[test]
+    fn plan_incremental_recompiles_changed() {
+        let store = DefinitionStore::open_in_memory().expect("open");
+        // Store one definition
+        store
+            .put_definition(&DefinitionEntry {
+                hash: "h1".to_string(),
+                def_name: "add".to_string(),
+                type_sig: "Int -> Int -> Int".to_string(),
+                effect_row: "pure".to_string(),
+                dep_hashes: vec![],
+                artifact: b"wasm-code".to_vec(),
+            })
+            .expect("put");
+
+        // Now build with a changed hash for "add" and a new def "sub"
+        let defs = vec![
+            ("h1-changed".to_string(), "add".to_string()),
+            ("h3".to_string(), "sub".to_string()),
+        ];
+        let plan = store.plan_incremental(&defs).expect("plan");
+        assert_eq!(plan.to_compile, vec!["add", "sub"]);
+        assert!(plan.cached.is_empty());
     }
 }

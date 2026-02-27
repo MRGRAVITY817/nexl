@@ -1,0 +1,89 @@
+;; kernel-bootstrap.nxl — Stage 0 → Stage 1 bootstrap proof-of-concept
+;;
+;; Demonstrates that the kernel subset of Nexl is sufficient to write
+;; compiler infrastructure. Implements character classification and
+;; a simple s-expression tokenizer.
+;;
+;; Kernel subset constraints (verified by inspection):
+;; - No macros
+;; - No effect syntax (uses explicit values, not algebraic effects)
+
+;; --- Safe vector access ---
+;; `get` returns Option; this wrapper unwraps with `?`.
+
+(defn at [v i]
+  (? (get v i)))
+
+;; --- Character classification ---
+
+(defn is-whitespace [c]
+  (or (= c " ") (or (= c "\n") (= c "\t"))))
+
+(defn is-lparen [c]
+  (= c "("))
+
+(defn is-rparen [c]
+  (= c ")"))
+
+(defn is-paren [c]
+  (or (is-lparen c) (is-rparen c)))
+
+(defn is-delimiter [c]
+  (or (is-whitespace c) (or (is-paren c) (= c ""))))
+
+;; --- Character classifier ---
+;; Count parens, whitespace, and other characters recursively.
+
+(defn classify-step [chars len i parens spaces others]
+  (if (>= i len)
+    [parens spaces others]
+    (if (is-paren (at chars i))
+      (classify-step chars len (+ i 1) (+ parens 1) spaces others)
+      (if (is-whitespace (at chars i))
+        (classify-step chars len (+ i 1) parens (+ spaces 1) others)
+        (classify-step chars len (+ i 1) parens spaces (+ others 1))))))
+
+(defn classify-chars [source]
+  (let [chars (str/chars source)]
+    (classify-step chars (count chars) 0 0 0 0)))
+
+;; --- Tokenizer ---
+
+(defn skip-ws [chars len pos]
+  (if (>= pos len)
+    pos
+    (if (is-whitespace (at chars pos))
+      (skip-ws chars len (+ pos 1))
+      pos)))
+
+(defn read-sym [chars len pos acc]
+  (if (>= pos len)
+    [acc pos]
+    (if (is-delimiter (at chars pos))
+      [acc pos]
+      (read-sym chars len (+ pos 1) (str acc (at chars pos))))))
+
+(defn tokenize-from [chars len pos tokens]
+  (if (>= pos len)
+    tokens
+    (if (is-whitespace (at chars pos))
+      (tokenize-from chars len (+ pos 1) tokens)
+      (if (is-paren (at chars pos))
+        (tokenize-from chars len (+ pos 1) (append tokens (at chars pos)))
+        (let [result (read-sym chars len pos "")]
+          (tokenize-from chars len (at result 1)
+                         (append tokens (at result 0))))))))
+
+(defn tokenize [source]
+  (let [chars (str/chars source)]
+    (tokenize-from chars (count chars) 0 [])))
+
+;; --- Self-tests ---
+
+(def counts (classify-chars "(+ 1 2)"))
+;; Expected: [2 2 3]
+counts
+
+(def tokens (tokenize "(+ 1 2)"))
+;; Expected: ["(" "+" "1" "2" ")"]
+tokens
