@@ -994,6 +994,93 @@ fn completion_items(nodes: &[Node]) -> Vec<CompletionItem> {
     items
 }
 
+/// Return stdlib module names as completion items.
+fn stdlib_module_completions() -> Vec<CompletionItem> {
+    nexl_stdlib::all_modules()
+        .into_iter()
+        .map(|(name, _entries): (&str, _)| CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::MODULE),
+            detail: Some("stdlib module".to_string()),
+            ..CompletionItem::default()
+        })
+        .collect()
+}
+
+/// Scan a project source directory for `.nx` files and return module-path completions.
+fn project_module_completions(file_path: &Path) -> Vec<CompletionItem> {
+    let ctx = match resolve_project_context(file_path) {
+        Some(ctx) => ctx,
+        None => return Vec::new(),
+    };
+    let mut items = Vec::new();
+    collect_nx_files(&ctx.source_root, &ctx.source_root, &ctx.prefix, &mut items);
+    items
+}
+
+/// Recursively collect `.nx` files and convert to module paths.
+fn collect_nx_files(
+    dir: &Path,
+    root: &Path,
+    prefix: &str,
+    items: &mut Vec<CompletionItem>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_nx_files(&path, root, prefix, items);
+        } else if path.extension().is_some_and(|ext| ext == "nx") {
+            if let Some(module_path) = file_to_module_path(&path, root, prefix) {
+                items.push(CompletionItem {
+                    label: module_path,
+                    kind: Some(CompletionItemKind::MODULE),
+                    detail: Some("project module".to_string()),
+                    ..CompletionItem::default()
+                });
+            }
+        }
+    }
+}
+
+/// Convert a `.nx` file path to a dotted module path.
+fn file_to_module_path(file: &Path, root: &Path, prefix: &str) -> Option<String> {
+    let rel = file.strip_prefix(root).ok()?;
+    let stem = rel.with_extension("");
+    let parts: Vec<&str> = stem.iter().filter_map(|c| c.to_str()).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("{prefix}.{}", parts.join(".")))
+}
+
+/// Check whether the given byte offset falls within a `:imports` vector
+/// inside a `(module ...)` form.
+fn is_in_imports_context(nodes: &[Node], offset: usize) -> bool {
+    let module_node = match nodes.first() {
+        Some(node) if list_head_is(node, "module") => node,
+        _ => return false,
+    };
+    let items = match &module_node.kind {
+        NodeKind::List(items) => items,
+        _ => return false,
+    };
+    // Look for :imports keyword followed by a vector
+    for window in items.windows(2) {
+        if let NodeKind::Atom(Atom::Keyword { name, .. }) = &window[0].kind {
+            if name == "imports" {
+                if span_contains(window[1].span, offset) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn list_head_is(node: &Node, name: &str) -> bool {
     match &node.kind {
         NodeKind::List(items) => match items.first() {
@@ -1282,6 +1369,19 @@ impl LanguageServer for Backend {
             Ok(nodes) => nodes,
             Err(_) => return Ok(None),
         };
+
+        let position = params.text_document_position.position;
+        let offset = position_to_offset(&source, position);
+
+        // If cursor is inside :imports, complete module names.
+        if is_in_imports_context(&nodes, offset) {
+            let mut items = stdlib_module_completions();
+            if let Ok(file_path) = text_document.uri.to_file_path() {
+                items.extend(project_module_completions(&file_path));
+            }
+            return Ok(Some(CompletionResponse::Array(items)));
+        }
+
         let items = completion_items(&nodes);
         Ok(Some(CompletionResponse::Array(items)))
     }
@@ -2471,5 +2571,49 @@ mod tests {
     fn prettify_no_vars_passthrough() {
         assert_eq!(prettify_type(&Type::Int), "Int");
         assert_eq!(prettify_type(&Type::Str), "Str");
+    }
+
+    // ---- M25: Module completion tests ----
+
+    #[test]
+    fn stdlib_module_completions_includes_json() {
+        let items = stdlib_module_completions();
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(names.contains(&"json"), "should include json: {names:?}");
+        assert!(names.contains(&"http"), "should include http: {names:?}");
+        assert!(names.contains(&"db"), "should include db: {names:?}");
+        assert!(names.contains(&"io"), "should include io: {names:?}");
+        // All should be MODULE kind
+        for item in &items {
+            assert_eq!(item.kind, Some(CompletionItemKind::MODULE));
+        }
+    }
+
+    #[test]
+    fn is_in_imports_context_inside() {
+        // Cursor inside the :imports vector should return true.
+        let src = "(module my.app :imports [[json] [http]])";
+        let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
+        // The :imports vector spans bytes roughly 25..39.
+        // Position inside "[json]" area.
+        let inside = src.find("[json").expect("find [json") + 1;
+        assert!(is_in_imports_context(&nodes, inside), "should be in imports context at offset {inside}");
+    }
+
+    #[test]
+    fn is_in_imports_context_outside() {
+        // Cursor outside :imports should return false.
+        let src = "(module my.app :imports [[json]])";
+        let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
+        // Position at beginning of the file (before module form).
+        assert!(!is_in_imports_context(&nodes, 0), "should not be in imports at start");
+    }
+
+    #[test]
+    fn file_to_module_path_works() {
+        let root = Path::new("/project/src");
+        let file = Path::new("/project/src/app/main.nx");
+        let result = file_to_module_path(file, root, "my-app");
+        assert_eq!(result, Some("my-app.app.main".to_string()));
     }
 }

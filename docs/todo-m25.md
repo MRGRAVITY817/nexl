@@ -21,7 +21,7 @@
   - Suggest fix: "add `:performs [Net]` to module declaration"
   - Suppress cascade noise from effect errors
 
-- [ ] 5. **LSP completions — module names in `:imports`**
+- [x] 5. **LSP completions — module names in `:imports`**
   - Complete module names when typing in `:imports` vectors
   - Scan project source tree + stdlib module list
 
