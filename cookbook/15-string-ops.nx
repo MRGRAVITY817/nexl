@@ -1,0 +1,32 @@
+;; Recipe 15: String Operations
+;;
+;; Problem: Manipulate strings — split, join, trim, replace.
+;; Solution: Use functions from the str module.
+;;
+;; Run: nexl run cookbook/15-string-ops.nx
+
+;; Concatenation:
+(io/println (str/concat "Hello" ", " "world"))
+
+;; String length:
+(io/println (str "Length: " (count "hello")))
+
+;; Conversion:
+(io/println (str "Upper: " (str/upper "hello")))
+(io/println (str "Lower: " (str/lower "HELLO")))
+
+;; Trimming whitespace:
+(io/println (str "Trimmed: '" (str/trim "  hello  ") "'"))
+
+;; Checking contents:
+(io/println (str "Starts with H? " (str/starts-with "Hello" "H")))
+(io/println (str "Ends with lo? " (str/ends-with "Hello" "lo")))
+(io/println (str "Contains ell? " (str/contains "Hello" "ell")))
+
+;; Split and join:
+(def parts (str/split "a,b,c" ","))
+(io/println (str "Parts: " parts))
+(io/println (str "Joined: " (str/join " | " parts)))
+
+;; Replace:
+(io/println (str/replace "hello world" "world" "nexl"))

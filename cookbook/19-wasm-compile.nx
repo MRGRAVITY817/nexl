@@ -1,0 +1,20 @@
+;; Recipe 19: Compiling to WebAssembly
+;;
+;; Problem: Compile a Nexl program to a .wasm binary.
+;; Solution: Use `nexl build` to compile, `nexl run --wasm` to execute.
+;;
+;; Compile: nexl build cookbook/19-wasm-compile.nx /tmp/recipe19.wasm
+;; Run:     nexl run cookbook/19-wasm-compile.nx --wasm
+;;
+;; Note: The tree-walk evaluator runs code directly; the WASM path
+;; compiles through the IR → WASM code generator → Wasmtime.
+
+(defn square [x] (* x x))
+
+(defn sum-of-squares [n]
+  (loop [i 1 acc 0]
+    (if (> i n) acc
+      (recur (+ i 1) (+ acc (square i))))))
+
+;; When run via --wasm, this executes inside a WASI sandbox:
+(io/println (str "Sum of squares 1..10: " (sum-of-squares 10)))

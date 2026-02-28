@@ -1,0 +1,37 @@
+;; Recipe 16: Recursion and Loop
+;;
+;; Problem: Iterate using recursion or loop/recur.
+;; Solution: Use plain recursion for simple cases, loop/recur for tail calls.
+;;
+;; Run: nexl run cookbook/16-recursion.nx
+
+;; Simple recursion:
+(defn sum-to [n]
+  (if (= n 0) 0 (+ n (sum-to (- n 1)))))
+
+(io/println (str "Sum 1..10: " (sum-to 10)))
+
+;; Tail-recursive with loop/recur:
+(defn sum-to-tail [n]
+  (loop [i n acc 0]
+    (if (= i 0)
+      acc
+      (recur (- i 1) (+ acc i)))))
+
+(io/println (str "Sum 1..100: " (sum-to-tail 100)))
+
+;; Build a list with recursion:
+(defn range [start end]
+  (if (>= start end)
+    []
+    (append [start] (range (+ start 1) end))))
+
+(io/println (str "Range 0..5: " (range 0 5)))
+
+;; Fibonacci with loop:
+(defn fib [n]
+  (loop [i 0 a 0 b 1]
+    (if (= i n) a
+      (recur (+ i 1) b (+ a b)))))
+
+(io/println (str "Fib 20: " (fib 20)))

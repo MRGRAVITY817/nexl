@@ -1,0 +1,31 @@
+;; Recipe 12: Map, Filter, Reduce
+;;
+;; Problem: Transform collections using higher-order functions.
+;; Solution: Use map, filter, reduce with lambdas.
+;;
+;; Run: nexl run cookbook/12-map-filter-reduce.nx
+
+(def words ["hello" "world" "nexl" "is" "great"])
+
+;; Map: transform each element
+(def lengths (map count words))
+(io/println (str "Lengths: " lengths))
+
+;; Filter: keep elements matching a predicate
+(def long-words (filter (fn [w] (> (count w) 3)) words))
+(io/println (str "Long words: " long-words))
+
+;; Reduce: fold into a single value
+(def total-chars (reduce + 0 lengths))
+(io/println (str "Total chars: " total-chars))
+
+;; Chain operations:
+(def numbers [1 2 3 4 5 6 7 8 9 10])
+
+(def result
+  (reduce + 0
+    (map (fn [x] (* x x))
+      (filter (fn [x] (= (math/mod x 2) 0)) numbers))))
+
+(io/println (str "Sum of squares of evens: " result))
+;; = 4 + 16 + 36 + 64 + 100 = 220

@@ -1,0 +1,20 @@
+;; Recipe 20: Time and Random Numbers
+;;
+;; Problem: Measure elapsed time and generate random data.
+;; Solution: Use time/monotonic for timing, random/bytes for randomness.
+;;
+;; Run: nexl run cookbook/20-time-random.nx
+
+;; Monotonic clock (nanoseconds since process start):
+(def start (time/monotonic))
+
+;; Do some work:
+(def result (reduce + 0 (map (fn [x] (* x x)) [1 2 3 4 5 6 7 8 9 10])))
+
+(def elapsed (- (time/monotonic) start))
+(io/println (str "Result: " result))
+(io/println (str "Elapsed: " elapsed " ns"))
+
+;; Random bytes (cryptographic quality):
+(def bytes (random/bytes 8))
+(io/println (str "Random bytes: " bytes))

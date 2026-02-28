@@ -1,0 +1,31 @@
+;; Recipe 14: Loading .env Files
+;;
+;; Problem: Manage configuration with .env files for development.
+;; Solution: Use env/load-dotenv to load variables from a file.
+;;
+;; Run: nexl run cookbook/14-dotenv.nx
+;;
+;; Note: Create a .env file first, or this recipe demonstrates the API.
+
+;; In production, use real environment variables.
+;; In development, create a .env file:
+;;
+;;   DATABASE_URL=sqlite:///tmp/dev.db
+;;   PORT=3000
+;;   DEBUG=true
+;;
+;; Then load it:
+;; (env/load-dotenv ".env")
+
+;; After loading, use env/get as normal:
+(defn load-config []
+  (let [port (match (env/get "PORT")
+               (Some p) p
+               None "8080")
+        debug (match (env/get "DEBUG")
+                (Some "true") true
+                _             false)]
+    {:port port :debug debug}))
+
+(def config (load-config))
+(io/println (str "Config: " config))

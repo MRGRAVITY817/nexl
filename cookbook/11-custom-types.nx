@@ -1,0 +1,30 @@
+;; Recipe 11: Custom Types with deftype
+;;
+;; Problem: Define your own data types.
+;; Solution: Use deftype for records and sum types.
+;;
+;; Run: nexl run cookbook/11-custom-types.nx
+
+;; Record type (product type with named fields):
+(deftype Point {:x Int :y Int})
+
+;; Construct a record:
+(def origin (Point 0 0))
+(def p (Point 3 4))
+
+;; Access fields with keywords:
+(io/println (str "x=" (:x p) " y=" (:y p)))
+
+;; Sum type (tagged union / enum):
+(deftype Shape
+  (Circle Float)
+  (Rectangle Float Float))
+
+;; Pattern match on sum types:
+(defn area [shape]
+  (match shape
+    (Circle r)      (* 3.14159 (* r r))
+    (Rectangle w h) (* w h)))
+
+(io/println (str "Circle area: " (area (Circle 5.0))))
+(io/println (str "Rect area: " (area (Rectangle 3.0 4.0))))

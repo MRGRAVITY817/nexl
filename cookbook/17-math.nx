@@ -1,0 +1,25 @@
+;; Recipe 17: Math Operations
+;;
+;; Problem: Perform common mathematical calculations.
+;; Solution: Use math module functions and arithmetic operators.
+;;
+;; Run: nexl run cookbook/17-math.nx
+
+;; Basic arithmetic (type-safe — no mixing Int and Float):
+(io/println (str "10 + 3 = " (+ 10 3)))
+(io/println (str "10 - 3 = " (- 10 3)))
+(io/println (str "10 * 3 = " (* 10 3)))
+(io/println (str "10 / 3 = " (/ 10 3)))
+
+;; Float arithmetic:
+(io/println (str "10.0 / 3.0 = " (/ 10.0 3.0)))
+
+;; Math module:
+(io/println (str "abs(-5) = " (math/abs -5)))
+(io/println (str "max(3, 7) = " (math/max 3 7)))
+(io/println (str "min(3, 7) = " (math/min 3 7)))
+(io/println (str "mod(17, 5) = " (math/mod 17 5)))
+
+;; Conversion between Int and Float:
+(io/println (str "Int 42 as Float: " (conv/->float 42)))
+(io/println (str "Float 3.14 as Int: " (conv/->int 3.14)))

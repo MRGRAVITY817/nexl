@@ -1,0 +1,36 @@
+;; Recipe 18: Closures and Higher-Order Functions
+;;
+;; Problem: Use functions that capture their environment.
+;; Solution: Lambda expressions close over local variables.
+;;
+;; Run: nexl run cookbook/18-closures.nx
+
+;; A closure captures variables from its enclosing scope:
+(defn make-adder [n]
+  (fn [x] (+ x n)))
+
+(def add5 (make-adder 5))
+(def add10 (make-adder 10))
+
+(io/println (str "add5(3) = " (add5 3)))
+(io/println (str "add10(3) = " (add10 3)))
+
+;; Function composition:
+(defn compose [f g]
+  (fn [x] (f (g x))))
+
+(defn double [x] (* x 2))
+(defn inc [x] (+ x 1))
+
+(def double-then-inc (compose inc double))
+(def inc-then-double (compose double inc))
+
+(io/println (str "double-then-inc(3) = " (double-then-inc 3)))
+(io/println (str "inc-then-double(3) = " (inc-then-double 3)))
+
+;; Partial application with closures:
+(defn partial [f x]
+  (fn [y] (f x y)))
+
+(def add-to-10 (partial + 10))
+(io/println (str "add-to-10(5) = " (add-to-10 5)))

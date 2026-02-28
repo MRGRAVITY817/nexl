@@ -43,7 +43,7 @@
   - Handle errors with Result, test with deftest
   - Each recipe: problem, solution, explanation, runnable code
 
-- [ ] 10. **Cookbook — 10 intermediate recipes**
+- [x] 10. **Cookbook — 10 intermediate recipes**
   - Pattern matching, custom types (deftype), map/filter/reduce
   - Structured logging, environment config, dotenv loading
   - WASM compilation, WIT imports

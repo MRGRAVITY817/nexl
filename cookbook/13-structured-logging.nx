@@ -1,0 +1,26 @@
+;; Recipe 13: Structured JSON Logging
+;;
+;; Problem: Add structured, contextual logging to your application.
+;; Solution: Use log/info, log/warn, log/error with log/with for context.
+;;
+;; Run: nexl run cookbook/13-structured-logging.nx 2>&1
+;; (Logs go to stderr; redirect to see them.)
+
+;; Basic logging at different levels:
+(log/info "application starting")
+(log/warn "cache is cold")
+
+;; Add context fields as a map:
+(log/info "request received" {:method "GET" :path "/api/users"})
+
+;; Nested context with log/with:
+;; All log calls inside the body inherit the context fields.
+(log/with {:request_id "abc-123" :user "alice"}
+  (log/info "processing request")
+  (log/info "querying database" {:table "users"})
+  (log/warn "slow query" {:ms 450}))
+
+;; Set minimum log level to filter noise:
+(log/set-level "warn")
+(log/info "this is filtered out")
+(log/error "this still shows")
