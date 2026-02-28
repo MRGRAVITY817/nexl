@@ -29,7 +29,7 @@
   - Complete record fields from inferred types (`:status`, `:body`, etc.)
   - Triggered after typing `:` in a record context
 
-- [ ] 7. **LSP completions — stdlib function names**
+- [x] 7. **LSP completions — stdlib function names**
   - Complete function names when typing `json/`, `http/`, `db/`, etc.
   - Source from stdlib module entries
 

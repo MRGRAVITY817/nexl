@@ -1057,6 +1057,23 @@ fn file_to_module_path(file: &Path, root: &Path, prefix: &str) -> Option<String>
     Some(format!("{prefix}.{}", parts.join(".")))
 }
 
+/// Return completions for stdlib function names, qualified with module prefix.
+/// E.g., for "json" module: json/encode, json/decode, json/pretty, etc.
+fn stdlib_function_completions() -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    for (module_name, entries) in nexl_stdlib::all_modules() {
+        for (fn_name, _) in &entries {
+            items.push(CompletionItem {
+                label: format!("{module_name}/{fn_name}"),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(format!("{module_name} module")),
+                ..CompletionItem::default()
+            });
+        }
+    }
+    items
+}
+
 /// Extract record field names from deftype declarations and return as keyword completions.
 fn record_field_completions(nodes: &[Node]) -> Vec<CompletionItem> {
     use nexl_infer::DeftypeDecl;
@@ -1415,6 +1432,8 @@ impl LanguageServer for Backend {
         let mut items = completion_items(&nodes);
         // Include record field names from deftype declarations.
         items.extend(record_field_completions(&nodes));
+        // Include qualified stdlib function names (json/encode, http/get, etc.).
+        items.extend(stdlib_function_completions());
         Ok(Some(CompletionResponse::Array(items)))
     }
 
@@ -2668,5 +2687,18 @@ mod tests {
         let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
         let items = record_field_completions(&nodes);
         assert!(items.is_empty(), "sum types should produce no field completions");
+    }
+
+    #[test]
+    fn stdlib_function_completions_includes_json_encode() {
+        let items = stdlib_function_completions();
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"json/encode"), "should include json/encode: first few = {:?}", &labels[..5.min(labels.len())]);
+        assert!(labels.contains(&"http/get"), "should include http/get");
+        assert!(labels.contains(&"db/open"), "should include db/open");
+        assert!(labels.contains(&"io/println"), "should include io/println");
+        for item in &items {
+            assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
+        }
     }
 }
