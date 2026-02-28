@@ -8,7 +8,7 @@ use nexl_ast::module::parse_module_decl;
 use nexl_ast::{Atom, FileId, ImportDecl, ImportKind, Node, NodeKind, Span};
 use nexl_errors::{Diagnostic as NexlDiagnostic, Severity as NexlSeverity};
 use nexl_infer::{Env, InferState};
-use nexl_types::{Type, TypeError, TypeErrorKind};
+use nexl_types::{EffectRow, Type, TypeError, TypeErrorKind, TypeVar};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -659,8 +659,153 @@ fn build_simple_hover(name: &str, span: Span, source: &str) -> Hover {
     }
 }
 
+/// Collect all `TypeVar`s in a type, in order of first appearance (depth-first).
+fn collect_type_vars_ordered(ty: &Type, out: &mut Vec<TypeVar>) {
+    match ty {
+        Type::Var(tv) => {
+            if !out.contains(tv) {
+                out.push(*tv);
+            }
+        }
+        Type::Fn {
+            params,
+            ret,
+            effects,
+        } => {
+            for p in params {
+                collect_type_vars_ordered(p, out);
+            }
+            collect_type_vars_ordered(ret, out);
+            collect_effect_row_vars(effects, out);
+        }
+        Type::Adt { args, .. } => {
+            for arg in args {
+                collect_type_vars_ordered(arg, out);
+            }
+        }
+        Type::Record { fields, .. } => {
+            for (_, field_ty) in fields {
+                collect_type_vars_ordered(field_ty, out);
+            }
+        }
+        Type::Tuple(items) => {
+            for item in items {
+                collect_type_vars_ordered(item, out);
+            }
+        }
+        Type::Vec(elem) | Type::Set(elem) => collect_type_vars_ordered(elem, out),
+        Type::Map { key, val } => {
+            collect_type_vars_ordered(key, out);
+            collect_type_vars_ordered(val, out);
+        }
+        _ => {} // primitives have no vars
+    }
+}
+
+fn collect_effect_row_vars(_effects: &EffectRow, _out: &mut Vec<TypeVar>) {
+    // Effect rows use string names, not TypeVars — nothing to collect.
+}
+
+/// Render a type to string with clean variable names (`a`, `b`, `c`, ...).
+fn prettify_type(ty: &Type) -> String {
+    let mut vars = Vec::new();
+    collect_type_vars_ordered(ty, &mut vars);
+    if vars.is_empty() {
+        return ty.to_string();
+    }
+    // Build a mapping: TypeVar → clean name
+    let names: std::collections::HashMap<TypeVar, String> = vars
+        .into_iter()
+        .enumerate()
+        .map(|(i, tv)| (tv, var_name(i)))
+        .collect();
+    render_type(ty, &names)
+}
+
+/// Generate a clean variable name: 0→"a", 1→"b", ..., 25→"z", 26→"a1", ...
+fn var_name(index: usize) -> String {
+    let letter = (b'a' + (index % 26) as u8) as char;
+    if index < 26 {
+        letter.to_string()
+    } else {
+        format!("{letter}{}", index / 26)
+    }
+}
+
+/// Render a type using the given variable name mapping.
+fn render_type(ty: &Type, names: &std::collections::HashMap<TypeVar, String>) -> String {
+    match ty {
+        Type::Var(tv) => names.get(tv).cloned().unwrap_or_else(|| format!("t{}", tv.0)),
+        Type::Fn {
+            params,
+            ret,
+            effects,
+        } => {
+            let mut out = String::from("(Fn [");
+            for (i, p) in params.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                out.push_str(&render_type(p, names));
+            }
+            out.push_str("] -> ");
+            out.push_str(&render_type(ret, names));
+            if !effects.is_empty() {
+                out.push_str(" ! [");
+                for (i, eff) in effects.effects.iter().enumerate() {
+                    if i > 0 {
+                        out.push(' ');
+                    }
+                    out.push_str(eff);
+                }
+                if let Some(tail) = &effects.tail {
+                    if !effects.effects.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str("| ");
+                    out.push_str(tail);
+                }
+                out.push(']');
+            }
+            out.push(')');
+            out
+        }
+        Type::Adt { name, args } => {
+            if args.is_empty() {
+                name.clone()
+            } else {
+                let mut out = format!("({name}");
+                for arg in args {
+                    out.push(' ');
+                    out.push_str(&render_type(arg, names));
+                }
+                out.push(')');
+                out
+            }
+        }
+        Type::Record { name, .. } => name.clone(),
+        Type::Tuple(items) => {
+            let mut out = String::from("(Tuple");
+            for item in items {
+                out.push(' ');
+                out.push_str(&render_type(item, names));
+            }
+            out.push(')');
+            out
+        }
+        Type::Vec(elem) => format!("(Vec {})", render_type(elem, names)),
+        Type::Map { key, val } => {
+            format!("(Map {} {})", render_type(key, names), render_type(val, names))
+        }
+        Type::Set(elem) => format!("(Set {})", render_type(elem, names)),
+        // All primitives: delegate to Display
+        _ => ty.to_string(),
+    }
+}
+
 fn build_hover(name: &str, ty: &Type, docstring: Option<&str>, span: Span, source: &str) -> Hover {
-    let mut value = format!("```nexl\n{name} : {ty}\n```");
+    let pretty = prettify_type(ty);
+    let mut value = format!("```nexl\n{name} : {pretty}\n```");
     match docstring {
         Some(doc) if !doc.is_empty() => {
             value.push_str("\n\n");
@@ -2276,5 +2421,44 @@ mod tests {
             .expect("definition request");
 
         assert!(response.is_none(), "should return None without project.nx");
+    }
+
+    // ── prettify_type tests ──────────────────────────────────────────────
+
+    #[test]
+    fn prettify_concrete_type_unchanged() {
+        let ty = Type::Fn {
+            params: vec![Type::Int, Type::Str],
+            ret: Box::new(Type::Bool),
+            effects: nexl_types::EffectRow::empty(),
+        };
+        assert_eq!(prettify_type(&ty), "(Fn [Int Str] -> Bool)");
+    }
+
+    #[test]
+    fn prettify_vars_get_clean_names() {
+        let ty = Type::Fn {
+            params: vec![Type::Var(TypeVar(45)), Type::Var(TypeVar(46))],
+            ret: Box::new(Type::Var(TypeVar(58))),
+            effects: nexl_types::EffectRow::empty(),
+        };
+        assert_eq!(prettify_type(&ty), "(Fn [a b] -> c)");
+    }
+
+    #[test]
+    fn prettify_repeated_var_same_name() {
+        // identity: (Fn [t5] -> t5) should become (Fn [a] -> a)
+        let ty = Type::Fn {
+            params: vec![Type::Var(TypeVar(5))],
+            ret: Box::new(Type::Var(TypeVar(5))),
+            effects: nexl_types::EffectRow::empty(),
+        };
+        assert_eq!(prettify_type(&ty), "(Fn [a] -> a)");
+    }
+
+    #[test]
+    fn prettify_no_vars_passthrough() {
+        assert_eq!(prettify_type(&Type::Int), "Int");
+        assert_eq!(prettify_type(&Type::Str), "Str");
     }
 }
