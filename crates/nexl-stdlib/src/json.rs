@@ -201,7 +201,7 @@ fn parse_object(input: &str) -> Result<(Value, &str), String> {
     let mut entries = Vec::new();
 
     if let Some(after) = rest.strip_prefix('}') {
-        return Ok((Value::Map(Rc::new(entries)), after));
+        return Ok((Value::Map(Rc::new(entries.into())), after));
     }
 
     loop {
@@ -223,7 +223,7 @@ fn parse_object(input: &str) -> Result<(Value, &str), String> {
 
         rest = after_val.trim_start();
         if let Some(after) = rest.strip_prefix('}') {
-            return Ok((Value::Map(Rc::new(entries)), after));
+            return Ok((Value::Map(Rc::new(entries.into())), after));
         }
         if let Some(after) = rest.strip_prefix(',') {
             rest = after.trim_start();
@@ -319,13 +319,16 @@ mod tests {
         let result = parse_json(r#"{"a": 1}"#).unwrap();
         assert_eq!(
             result,
-            Value::Map(Rc::new(vec![(
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("a"),
-                },
-                Value::Int(1),
-            )]))
+            Value::Map(Rc::new(
+                vec![(
+                    Value::Keyword {
+                        ns: None,
+                        name: Rc::from("a"),
+                    },
+                    Value::Int(1),
+                )]
+                .into()
+            ))
         );
     }
 

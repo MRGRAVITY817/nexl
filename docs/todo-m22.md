@@ -32,5 +32,5 @@
 - [x] 9. `str/format`
   - `(str/format "Hello, {}!" name)` — positional placeholder formatting
 
-- [ ] 10. HashMap-backed Map (stretch goal)
+- [x] 10. HashMap-backed Map (stretch goal)
   - Replace O(n) Vec-backed Map with O(1) HashMap for large maps

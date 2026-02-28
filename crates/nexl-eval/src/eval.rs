@@ -174,7 +174,7 @@ fn eval_map<'a>(
         };
         values.push((key, value));
     }
-    Ok(EvalReturn::Value(Value::Map(Rc::new(values))))
+    Ok(EvalReturn::Value(Value::Map(Rc::new(values.into()))))
 }
 
 fn eval_set<'a>(
@@ -384,9 +384,8 @@ fn match_pattern(pattern: &Pattern, value: &Value, bindings: &mut Vec<(Rc<str>, 
                         ns: None,
                         name: Rc::from(field_name.as_str()),
                     };
-                    let found = entries.iter().find(|(k, _)| *k == key);
-                    match found {
-                        Some((_, val)) => {
+                    match entries.get(&key) {
+                        Some(val) => {
                             if !match_pattern(sub_pat, val, bindings) {
                                 return false;
                             }

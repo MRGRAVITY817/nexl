@@ -1,11 +1,220 @@
+use indexmap::IndexMap;
 use meta::Node;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 type ModuleExports = Rc<HashMap<Rc<str>, Value>>;
 
 /// Type alias for a native closure's implementation.
 pub type NativeClosureFn = Rc<dyn Fn(&[Value]) -> Result<Value, String>>;
+
+// ---------------------------------------------------------------------------
+// NexlMap — O(1) persistent map backed by IndexMap
+// ---------------------------------------------------------------------------
+
+/// A newtype wrapper around `Value` used exclusively as a map key.
+///
+/// Implements `Eq` and `Hash` so it can be stored in an `IndexMap`:
+/// - Floats are compared and hashed **bitwise** (so `NaN == NaN` in this context).
+/// - Functions / closures are compared and hashed by **pointer identity**.
+///
+/// This type is private to this module; public API is through [`NexlMap`].
+#[derive(Clone, Debug)]
+struct ValueKey(Value);
+
+impl PartialEq for ValueKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Value::Float(a), Value::Float(b)) => a.to_bits() == b.to_bits(),
+            _ => self.0 == other.0,
+        }
+    }
+}
+
+impl Eq for ValueKey {}
+
+impl Hash for ValueKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(&self.0).hash(state);
+        match &self.0 {
+            Value::Int(n) => n.hash(state),
+            Value::Float(f) => f.to_bits().hash(state),
+            Value::Bool(b) => b.hash(state),
+            Value::Str(s) => s.hash(state),
+            Value::Unit => {}
+            Value::Char(c) => c.hash(state),
+            Value::Keyword { ns, name } => {
+                ns.hash(state);
+                name.hash(state);
+            }
+            Value::Symbol { ns, name } => {
+                ns.hash(state);
+                name.hash(state);
+            }
+            Value::Ratio(n, d) => {
+                n.hash(state);
+                d.hash(state);
+            }
+            Value::Vec(items) => {
+                items.len().hash(state);
+                for item in items.iter() {
+                    ValueKey(item.clone()).hash(state);
+                }
+            }
+            Value::Map(m) => {
+                m.len().hash(state);
+                // XOR hashes of entries for order-independence.
+                let mut xor: u64 = 0;
+                for (k, v) in m.iter() {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    ValueKey(k.clone()).hash(&mut h);
+                    ValueKey(v.clone()).hash(&mut h);
+                    xor ^= h.finish();
+                }
+                xor.hash(state);
+            }
+            Value::Set(items) => {
+                items.len().hash(state);
+                // XOR hashes for order-independence.
+                let mut xor: u64 = 0;
+                for item in items.iter() {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    ValueKey(item.clone()).hash(&mut h);
+                    xor ^= h.finish();
+                }
+                xor.hash(state);
+            }
+            Value::Adt {
+                type_name,
+                ctor,
+                fields,
+            } => {
+                type_name.hash(state);
+                ctor.hash(state);
+                for f in fields.iter() {
+                    ValueKey(f.clone()).hash(state);
+                }
+            }
+            Value::Function(f) => (Rc::as_ptr(f) as usize).hash(state),
+            Value::NativeFunction(nf) => (nf.f as usize).hash(state),
+            Value::NativeClosure { f, .. } => {
+                (Rc::as_ptr(f) as *const () as usize).hash(state);
+            }
+        }
+    }
+}
+
+/// A persistent, insertion-order-preserving map from [`Value`] keys to [`Value`] values.
+///
+/// Backed by an [`IndexMap`] for O(1) average-case lookup, put, remove, and contains,
+/// while preserving insertion order for deterministic display output.
+///
+/// Map equality is **order-independent**: two maps with the same key–value pairs
+/// are equal regardless of insertion order.
+#[derive(Clone, Debug, Default)]
+pub struct NexlMap {
+    inner: IndexMap<ValueKey, Value>,
+}
+
+impl NexlMap {
+    /// Creates an empty map.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Builds a map from an iterator of `(key, value)` pairs.
+    ///
+    /// If a key appears more than once the **last** value wins (matching map-literal semantics).
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (Value, Value)>) -> Self {
+        let mut inner = IndexMap::new();
+        for (k, v) in pairs {
+            inner.insert(ValueKey(k), v);
+        }
+        NexlMap { inner }
+    }
+
+    /// Returns the number of entries.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns `true` if the map has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Looks up `key`, returning `Some(&value)` on a hit or `None` on a miss.
+    pub fn get(&self, key: &Value) -> Option<&Value> {
+        // SAFETY: ValueKey is repr-transparent over Value in terms of storage;
+        // we borrow it here only for the lookup, not for ownership.
+        self.inner.get(&ValueKey(key.clone()))
+    }
+
+    /// Returns `true` if `key` is present.
+    pub fn contains(&self, key: &Value) -> bool {
+        self.inner.contains_key(&ValueKey(key.clone()))
+    }
+
+    /// Returns a new map with `key` mapped to `value`.
+    ///
+    /// If `key` already exists its value is replaced **in place** (preserving its
+    /// original insertion position).
+    pub fn put(&self, key: Value, value: Value) -> Self {
+        let mut inner = self.inner.clone();
+        inner.insert(ValueKey(key), value);
+        NexlMap { inner }
+    }
+
+    /// Returns a new map with `key` removed. If `key` is absent the original map
+    /// is returned unchanged (cloned).
+    pub fn remove(&self, key: &Value) -> Self {
+        let mut inner = self.inner.clone();
+        inner.shift_remove(&ValueKey(key.clone()));
+        NexlMap { inner }
+    }
+
+    /// Iterates over `(key, value)` references in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&Value, &Value)> {
+        self.inner.iter().map(|(k, v)| (&k.0, v))
+    }
+
+    /// Iterates over keys in insertion order.
+    pub fn keys(&self) -> impl Iterator<Item = &Value> {
+        self.inner.keys().map(|k| &k.0)
+    }
+
+    /// Iterates over values in insertion order.
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.inner.values()
+    }
+}
+
+impl PartialEq for NexlMap {
+    /// Order-independent equality: two maps are equal iff they have the same key–value pairs.
+    fn eq(&self, other: &Self) -> bool {
+        if self.inner.len() != other.inner.len() {
+            return false;
+        }
+        for (k, v) in &self.inner {
+            match other.inner.get(k) {
+                Some(ov) => {
+                    if v != ov {
+                        return false;
+                    }
+                }
+                None => return false,
+            }
+        }
+        true
+    }
+}
+
+impl From<Vec<(Value, Value)>> for NexlMap {
+    fn from(pairs: Vec<(Value, Value)>) -> Self {
+        NexlMap::from_pairs(pairs)
+    }
+}
 
 /// A built-in function implemented natively in Rust.
 ///
@@ -79,8 +288,8 @@ pub enum Value {
 
     /// Persistent vector value.
     Vec(Rc<Vec<Value>>),
-    /// Persistent map value.
-    Map(Rc<Vec<(Value, Value)>>),
+    /// Persistent map value — O(1) lookup, insertion-order display.
+    Map(Rc<NexlMap>),
     /// Persistent set value.
     Set(Rc<Vec<Value>>),
     /// Algebraic data type value (constructor + fields).
@@ -142,7 +351,7 @@ impl PartialEq for Value {
             ) => ans == bns && aname == bname,
             (Value::Ratio(an, ad), Value::Ratio(bn, bd)) => an == bn && ad == bd,
             (Value::Vec(a), Value::Vec(b)) => a == b,
-            (Value::Map(a), Value::Map(b)) => multiset_eq(a, b),
+            (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => multiset_eq(a, b),
             (
                 Value::Adt {
@@ -499,22 +708,13 @@ mod tests {
 
     #[test]
     fn value_map_display() {
-        let v = Value::Map(Rc::new(vec![
-            (
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("a"),
-                },
-                Value::Int(1),
-            ),
-            (
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("b"),
-                },
-                Value::Int(2),
-            ),
-        ]));
+        let v = Value::Map(Rc::new(
+            vec![
+                (kw("a"), Value::Int(1)),
+                (kw("b"), Value::Int(2)),
+            ]
+            .into(),
+        ));
         assert_eq!(v.to_string(), "{:a 1 :b 2}");
     }
 
@@ -535,45 +735,13 @@ mod tests {
 
     #[test]
     fn value_map_equality_structural() {
-        let a = Value::Map(Rc::new(vec![
-            (
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("a"),
-                },
-                Value::Int(1),
-            ),
-            (
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("b"),
-                },
-                Value::Int(2),
-            ),
-        ]));
-        let b = Value::Map(Rc::new(vec![
-            (
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("b"),
-                },
-                Value::Int(2),
-            ),
-            (
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("a"),
-                },
-                Value::Int(1),
-            ),
-        ]));
-        let c = Value::Map(Rc::new(vec![(
-            Value::Keyword {
-                ns: None,
-                name: Rc::from("a"),
-            },
-            Value::Int(2),
-        )]));
+        let a = Value::Map(Rc::new(
+            vec![(kw("a"), Value::Int(1)), (kw("b"), Value::Int(2))].into(),
+        ));
+        let b = Value::Map(Rc::new(
+            vec![(kw("b"), Value::Int(2)), (kw("a"), Value::Int(1))].into(),
+        ));
+        let c = Value::Map(Rc::new(vec![(kw("a"), Value::Int(2))].into()));
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
@@ -591,14 +759,7 @@ mod tests {
     fn value_type_name_collections() {
         assert_eq!(Value::Vec(Rc::new(vec![Value::Int(1)])).type_name(), "Vec");
         assert_eq!(
-            Value::Map(Rc::new(vec![(
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("a"),
-                },
-                Value::Int(1),
-            )]))
-            .type_name(),
+            Value::Map(Rc::new(vec![(kw("a"), Value::Int(1))].into())).type_name(),
             "Map"
         );
         assert_eq!(Value::Set(Rc::new(vec![Value::Int(1)])).type_name(), "Set");
@@ -707,5 +868,132 @@ mod tests {
         let v2 = v.clone();
         let Value::Str(ref rc2) = v2 else { panic!() };
         assert!(Rc::ptr_eq(rc1, rc2));
+    }
+
+    // NexlMap tests
+
+    fn kw(name: &str) -> Value {
+        Value::Keyword {
+            ns: None,
+            name: Rc::from(name),
+        }
+    }
+
+    #[test]
+    fn nexlmap_new_is_empty() {
+        let m = NexlMap::new();
+        assert_eq!(m.len(), 0);
+        assert!(m.is_empty());
+    }
+
+    #[test]
+    fn nexlmap_from_pairs_keyword_lookup() {
+        let m = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1))]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m.get(&kw("a")), Some(&Value::Int(1)));
+        assert_eq!(m.get(&kw("b")), None);
+    }
+
+    #[test]
+    fn nexlmap_from_pairs_int_key() {
+        let m = NexlMap::from_pairs(vec![(Value::Int(42), Value::Bool(true))]);
+        assert_eq!(m.get(&Value::Int(42)), Some(&Value::Bool(true)));
+        assert_eq!(m.get(&Value::Int(0)), None);
+    }
+
+    #[test]
+    fn nexlmap_from_pairs_string_key() {
+        let m = NexlMap::from_pairs(vec![(
+            Value::Str(Rc::from("hello")),
+            Value::Int(99),
+        )]);
+        assert_eq!(m.get(&Value::Str(Rc::from("hello"))), Some(&Value::Int(99)));
+        assert_eq!(m.get(&Value::Str(Rc::from("world"))), None);
+    }
+
+    #[test]
+    fn nexlmap_put_new_key() {
+        let m = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1))]);
+        let m2 = m.put(kw("b"), Value::Int(2));
+        assert_eq!(m2.len(), 2);
+        assert_eq!(m2.get(&kw("b")), Some(&Value::Int(2)));
+    }
+
+    #[test]
+    fn nexlmap_put_existing_key_replaces() {
+        let m = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1))]);
+        let m2 = m.put(kw("a"), Value::Int(99));
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2.get(&kw("a")), Some(&Value::Int(99)));
+    }
+
+    #[test]
+    fn nexlmap_put_is_persistent() {
+        let m = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1))]);
+        let _m2 = m.put(kw("b"), Value::Int(2));
+        // Original map unchanged
+        assert_eq!(m.len(), 1);
+        assert_eq!(m.get(&kw("b")), None);
+    }
+
+    #[test]
+    fn nexlmap_remove_existing() {
+        let m = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1)), (kw("b"), Value::Int(2))]);
+        let m2 = m.remove(&kw("a"));
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2.get(&kw("a")), None);
+        assert_eq!(m2.get(&kw("b")), Some(&Value::Int(2)));
+    }
+
+    #[test]
+    fn nexlmap_remove_missing_noop() {
+        let m = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1))]);
+        let m2 = m.remove(&kw("z"));
+        assert_eq!(m2.len(), 1);
+        assert_eq!(m2.get(&kw("a")), Some(&Value::Int(1)));
+    }
+
+    #[test]
+    fn nexlmap_contains() {
+        let m = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1))]);
+        assert!(m.contains(&kw("a")));
+        assert!(!m.contains(&kw("b")));
+    }
+
+    #[test]
+    fn nexlmap_equality_order_independent() {
+        let ab = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1)), (kw("b"), Value::Int(2))]);
+        let ba = NexlMap::from_pairs(vec![(kw("b"), Value::Int(2)), (kw("a"), Value::Int(1))]);
+        assert_eq!(ab, ba);
+    }
+
+    #[test]
+    fn nexlmap_inequality() {
+        let m1 = NexlMap::from_pairs(vec![(kw("a"), Value::Int(1))]);
+        let m2 = NexlMap::from_pairs(vec![(kw("a"), Value::Int(2))]);
+        let m3 = NexlMap::from_pairs(vec![(kw("b"), Value::Int(1))]);
+        assert_ne!(m1, m2);
+        assert_ne!(m1, m3);
+    }
+
+    #[test]
+    fn nexlmap_iter_insertion_order() {
+        let m = NexlMap::from_pairs(vec![
+            (kw("c"), Value::Int(3)),
+            (kw("a"), Value::Int(1)),
+            (kw("b"), Value::Int(2)),
+        ]);
+        let keys: Vec<&Value> = m.keys().collect();
+        assert_eq!(keys, vec![&kw("c"), &kw("a"), &kw("b")]);
+    }
+
+    #[test]
+    fn nexlmap_duplicate_key_last_wins() {
+        let m = NexlMap::from_pairs(vec![
+            (kw("a"), Value::Int(1)),
+            (kw("a"), Value::Int(99)),
+        ]);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m.get(&kw("a")), Some(&Value::Int(99)));
     }
 }

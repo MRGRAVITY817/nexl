@@ -1006,22 +1006,13 @@ mod tests {
         let result = eval(&expr, &env).unwrap();
         assert_eq!(
             result,
-            Value::Map(Rc::new(vec![
-                (
-                    Value::Keyword {
-                        ns: None,
-                        name: Rc::from("a"),
-                    },
-                    Value::Int(1),
-                ),
-                (
-                    Value::Keyword {
-                        ns: None,
-                        name: Rc::from("b"),
-                    },
-                    Value::Int(2),
-                ),
-            ]))
+            Value::Map(Rc::new(
+                vec![
+                    (kw("a"), Value::Int(1)),
+                    (kw("b"), Value::Int(2)),
+                ]
+                .into()
+            ))
         );
     }
 
@@ -1049,13 +1040,7 @@ mod tests {
         let result = eval(&expr, &env).unwrap();
         assert_eq!(
             result,
-            Value::Map(Rc::new(vec![(
-                Value::Keyword {
-                    ns: None,
-                    name: Rc::from("status"),
-                },
-                Value::Int(10),
-            )]))
+            Value::Map(Rc::new(vec![(kw("status"), Value::Int(10))].into()))
         );
     }
 
@@ -1064,7 +1049,7 @@ mod tests {
         let env = Rc::new(Env::new());
         let expr = map(vec![]);
         let result = eval(&expr, &env).unwrap();
-        assert_eq!(result, Value::Map(Rc::new(vec![])));
+        assert_eq!(result, Value::Map(Rc::new(vec![].into())));
     }
 
     #[test]
@@ -2839,18 +2824,20 @@ mod tests {
     fn map_put_updates_and_appends() {
         assert_eq!(
             eval_str(r#"(put {:a 1 :b 2} :a 9)"#).unwrap(),
-            Value::Map(Rc::new(vec![
-                (kw("a"), Value::Int(9)),
-                (kw("b"), Value::Int(2)),
-            ]))
+            Value::Map(Rc::new(
+                vec![(kw("a"), Value::Int(9)), (kw("b"), Value::Int(2))].into()
+            ))
         );
         assert_eq!(
             eval_str(r#"(put {:a 1 :b 2} :c 3)"#).unwrap(),
-            Value::Map(Rc::new(vec![
-                (kw("a"), Value::Int(1)),
-                (kw("b"), Value::Int(2)),
-                (kw("c"), Value::Int(3)),
-            ]))
+            Value::Map(Rc::new(
+                vec![
+                    (kw("a"), Value::Int(1)),
+                    (kw("b"), Value::Int(2)),
+                    (kw("c"), Value::Int(3)),
+                ]
+                .into()
+            ))
         );
     }
 
@@ -2858,14 +2845,13 @@ mod tests {
     fn map_remove_existing_and_missing() {
         assert_eq!(
             eval_str(r#"(remove {:a 1 :b 2} :a)"#).unwrap(),
-            Value::Map(Rc::new(vec![(kw("b"), Value::Int(2))]))
+            Value::Map(Rc::new(vec![(kw("b"), Value::Int(2))].into()))
         );
         assert_eq!(
             eval_str(r#"(remove {:a 1 :b 2} :c)"#).unwrap(),
-            Value::Map(Rc::new(vec![
-                (kw("a"), Value::Int(1)),
-                (kw("b"), Value::Int(2)),
-            ]))
+            Value::Map(Rc::new(
+                vec![(kw("a"), Value::Int(1)), (kw("b"), Value::Int(2))].into()
+            ))
         );
     }
 
@@ -2974,14 +2960,13 @@ mod tests {
     fn seq_map_filter_reduce_map() {
         assert_eq!(
             eval_str(r#"(map (fn [x] (+ x 1)) {:a 1 :b 2})"#).unwrap(),
-            Value::Map(Rc::new(vec![
-                (kw("a"), Value::Int(2)),
-                (kw("b"), Value::Int(3)),
-            ]))
+            Value::Map(Rc::new(
+                vec![(kw("a"), Value::Int(2)), (kw("b"), Value::Int(3))].into()
+            ))
         );
         assert_eq!(
             eval_str(r#"(filter (fn [x] (> x 1)) {:a 1 :b 2})"#).unwrap(),
-            Value::Map(Rc::new(vec![(kw("b"), Value::Int(2))]))
+            Value::Map(Rc::new(vec![(kw("b"), Value::Int(2))].into()))
         );
         assert_eq!(
             eval_str(r#"(reduce (fn [acc x] (+ acc x)) 0 {:a 1 :b 2})"#).unwrap(),
@@ -4888,13 +4873,10 @@ mod tests {
         match &result {
             Value::Map(pairs) => {
                 assert_eq!(pairs.len(), 2);
-                // First group should be odd numbers (false), second even (true)
-                let (k0, v0) = &pairs[0];
-                assert_eq!(*k0, Value::Bool(false));
-                assert_eq!(*v0, Value::Vec(Rc::new(vec![int(1), int(3), int(5)])));
-                let (k1, v1) = &pairs[1];
-                assert_eq!(*k1, Value::Bool(true));
-                assert_eq!(*v1, Value::Vec(Rc::new(vec![int(2), int(4)])));
+                let odds = pairs.get(&Value::Bool(false)).expect("key false");
+                assert_eq!(*odds, Value::Vec(Rc::new(vec![int(1), int(3), int(5)])));
+                let evens = pairs.get(&Value::Bool(true)).expect("key true");
+                assert_eq!(*evens, Value::Vec(Rc::new(vec![int(2), int(4)])));
             }
             other => panic!("expected Map, got {other}"),
         }

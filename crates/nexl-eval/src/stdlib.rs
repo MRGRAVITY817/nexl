@@ -461,14 +461,10 @@ fn get(args: &[Value]) -> Result<Value, String> {
             }
             other => Err(type_mismatch("get", "Int", other)),
         },
-        Value::Map(entries) => {
-            for (key, value) in entries.iter() {
-                if key == idx {
-                    return Ok(option_some(value.clone()));
-                }
-            }
-            Ok(option_none())
-        }
+        Value::Map(entries) => match entries.get(idx) {
+            Some(value) => Ok(option_some(value.clone())),
+            None => Ok(option_none()),
+        },
         other => Err(type_mismatch("get", "Vec or Map", other)),
     }
 }
@@ -496,19 +492,7 @@ fn put(args: &[Value]) -> Result<Value, String> {
             other => Err(type_mismatch("put", "Int", other)),
         },
         Value::Map(entries) => {
-            let mut next = entries.as_ref().clone();
-            let mut updated = false;
-            for (key, val) in next.iter_mut() {
-                if key == idx {
-                    *val = value.clone();
-                    updated = true;
-                    break;
-                }
-            }
-            if !updated {
-                next.push((idx.clone(), value.clone()));
-            }
-            Ok(Value::Map(Rc::new(next)))
+            Ok(Value::Map(Rc::new(entries.put(idx.clone(), value.clone()))))
         }
         other => Err(type_mismatch("put", "Vec or Map", other)),
     }
@@ -594,14 +578,7 @@ fn slice(args: &[Value]) -> Result<Value, String> {
 fn remove(args: &[Value]) -> Result<Value, String> {
     let (coll, key) = two_args("remove", args)?;
     match coll {
-        Value::Map(entries) => {
-            let next: Vec<(Value, Value)> = entries
-                .iter()
-                .filter(|(entry_key, _)| entry_key != key)
-                .cloned()
-                .collect();
-            Ok(Value::Map(Rc::new(next)))
-        }
+        Value::Map(entries) => Ok(Value::Map(Rc::new(entries.remove(key)))),
         Value::Set(items) => {
             let next: Vec<Value> = items.iter().filter(|item| *item != key).cloned().collect();
             Ok(Value::Set(Rc::new(next)))
@@ -615,7 +592,7 @@ fn keys(args: &[Value]) -> Result<Value, String> {
     let coll = one_arg("keys", args)?;
     match coll {
         Value::Map(entries) => Ok(Value::Vec(Rc::new(
-            entries.iter().map(|(key, _)| key.clone()).collect(),
+            entries.keys().cloned().collect(),
         ))),
         other => Err(type_mismatch("keys", "Map", other)),
     }
@@ -626,7 +603,7 @@ fn vals(args: &[Value]) -> Result<Value, String> {
     let coll = one_arg("vals", args)?;
     match coll {
         Value::Map(entries) => Ok(Value::Vec(Rc::new(
-            entries.iter().map(|(_, value)| value.clone()).collect(),
+            entries.values().cloned().collect(),
         ))),
         other => Err(type_mismatch("vals", "Map", other)),
     }
@@ -650,9 +627,7 @@ fn entries(args: &[Value]) -> Result<Value, String> {
 fn contains(args: &[Value]) -> Result<Value, String> {
     let (coll, key) = two_args("contains?", args)?;
     match coll {
-        Value::Map(entries) => Ok(Value::Bool(
-            entries.iter().any(|(entry_key, _)| entry_key == key),
-        )),
+        Value::Map(entries) => Ok(Value::Bool(entries.contains(key))),
         Value::Set(items) => Ok(Value::Bool(items.iter().any(|item| item == key))),
         other => Err(type_mismatch("contains?", "Map or Set", other)),
     }
@@ -763,7 +738,7 @@ fn map_fn(args: &[Value]) -> Result<Value, String> {
                 let mapped = call1(func, value.clone())?;
                 out.push((key.clone(), mapped));
             }
-            Ok(Value::Map(Rc::new(out)))
+            Ok(Value::Map(Rc::new(out.into())))
         }
         Value::Adt {
             type_name,
@@ -815,7 +790,7 @@ fn filter_fn(args: &[Value]) -> Result<Value, String> {
                     out.push((key.clone(), value.clone()));
                 }
             }
-            Ok(Value::Map(Rc::new(out)))
+            Ok(Value::Map(Rc::new(out.into())))
         }
         Value::Adt {
             type_name,
@@ -1043,7 +1018,7 @@ fn group_by_fn(args: &[Value]) -> Result<Value, String> {
         .into_iter()
         .map(|(k, vs)| (k, Value::Vec(Rc::new(vs))))
         .collect();
-    Ok(Value::Map(Rc::new(pairs)))
+    Ok(Value::Map(Rc::new(pairs.into())))
 }
 
 /// `(zip a b)` — zip two Vecs into a Vec of two-element Vecs.
