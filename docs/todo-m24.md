@@ -45,7 +45,7 @@
   - `log/set-level level` — filter log level at runtime
   - Context accumulation via thread-local
 
-- [ ] 7. **`nexl test` CLI command**
+- [x] 7. **`nexl test` CLI command**
   - `nexl test [file]` — finds and runs `deftest` forms in source files
   - Evaluates file, collects tests from `*test-registry*` global
   - Reports pass/fail counts with timing

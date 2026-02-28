@@ -19,6 +19,7 @@ nexl-native = { path = "../nexl-native" }
 nexl-lsp = { path = "../nexl-lsp" }
 nexl-pkg = { path = "../nexl-pkg" }
 nexl-doc = { path = "../nexl-doc" }
+nexl-stdlib = { path = "../nexl-stdlib" }
 tokio = { version = "1", features = ["full"] }
 meta = { package = "nexl-ast", path = "../nexl-ast" }
 serde = { version = "1", features = ["derive"] }

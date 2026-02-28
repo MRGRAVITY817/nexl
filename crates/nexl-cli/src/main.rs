@@ -126,6 +126,15 @@ enum Command {
         #[command(subcommand)]
         command: PkgCommand,
     },
+    /// Run tests in a Nexl source file.
+    Test {
+        /// File to test.
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
+        /// Only run tests whose names contain this substring.
+        #[arg(long = "filter")]
+        filter: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand, PartialEq, Eq)]
@@ -260,6 +269,16 @@ fn main() {
             if let Err(message) = command_pkg(command) {
                 print_error(&message);
                 process::exit(1);
+            }
+        }
+        Command::Test { input, filter } => {
+            match command_test(input, filter.as_deref()) {
+                Ok(true) => {}
+                Ok(false) => process::exit(1),
+                Err(message) => {
+                    print_error(&message);
+                    process::exit(1);
+                }
             }
         }
     }
@@ -513,6 +532,71 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// `nexl test [file]` — evaluate source file and run all registered tests.
+///
+/// Returns `Ok(true)` if all tests pass, `Ok(false)` if any fail,
+/// or `Err` if the file fails to evaluate.
+fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, String> {
+    use nexl_stdlib::test as test_mod;
+
+    // Clear any tests from a previous run.
+    test_mod::registry_clear();
+
+    // Evaluate the source file. This will call (test/register! ...) for each test.
+    let source = std::fs::read_to_string(&input_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
+
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
+
+    let env = nexl_eval::stdlib::standard_env();
+    for node in &nodes {
+        nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
+    }
+
+    // Drain the registry and optionally filter by name.
+    let mut tests = test_mod::registry_drain();
+    if let Some(f) = filter {
+        tests.retain(|(name, _thunk): &(String, _)| name.contains(f));
+    }
+
+    let total = tests.len();
+    let file_name = input_path.display().to_string();
+    println!("running {total} tests in {file_name}");
+
+    let mut passed: usize = 0;
+    let mut failed: usize = 0;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (name, thunk) in tests {
+        match nexl_runtime::call_value(&thunk, &[]) {
+            Ok(_) => {
+                passed += 1;
+                println!("  PASS  {name}");
+            }
+            Err(msg) => {
+                failed += 1;
+                println!("  FAIL  {name}");
+                failures.push(format!("  {name}: {msg}"));
+            }
+        }
+    }
+
+    println!();
+    if failed == 0 {
+        println!("test result: ok. {passed} passed; 0 failed");
+        Ok(true)
+    } else {
+        println!("failures:");
+        for f in &failures {
+            println!("{f}");
+        }
+        println!();
+        println!("test result: FAILED. {passed} passed; {failed} failed");
+        Ok(false)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1777,6 +1861,50 @@ mod tests {
             Command::Audit { input } => assert_eq!(input, PathBuf::from("main.nexl")),
             other => panic!("expected Audit, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_test_with_input() {
+        let cli = Cli::try_parse_from(["nexl", "test", "tests.nx"]).expect("parse");
+        match cli.command {
+            Command::Test { input, filter } => {
+                assert_eq!(input, PathBuf::from("tests.nx"));
+                assert_eq!(filter, None);
+            }
+            other => panic!("expected Test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_test_with_filter() {
+        let cli = Cli::try_parse_from(["nexl", "test", "tests.nx", "--filter", "my-"]).expect("parse");
+        match cli.command {
+            Command::Test { filter, .. } => assert_eq!(filter, Some("my-".to_string())),
+            other => panic!("expected Test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_command_runs_empty_file() {
+        let source = "(def x 1)";
+        let path = write_temp_file(source, "test_cmd_empty");
+        let result = command_test(path.clone(), None);
+        let _ = std::fs::remove_file(&path);
+        // Should succeed with 0 tests
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "empty registry should return true (0 failures)");
+    }
+
+    #[test]
+    fn test_command_runs_registered_tests() {
+        let source = r#"
+(test/register! "pass-test" (fn [] (test/is true)))
+"#;
+        let path = write_temp_file(source, "test_cmd_reg");
+        let result = command_test(path.clone(), None);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "passing test should return true");
     }
 
     #[test]

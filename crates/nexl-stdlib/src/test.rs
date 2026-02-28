@@ -10,11 +10,43 @@
 //! - `test/check name values pred` — property test: run pred on each value
 //! - `test/run-tests tests` — run a Vec of `[name thunk]` pairs, return report
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use nexl_runtime::Value;
 
 use crate::StdlibEntry;
+
+// ─── Thread-local test registry ──────────────────────────────────────────────
+
+/// A registered test: (name, thunk).
+type TestEntry = (String, Value);
+
+thread_local! {
+    static TEST_REGISTRY: RefCell<Vec<TestEntry>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Add a test to the thread-local registry.
+pub fn registry_push(name: String, thunk: Value) {
+    TEST_REGISTRY.with(|r| r.borrow_mut().push((name, thunk)));
+}
+
+/// Take all tests from the registry (drains it).
+pub fn registry_drain() -> Vec<TestEntry> {
+    TEST_REGISTRY.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Clear the registry without running.
+pub fn registry_clear() {
+    TEST_REGISTRY.with(|r| r.borrow_mut().clear());
+}
+
+/// Return how many tests are registered.
+pub fn registry_len() -> usize {
+    TEST_REGISTRY.with(|r| r.borrow().len())
+}
+
+// ─── Stdlib entries ───────────────────────────────────────────────────────────
 
 /// Return all `test` module function entries.
 pub fn entries() -> Vec<StdlibEntry> {
@@ -25,6 +57,9 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("skip", skip_fn),
         ("check", check_fn),
         ("run-tests", run_tests_fn),
+        ("register!", register_fn),
+        ("run-registered", run_registered_fn),
+        ("clear-registry!", clear_registry_fn),
     ]
 }
 
@@ -131,6 +166,63 @@ fn check_fn(args: &[Value]) -> Result<Value, String> {
             args[2].type_name()
         )),
     }
+}
+
+/// `(test/register! name thunk)` — register a test in the thread-local registry.
+///
+/// Typically used in conjunction with `nexl test` which evaluates a file and
+/// then calls `test/run-registered` to execute all registered tests.
+fn register_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [name, thunk] => {
+            let name_str = match name {
+                Value::Str(s) => s.to_string(),
+                other => other.to_string(),
+            };
+            registry_push(name_str, thunk.clone());
+            Ok(Value::Unit)
+        }
+        _ => Err(format!(
+            "`test/register!` requires 2 arguments (name thunk), got {}",
+            args.len()
+        )),
+    }
+}
+
+/// `(test/run-registered)` — run all tests in the thread-local registry.
+///
+/// Drains the registry (tests are removed after running). Returns the same
+/// report Map as `test/run-tests`.
+fn run_registered_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!(
+            "`test/run-registered` takes no arguments, got {}",
+            args.len()
+        ));
+    }
+    let tests = registry_drain();
+    let test_vec: Vec<Value> = tests
+        .into_iter()
+        .map(|(name, thunk)| {
+            Value::Vec(Rc::new(vec![
+                Value::Str(Rc::from(name.as_str())),
+                thunk,
+            ]))
+        })
+        .collect();
+    run_tests_fn(&[Value::Vec(Rc::new(test_vec))])
+}
+
+/// `(test/clear-registry!)` — discard all registered tests without running them.
+fn clear_registry_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!(
+            "`test/clear-registry!` takes no arguments, got {}",
+            args.len()
+        ));
+    }
+    registry_clear();
+    Ok(Value::Unit)
 }
 
 /// `(test/run-tests tests)` — run a Vec of `[name thunk]` pairs.
@@ -270,6 +362,80 @@ mod tests {
             Value::Adt { ctor, .. } => assert_eq!(ctor.as_ref(), "Skip"),
             other => panic!("expected Skip Adt, got {other}"),
         }
+    }
+
+    // ── Test: register! / run-registered / clear-registry! ──────────────────
+
+    #[test]
+    fn test_register_adds_to_registry() {
+        registry_clear();
+        let thunk = Value::NativeFunction(Rc::new(nexl_runtime::NativeFn {
+            name: "t",
+            f: |_| Ok(Value::Unit),
+        }));
+        register_fn(&[Value::Str(Rc::from("my-test")), thunk]).unwrap();
+        assert_eq!(registry_len(), 1);
+        registry_clear();
+    }
+
+    #[test]
+    fn test_run_registered_empty() {
+        registry_clear();
+        let report = run_registered_fn(&[]).unwrap();
+        let map = match report { Value::Map(m) => m, other => panic!("{other}") };
+        let get = |key: &str| -> Value {
+            map.iter()
+                .find(|(k, _)| matches!(k, Value::Keyword { name, .. } if name.as_ref() == key))
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        assert_eq!(get("passed"), Value::Int(0));
+        assert_eq!(get("failed"), Value::Int(0));
+    }
+
+    #[test]
+    fn test_run_registered_with_pass() {
+        registry_clear();
+        let pass_thunk = Value::NativeFunction(Rc::new(nexl_runtime::NativeFn {
+            name: "pass",
+            f: |_| Ok(Value::Unit),
+        }));
+        register_fn(&[Value::Str(Rc::from("t1")), pass_thunk]).unwrap();
+        let report = run_registered_fn(&[]).unwrap();
+        let map = match report { Value::Map(m) => m, other => panic!("{other}") };
+        let passed = map.iter()
+            .find(|(k, _)| matches!(k, Value::Keyword { name, .. } if name.as_ref() == "passed"))
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert_eq!(passed, Value::Int(1));
+    }
+
+    #[test]
+    fn test_run_registered_with_fail() {
+        registry_clear();
+        let fail_thunk = Value::NativeFunction(Rc::new(nexl_runtime::NativeFn {
+            name: "fail",
+            f: |_| Err("boom".to_string()),
+        }));
+        register_fn(&[Value::Str(Rc::from("t-fail")), fail_thunk]).unwrap();
+        let report = run_registered_fn(&[]).unwrap();
+        let map = match report { Value::Map(m) => m, other => panic!("{other}") };
+        let failed = map.iter()
+            .find(|(k, _)| matches!(k, Value::Keyword { name, .. } if name.as_ref() == "failed"))
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert_eq!(failed, Value::Int(1));
+    }
+
+    #[test]
+    fn test_clear_registry() {
+        let thunk = Value::NativeFunction(Rc::new(nexl_runtime::NativeFn {
+            name: "t",
+            f: |_| Ok(Value::Unit),
+        }));
+        register_fn(&[Value::Str(Rc::from("x")), thunk]).unwrap();
+        clear_registry_fn(&[]).unwrap();
+        assert_eq!(registry_len(), 0);
     }
 
     // ── Test: check ──────────────────────────────────────────────────────────
