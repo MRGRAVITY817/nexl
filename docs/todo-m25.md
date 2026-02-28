@@ -11,7 +11,7 @@
   - `nexl upgrade` checks for latest version and updates the binary
   - Stub implementation: prints version + instructions (no real download server yet)
 
-- [ ] 3. **Error message audit — type inference**
+- [x] 3. **Error message audit — type inference**
   - Audit type mismatch errors for clarity
   - Show expected vs actual with source location
   - Cascade suppression: don't flood user with downstream errors

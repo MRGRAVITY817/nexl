@@ -92,8 +92,13 @@ impl InferState {
     }
 
     /// Push a non-fatal error into the accumulated error list.
+    /// Maximum errors before cascade suppression kicks in.
+    const ERROR_LIMIT: usize = 20;
+
     pub fn push_error(&mut self, e: TypeError) {
-        self.errors.push(e);
+        if self.errors.len() < Self::ERROR_LIMIT {
+            self.errors.push(e);
+        }
     }
 
     /// Push a non-fatal warning into the accumulated warning list.
@@ -748,7 +753,14 @@ fn synth_application(items: &[Node], env: &Env, state: &mut InferState) -> Resul
         effects: EffectRow::new(Vec::new(), Some(state.fresh_effect_var())),
     };
     nexl_types::unify(&callee_ty, &expected_fn, &mut state.subst)
-        .map_err(|e| arithmetic_help(e, head_sym(items), &arg_types))?;
+        .map_err(|e| {
+            let e = arithmetic_help(e, head_sym(items), &arg_types);
+            if let Some(name) = head_sym(items) {
+                e.with_context(format!("in call to `{name}`"))
+            } else {
+                e
+            }
+        })?;
 
     if let Type::Fn { effects, .. } = state.subst.apply(&expected_fn) {
         state.add_effects(&effects);
@@ -9375,6 +9387,62 @@ mod tests {
             }
         );
     }
+
+    // ---- M25: Error message audit ----
+
+    #[test]
+    fn mismatch_shows_context_in_function_call() {
+        // Calling a function with wrong argument type should include
+        // "in call to `stringify`" in the error message.
+        let env = Env::new().extend(
+            "stringify",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Str],
+                ret: Box::new(Type::Str),
+                effects: EffectRow::empty(),
+            }),
+        );
+        let mut state = InferState::new();
+        // (stringify 42) — Int where Str is expected
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("stringify"), int_node(42)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("in call to `stringify`"),
+            "should include call context, got: '{msg}'"
+        );
+    }
+
+    #[test]
+    fn arithmetic_help_preserved_with_context() {
+        // ADR-006 help text should coexist with call context.
+        let env = Env::new().extend(
+            "+",
+            Scheme::mono(Type::Fn {
+                params: vec![Type::Int, Type::Int],
+                ret: Box::new(Type::Int),
+                effects: EffectRow::empty(),
+            }),
+        );
+        let mut state = InferState::new();
+        let node = Node::new(
+            NodeKind::List(vec![sym_node("+"), int_node(1), float_node(1.0)]),
+            syn_span(),
+        );
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("help:"),
+            "should still have help text, got: '{msg}'"
+        );
+        assert!(
+            msg.contains("in call to `+`"),
+            "should have call context, got: '{msg}'"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -9503,5 +9571,24 @@ mod integration_tests {
         let mut state = InferState::new();
         let ty = synth(&nodes[1], &env, &mut state).unwrap();
         assert_eq!(ty, Type::Int);
+    }
+
+    // ---- M25: Error message audit ----
+
+    #[test]
+    fn error_limit_suppresses_cascade() {
+        use nexl_types::unify::{TypeError, TypeErrorKind};
+        let mut state = InferState::new();
+        // Push more than ERROR_LIMIT errors.
+        for i in 0..30 {
+            state.push_error(TypeError::new(TypeErrorKind::UnboundVariable {
+                name: format!("x{i}"),
+            }));
+        }
+        assert_eq!(
+            state.errors.len(),
+            InferState::ERROR_LIMIT,
+            "should cap at ERROR_LIMIT"
+        );
     }
 }

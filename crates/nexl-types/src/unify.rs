@@ -39,6 +39,8 @@ pub struct TypeError {
     pub span: Option<Span>,
     /// Optional fix suggestion, e.g. "use (->float n) to convert".
     pub help: Option<String>,
+    /// Optional context, e.g. "in argument 1 of `stringify`".
+    pub context: Option<String>,
 }
 
 impl TypeError {
@@ -48,6 +50,7 @@ impl TypeError {
             kind,
             span: None,
             help: None,
+            context: None,
         }
     }
 
@@ -60,6 +63,12 @@ impl TypeError {
     /// Attach a help/suggestion string to this error (Principle 6).
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
+        self
+    }
+
+    /// Attach contextual information, e.g. "in argument 1 of `stringify`".
+    pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
+        self.context = Some(ctx.into());
         self
     }
 }
@@ -91,6 +100,9 @@ impl fmt::Display for TypeError {
             TypeErrorKind::MalformedForm { description } => {
                 write!(f, "malformed form: {description}")?;
             }
+        }
+        if let Some(ctx) = &self.context {
+            write!(f, " ({ctx})")?;
         }
         if let Some(help) = &self.help {
             write!(f, "\nhelp: {help}")?;
