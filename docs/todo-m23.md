@@ -8,7 +8,7 @@
   - Basic WASI linker setup (no interfaces yet — just engine + store + instantiate)
   - Prerequisite for all WASI interface work
 
-- [ ] 2. **`wasi:cli` — command-line basics**
+- [x] 2. **`wasi:cli` — command-line basics**
   - `wasi:cli/stdin`, `stdout`, `stderr` — read/write
   - `wasi:cli/environment` — args and env vars
   - `wasi:cli/exit` — process exit codes

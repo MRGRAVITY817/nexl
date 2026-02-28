@@ -443,7 +443,7 @@ fn discover_and_load_modules(
     Ok(loaded)
 }
 
-fn command_run_wasm(input_path: PathBuf, _args: Vec<String>) -> Result<(), String> {
+fn command_run_wasm(input_path: PathBuf, args: Vec<String>) -> Result<(), String> {
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
 
@@ -466,8 +466,9 @@ fn command_run_wasm(input_path: PathBuf, _args: Vec<String>) -> Result<(), Strin
         .emit(&ir_module)
         .map_err(|e| format!("codegen error: {e}"))?;
 
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
     wasm_runner::WasmRunner::new()
-        .run_wasm(&bytes)
+        .run_wasm(&bytes, &args_ref)
         .map_err(|e| format!("wasm error: {e}"))
 }
 
