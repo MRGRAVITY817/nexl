@@ -15,7 +15,7 @@
   - `http/response status body` → `Response`
   - `http/serve handler port` stub (Component Model backed in WASM)
 
-- [ ] 3. **`db` module — SQLite**
+- [x] 3. **`db` module — SQLite**
   - Add `rusqlite` (bundled) dependency to `nexl-stdlib`
   - `db/open path` → `(Result Db DbError)`
   - `db/query db sql params` → `(Result (Vec Map) DbError)`
