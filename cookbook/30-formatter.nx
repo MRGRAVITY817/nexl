@@ -1,0 +1,27 @@
+;; Recipe 30: Code Formatting with nexl fmt
+;;
+;; Problem: Maintain consistent code style across a project.
+;; Solution: Use `nexl fmt` to format source files.
+;;
+;; Format this file: nexl fmt cookbook/30-formatter.nx
+;; Format in-place:  nexl fmt -i cookbook/30-formatter.nx
+;; Custom width:     nexl fmt --width 100 cookbook/30-formatter.nx
+;; Custom indent:    nexl fmt --indent 4 cookbook/30-formatter.nx
+
+;; Before formatting, code might look like this:
+(defn messy-function [a b c] (if (> a 0) (+ b c) (* b c)))
+
+;; After formatting:
+(defn clean-function [a b c]
+  (if (> a 0)
+    (+ b c)
+    (* b c)))
+
+;; nexl fmt handles:
+;; - Consistent indentation (default 2 spaces)
+;; - Line wrapping at --width (default 80)
+;; - Vertical alignment of map entries
+;; - Proper nesting of nested forms
+
+(io/println "Use `nexl fmt -i <file>` to format in-place.")
+(io/println (str "clean: " (clean-function 1 2 3)))

@@ -1,0 +1,35 @@
+;; Recipe 29: Full Web Service Example
+;;
+;; Problem: Build a complete web service with routing, JSON, and logging.
+;; Solution: Combine http, json, log, and db modules.
+;;
+;; Run: nexl run cookbook/29-web-service.nx
+;; Note: http/serve is currently a stub — this shows the pattern.
+
+;; Setup database:
+(def db (unwrap (db/open "/tmp/nexl-web.db")))
+(db/execute db "CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT)" [])
+
+;; Route handler:
+(defn handle-request [req]
+  (log/info "request" {:path (http/body req)})
+  (let [body (http/body req)]
+    (match body
+      "list"
+        (let [rows (unwrap (db/query db "SELECT * FROM items" []))]
+          (http/response 200 (json/encode rows)))
+      _
+        (http/response 200 (json/encode {:message "Nexl web service"
+                                         :endpoints ["list"]})))))
+
+;; Build a response to demonstrate:
+(def resp (handle-request (http/response 200 "list")))
+(io/println (str "Status: " (http/status resp)))
+(io/println (str "Body: " (http/body resp)))
+
+;; Clean up:
+(db/execute db "DROP TABLE items" [])
+(db/close db)
+
+;; In production, you'd start the server:
+;; (http/serve handle-request 8080)

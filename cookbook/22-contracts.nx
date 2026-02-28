@@ -1,0 +1,27 @@
+;; Recipe 22: Function Contracts
+;;
+;; Problem: Enforce preconditions and postconditions on functions.
+;; Solution: Use :requires and :ensures clauses in defn.
+;;
+;; Run: nexl run cookbook/22-contracts.nx
+
+;; :requires checks inputs before the function runs.
+;; :ensures checks the return value after.
+(defn safe-divide [a b]
+  :requires [(not (= b 0))]
+  :ensures  [(fn [result] true)]
+  (/ a b))
+
+(io/println (str "10 / 3 = " (safe-divide 10 3)))
+
+;; Uncomment to see the contract violation:
+; (io/println (str "10 / 0 = " (safe-divide 10 0)))
+
+;; :examples serve as documentation and can be tested:
+(defn factorial [n]
+  :requires [(>= n 0)]
+  :examples [(= (factorial 0) 1)
+             (= (factorial 5) 120)]
+  (if (= n 0) 1 (* n (factorial (- n 1)))))
+
+(io/println (str "5! = " (factorial 5)))

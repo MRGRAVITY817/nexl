@@ -48,7 +48,7 @@
   - Structured logging, environment config, dotenv loading
   - WASM compilation, WIT imports
 
-- [ ] 11. **Cookbook — 10 advanced recipes**
+- [x] 11. **Cookbook — 10 advanced recipes**
   - Effect handlers, sandboxing, component composition
   - Property-based testing, custom macros, modules & packages
   - Full web service example

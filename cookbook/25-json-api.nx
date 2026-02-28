@@ -1,0 +1,30 @@
+;; Recipe 25: Building a JSON API Response
+;;
+;; Problem: Build structured JSON API responses.
+;; Solution: Combine maps, json/encode, and http/response.
+;;
+;; Run: nexl run cookbook/25-json-api.nx
+
+;; Helper to build API responses:
+(defn api-ok [data]
+  (let [body (json/encode {:status "ok" :data data})]
+    (http/response 200 body)))
+
+(defn api-error [code message]
+  (let [body (json/encode {:status "error" :message message})]
+    (http/response code body)))
+
+;; Build responses:
+(def users [{:id 1 :name "Alice"} {:id 2 :name "Bob"}])
+
+(def success (api-ok users))
+(io/println (str "Success status: " (http/status success)))
+(io/println (str "Success body: " (http/body success)))
+
+(def not-found (api-error 404 "User not found"))
+(io/println (str "Error status: " (http/status not-found)))
+(io/println (str "Error body: " (http/body not-found)))
+
+;; Pretty-print the response body:
+(io/println "Pretty response:")
+(io/println (json/pretty {:status "ok" :data users} 2))

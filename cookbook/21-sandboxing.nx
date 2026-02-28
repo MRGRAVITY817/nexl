@@ -1,0 +1,23 @@
+;; Recipe 21: Sandboxed Execution
+;;
+;; Problem: Run untrusted code with restricted capabilities.
+;; Solution: Use `nexl sandbox` with capability flags.
+;;
+;; Run (restricted): nexl sandbox cookbook/21-sandboxing.nx
+;; Run (with console): nexl sandbox cookbook/21-sandboxing.nx --allow-console
+;; Run (unrestricted): nexl sandbox cookbook/21-sandboxing.nx --allow-all
+
+;; This program needs console access to print:
+(io/println "I can print! (requires --allow-console)")
+
+;; Without --allow-console, the sandbox blocks io/println.
+;; Without --allow-fs, file operations are blocked.
+;; Without --allow-net, network access is blocked.
+;;
+;; Capability flags:
+;;   --allow-console   stdout/stderr
+;;   --allow-fs        file system read/write
+;;   --allow-net       network access
+;;   --allow-time      wall-clock time
+;;   --allow-random    random number generation
+;;   --allow-all       unrestricted

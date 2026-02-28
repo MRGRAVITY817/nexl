@@ -1,0 +1,30 @@
+;; Recipe 27: Sequential Operations with do
+;;
+;; Problem: Execute multiple side-effecting operations in order.
+;; Solution: Use do blocks for sequential evaluation.
+;;
+;; Run: nexl run cookbook/27-do-blocks.nx
+
+;; do evaluates each expression in order, returning the last value:
+(defn greet-and-log [name]
+  (do
+    (log/info "greeting user" {:name name})
+    (io/println (str "Hello, " name "!"))
+    (str "Greeted " name)))
+
+(def result (greet-and-log "Alice"))
+(io/println (str "Result: " result))
+
+;; Useful for setup/teardown:
+(defn with-temp-db [f]
+  (do
+    (let [db (unwrap (db/open "/tmp/nexl-temp.db"))]
+      (do
+        (db/execute db "CREATE TABLE IF NOT EXISTS temp (k TEXT, v TEXT)" [])
+        (let [result (f db)]
+          (do
+            (db/execute db "DROP TABLE IF EXISTS temp" [])
+            (db/close db)
+            result))))))
+
+(io/println "do blocks sequence side effects cleanly.")

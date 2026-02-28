@@ -1,0 +1,38 @@
+;; Recipe 23: Multi-File Project Structure
+;;
+;; Problem: Organize code into multiple modules with imports.
+;; Solution: Create a project.nx manifest and use module declarations.
+;;
+;; This recipe explains the structure; it's not directly runnable.
+
+;; Step 1: Create a project
+;; $ nexl new my-app
+;;
+;; This creates:
+;;   my-app/
+;;     project.nx        — package manifest
+;;     src/main.nx       — entry point
+;;     tests/main_test.nx — tests
+;;     .gitignore
+
+;; Step 2: project.nx defines the package
+;; {:package {:name "my-app"
+;;            :version "0.1.0"
+;;            :prefix "my-app"
+;;            :source-dir "src"}}
+
+;; Step 3: Modules declare their name and imports
+;; In src/main.nx:
+;;   (module my-app.main
+;;     :imports [[my-app.db :as db]]
+;;     :exports [main])
+
+;; In src/db.nx:
+;;   (module my-app.db
+;;     :exports [connect query])
+
+;; Step 4: Run the entry module
+;; $ cd my-app
+;; $ nexl run src/main.nx
+
+(io/println "See comments for project structure guide.")

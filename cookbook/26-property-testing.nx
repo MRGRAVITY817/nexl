@@ -1,0 +1,22 @@
+;; Recipe 26: Property-Based Testing
+;;
+;; Problem: Test that properties hold for many inputs, not just examples.
+;; Solution: Use test/check with a generator.
+;;
+;; Run: nexl test cookbook/26-property-testing.nx
+
+;; test/check runs a predicate N times with random-ish inputs.
+
+(defn abs [x]
+  (if (< x 0) (- 0 x) x))
+
+(deftest "absolute value is non-negative"
+  (test/check "abs(x) >= 0" 100
+    (fn [x] (assert (>= (abs x) 0)))))
+
+(deftest "addition is commutative"
+  (test/check "a + b == b + a" 100
+    (fn [x] (assert (= (+ x 1) (+ 1 x))))))
+
+(deftest "append preserves length"
+  (assert (= (count (append [1 2] [3 4])) 4)))

@@ -1,0 +1,31 @@
+;; Recipe 24: Data Pipeline with Threading
+;;
+;; Problem: Process data through a sequence of transformations.
+;; Solution: Nest function calls or use intermediate let bindings.
+;;
+;; Run: nexl run cookbook/24-pipe-threading.nx
+
+;; Process a list of user records:
+(def users [
+  {:name "Alice" :age 30 :active true}
+  {:name "Bob" :age 25 :active false}
+  {:name "Carol" :age 35 :active true}
+  {:name "Dave" :age 28 :active true}
+])
+
+;; Pipeline with let bindings (clear, step-by-step):
+(defn active-names-over-27 [users]
+  (let [active (filter (fn [u] (:active u)) users)
+        older  (filter (fn [u] (> (:age u) 27)) active)
+        names  (map (fn [u] (:name u)) older)]
+    names))
+
+(io/println (str "Active users over 27: " (active-names-over-27 users)))
+
+;; Same pipeline, nested (more compact):
+(def result
+  (map (fn [u] (:name u))
+    (filter (fn [u] (> (:age u) 27))
+      (filter (fn [u] (:active u)) users))))
+
+(io/println (str "Same result: " result))

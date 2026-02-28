@@ -31,3 +31,18 @@ Practical recipes for common tasks in Nexl.
 | 18 | [Closures](18-closures.nx) | `nexl run cookbook/18-closures.nx` |
 | 19 | [WASM Compilation](19-wasm-compile.nx) | `nexl build cookbook/19-wasm-compile.nx` |
 | 20 | [Time and Random](20-time-random.nx) | `nexl run cookbook/20-time-random.nx` |
+
+## Advanced Recipes (21–30)
+
+| # | Recipe | Run |
+|---|--------|-----|
+| 21 | [Sandboxing](21-sandboxing.nx) | `nexl sandbox cookbook/21-sandboxing.nx --allow-console` |
+| 22 | [Contracts](22-contracts.nx) | `nexl run cookbook/22-contracts.nx` |
+| 23 | [Project Structure](23-project-structure.nx) | `nexl run cookbook/23-project-structure.nx` |
+| 24 | [Data Pipelines](24-pipe-threading.nx) | `nexl run cookbook/24-pipe-threading.nx` |
+| 25 | [JSON API](25-json-api.nx) | `nexl run cookbook/25-json-api.nx` |
+| 26 | [Property Testing](26-property-testing.nx) | `nexl test cookbook/26-property-testing.nx` |
+| 27 | [Do Blocks](27-do-blocks.nx) | `nexl run cookbook/27-do-blocks.nx` |
+| 28 | [CLI Arguments](28-sys-args.nx) | `nexl run cookbook/28-sys-args.nx -- hello world` |
+| 29 | [Web Service](29-web-service.nx) | `nexl run cookbook/29-web-service.nx` |
+| 30 | [Code Formatting](30-formatter.nx) | `nexl fmt cookbook/30-formatter.nx` |

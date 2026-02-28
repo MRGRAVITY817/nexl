@@ -1,0 +1,22 @@
+;; Recipe 28: Command-Line Arguments
+;;
+;; Problem: Read command-line arguments passed to the program.
+;; Solution: Use sys/args to get the argument vector.
+;;
+;; Run: nexl run cookbook/28-sys-args.nx -- hello world 42
+
+;; sys/args returns a Vec of Str:
+(def args (sys/args))
+(io/println (str "Arguments: " args))
+(io/println (str "Count: " (count args)))
+
+;; Process arguments:
+(defn main []
+  (let [args (sys/args)]
+    (if (= (count args) 0)
+      (io/println "Usage: nexl run 28-sys-args.nx -- <args...>")
+      (each (fn [arg]
+        (io/println (str "  arg: " arg)))
+        args))))
+
+(main)
