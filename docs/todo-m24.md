@@ -39,7 +39,7 @@
   - `env/load-dotenv path` → Unit (loads `.env` file into process env)
   - `env/all` → Map of all env vars
 
-- [ ] 6. **`log` module — structured JSON logging**
+- [x] 6. **`log` module — structured JSON logging**
   - JSON-formatted structured log lines on stderr
   - `log/with ctx body` — run body with additional context fields merged
   - `log/set-level level` — filter log level at runtime
