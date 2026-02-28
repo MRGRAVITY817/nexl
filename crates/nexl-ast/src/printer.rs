@@ -1,6 +1,23 @@
 use crate::node::{Atom, FloatSuffix, IntSuffix, Node, NodeKind};
 
 // ---------------------------------------------------------------------------
+// Postfix `?` detection
+// ---------------------------------------------------------------------------
+
+/// If `items` is `[Symbol("?"), expr]`, return the inner expr — the formatter
+/// will emit `expr?` (postfix) instead of `(? expr)` (prefix).
+fn as_postfix_question(items: &[Node]) -> Option<&Node> {
+    if items.len() == 2 {
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &items[0].kind {
+            if name == "?" {
+                return Some(&items[1]);
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
@@ -92,6 +109,9 @@ impl PrettyPrinter {
         match kind {
             NodeKind::Atom(atom) => flat_len_atom(atom),
             NodeKind::List(items) => {
+                if let Some(inner) = as_postfix_question(items) {
+                    return self.flat_len(inner).saturating_add(1); // "expr?"
+                }
                 if needs_multiline_list(items) {
                     return usize::MAX;
                 }
@@ -175,6 +195,11 @@ impl PrettyPrinter {
             NodeKind::List(items) => {
                 if items.is_empty() {
                     out.push_str("()");
+                    return;
+                }
+                if let Some(inner) = as_postfix_question(items) {
+                    self.write_node_indented(inner, out, indent, column);
+                    out.push('?');
                     return;
                 }
                 self.write_list_indented(items, out, indent, column);
@@ -791,6 +816,11 @@ impl PrettyPrinter {
         match kind {
             NodeKind::Atom(atom) => self.write_atom(atom, out),
             NodeKind::List(nodes) => {
+                if let Some(inner) = as_postfix_question(nodes) {
+                    self.write_node(inner, out);
+                    out.push('?');
+                    return;
+                }
                 out.push('(');
                 write_sep(nodes, out, |n, o| self.write_node(n, o));
                 out.push(')');
