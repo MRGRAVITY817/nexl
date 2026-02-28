@@ -25,7 +25,7 @@
   - Expose as stdlib: `(fs/read-file path)`, `(fs/write-file path content)`
   - Preopened directory sandboxing (WASI capability model)
 
-- [ ] 5. **`wit-import` — generate Nexl bindings from WIT files**
+- [x] 5. **`wit-import` — generate Nexl bindings from WIT files**
   - `(wit-import "path/to/interface.wit")` → typed Nexl functions
   - Resource types → opaque Nexl types with `:drop` hooks
   - WIT lists/records/variants → Nexl Vec/records/ADTs
