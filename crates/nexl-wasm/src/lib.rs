@@ -7,6 +7,7 @@
 //! Pipeline position: nexl-ir → **nexl-wasm** → `.wasm` file
 
 pub mod canonical_abi;
+pub mod composition;
 pub mod effect_wasi;
 mod emit;
 pub mod gc_emit;

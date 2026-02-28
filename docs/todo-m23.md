@@ -49,7 +49,7 @@
   - `wasi:sockets` — TCP client and server
   - Expose as stdlib: `(http/get url)`, `(http/serve handler port)`
 
-- [ ] 9. **Component composition — practical test**
+- [x] 9. **Component composition — practical test**
   - Import a real Rust component (regex engine or crypto library)
   - Export a Nexl component consumable from another language
   - Compose two Nexl components via `wasm-tools compose`
