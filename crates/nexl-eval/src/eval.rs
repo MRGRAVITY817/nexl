@@ -583,8 +583,34 @@ fn eval_deftype(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
             NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "|" => {
                 i += 1;
             }
+            NodeKind::Map(_) => {
+                // Record type body: `{:field Type ...}`
+                // Register a constructor that wraps a single map argument.
+                let type_name_rc: Rc<str> = Rc::from(type_name.as_str());
+                let ctor_fn = Value::NativeClosure {
+                    name: Rc::clone(&type_name_rc),
+                    f: {
+                        let tn = Rc::clone(&type_name_rc);
+                        Rc::new(move |args: &[Value]| {
+                            if args.len() != 1 {
+                                return Err(format!(
+                                    "`{tn}` record constructor expects 1 map argument, got {}",
+                                    args.len()
+                                ));
+                            }
+                            match &args[0] {
+                                Value::Map(_) => Ok(args[0].clone()),
+                                other => Err(format!(
+                                    "`{tn}` record constructor expects a map, got {other}"
+                                )),
+                            }
+                        })
+                    },
+                };
+                env.define(type_name.clone(), ctor_fn);
+                break;
+            }
             _ => {
-                // Could be a record type body — skip for now
                 break;
             }
         }
@@ -1171,6 +1197,35 @@ fn eval_for_let_bindings(bindings: &[Node], env: &Rc<Env>) -> Result<Rc<Env>, Ev
     Ok(child_env)
 }
 
+/// Keyword-as-function: look up a keyword in a map, returning the value
+/// directly if found, or `None` (Option ADT) if missing.
+fn keyword_lookup(
+    ns: &Option<Rc<str>>,
+    name: &Rc<str>,
+    arg: &Value,
+) -> Result<Value, EvalError> {
+    if let Value::Map(entries) = arg {
+        let kw = Value::Keyword {
+            ns: ns.clone(),
+            name: name.clone(),
+        };
+        for (key, value) in entries.iter() {
+            if *key == kw {
+                return Ok(value.clone());
+            }
+        }
+        // Key not found — return None
+        return Ok(Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("None"),
+            fields: Rc::new(vec![]),
+        });
+    }
+    Err(EvalError::NativeError(format!(
+        "keyword `:{name}` called on non-map value: {arg}"
+    )))
+}
+
 fn eval_apply<'a>(
     items: &[Node],
     env: &Rc<Env>,
@@ -1206,6 +1261,19 @@ fn eval_apply<'a>(
         }
         let result = f(&args).map_err(EvalError::NativeError)?;
         return Ok(EvalReturn::Value(result));
+    }
+
+    // Dispatch keyword-as-function: (:key map) → field lookup
+    if let Value::Keyword { ns, name } = &callee {
+        let arg_count = items.len() - 1;
+        if arg_count != 1 {
+            return Err(EvalError::Arity);
+        }
+        let arg = match eval_with_loop(&items[1], env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            recur @ EvalReturn::Recur(_) => return Ok(recur),
+        };
+        return keyword_lookup(ns, name, &arg).map(EvalReturn::Value);
     }
 
     let Value::Function(func) = callee else {
@@ -1314,6 +1382,14 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
 
     if let Value::NativeClosure { f, .. } = callee {
         return f(args).map_err(EvalError::NativeError);
+    }
+
+    // Dispatch keyword-as-function in apply_value too
+    if let Value::Keyword { ns, name } = callee {
+        if args.len() != 1 {
+            return Err(EvalError::Arity);
+        }
+        return keyword_lookup(ns, name, &args[0]);
     }
 
     let Value::Function(func) = callee else {

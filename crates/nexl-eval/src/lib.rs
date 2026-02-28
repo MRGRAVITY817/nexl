@@ -4711,6 +4711,68 @@ mod tests {
         );
     }
 
+    // -- record deftype --
+    #[test]
+    fn deftype_record_constructor_creates_map() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(deftype Foo {:x Int :y Str})", &env).unwrap();
+        let result = eval_forms(r#"(Foo {:x 1 :y "hi"})"#, &env).unwrap();
+        // Record constructor should produce a Map value
+        match &result {
+            Value::Map(entries) => {
+                assert_eq!(entries.len(), 2);
+            }
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deftype_record_get_field() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(deftype Foo {:x Int :y Str})", &env).unwrap();
+        let result = eval_forms(r#"(get (Foo {:x 42 :y "hi"}) :x)?"#, &env).unwrap();
+        assert_eq!(result, int(42));
+    }
+
+    #[test]
+    fn deftype_record_constructor_arity() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(deftype Foo {:x Int :y Str})", &env).unwrap();
+        // No args — should fail
+        assert!(eval_forms("(Foo)", &env).is_err());
+        // Two args — should fail
+        assert!(eval_forms("(Foo 1 2)", &env).is_err());
+    }
+
+    // -- keyword as function --
+    #[test]
+    fn keyword_as_function_on_map() {
+        let result = eval_str("(:x {:x 42 :y 0})").unwrap();
+        assert_eq!(result, int(42));
+    }
+
+    #[test]
+    fn keyword_as_function_missing_key() {
+        let result = eval_str("(:z {:x 42})").unwrap();
+        // Missing key returns None (Option ADT)
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: Rc::from("Option"),
+                ctor: Rc::from("None"),
+                fields: Rc::new(vec![]),
+            }
+        );
+    }
+
+    #[test]
+    fn keyword_as_function_arity() {
+        // No args
+        assert!(eval_str("(:x)").is_err());
+        // Two args
+        assert!(eval_str("(:x {:x 1} {:x 2})").is_err());
+    }
+
     // ===================================================================
     // M22 — Collections & Algorithms
     // ===================================================================

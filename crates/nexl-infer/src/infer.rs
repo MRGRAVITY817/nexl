@@ -1501,6 +1501,9 @@ fn synth_keyword_access(
                 description: format!("record has no field `:{field}`"),
             }))
         }
+        // Unresolved type variable — return a fresh variable for the field type.
+        // This allows keyword access on lambda parameters whose type isn't yet known.
+        Type::Var(_) => Ok(state.fresh_var()),
         other => Err(TypeError::new(TypeErrorKind::MalformedForm {
             description: format!("keyword access expects a record, got {other}"),
         })),
