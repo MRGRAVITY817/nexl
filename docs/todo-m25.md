@@ -25,7 +25,7 @@
   - Complete module names when typing in `:imports` vectors
   - Scan project source tree + stdlib module list
 
-- [ ] 6. **LSP completions — record fields**
+- [x] 6. **LSP completions — record fields**
   - Complete record fields from inferred types (`:status`, `:body`, etc.)
   - Triggered after typing `:` in a record context
 

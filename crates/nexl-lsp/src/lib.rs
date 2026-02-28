@@ -1057,6 +1057,36 @@ fn file_to_module_path(file: &Path, root: &Path, prefix: &str) -> Option<String>
     Some(format!("{prefix}.{}", parts.join(".")))
 }
 
+/// Extract record field names from deftype declarations and return as keyword completions.
+fn record_field_completions(nodes: &[Node]) -> Vec<CompletionItem> {
+    use nexl_infer::DeftypeDecl;
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for node in nodes {
+        if let Ok(decl) = nexl_infer::parse_deftype(node) {
+            let fields: &[(String, Type)] = match &decl {
+                DeftypeDecl::Record { fields, .. } => fields,
+                _ => continue,
+            };
+            let type_name = match &decl {
+                DeftypeDecl::Record { name, .. } => name.as_str(),
+                _ => continue,
+            };
+            for (field_name, _ty) in fields {
+                if seen.insert(field_name.clone()) {
+                    items.push(CompletionItem {
+                        label: format!(":{field_name}"),
+                        kind: Some(CompletionItemKind::FIELD),
+                        detail: Some(format!("{type_name} field")),
+                        ..CompletionItem::default()
+                    });
+                }
+            }
+        }
+    }
+    items
+}
+
 /// Check whether the given byte offset falls within a `:imports` vector
 /// inside a `(module ...)` form.
 fn is_in_imports_context(nodes: &[Node], offset: usize) -> bool {
@@ -1382,7 +1412,9 @@ impl LanguageServer for Backend {
             return Ok(Some(CompletionResponse::Array(items)));
         }
 
-        let items = completion_items(&nodes);
+        let mut items = completion_items(&nodes);
+        // Include record field names from deftype declarations.
+        items.extend(record_field_completions(&nodes));
         Ok(Some(CompletionResponse::Array(items)))
     }
 
@@ -2615,5 +2647,26 @@ mod tests {
         let file = Path::new("/project/src/app/main.nx");
         let result = file_to_module_path(file, root, "my-app");
         assert_eq!(result, Some("my-app.app.main".to_string()));
+    }
+
+    #[test]
+    fn record_field_completions_from_deftype() {
+        let src = "(deftype Point {:x Int :y Int})";
+        let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
+        let items = record_field_completions(&nodes);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&":x"), "should include :x field: {labels:?}");
+        assert!(labels.contains(&":y"), "should include :y field: {labels:?}");
+        for item in &items {
+            assert_eq!(item.kind, Some(CompletionItemKind::FIELD));
+        }
+    }
+
+    #[test]
+    fn record_field_completions_empty_for_sum_type() {
+        let src = "(deftype Color (Red) (Green) (Blue))";
+        let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
+        let items = record_field_completions(&nodes);
+        assert!(items.is_empty(), "sum types should produce no field completions");
     }
 }
