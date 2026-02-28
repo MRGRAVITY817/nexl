@@ -32,7 +32,7 @@
   - `test/run-tests registry` — run a Vec of (name, thunk) pairs and report
   - Test registry support for `deftest` macro integration
 
-- [ ] 5. **`env` module — configuration**
+- [x] 5. **`env` module — configuration**
   - New `env.rs` stdlib module
   - `env/get name` → `(Option Str)`
   - `env/require name` → `Str` (errors if missing)
