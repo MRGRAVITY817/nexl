@@ -37,7 +37,7 @@
   - Effect declarations → WIT imported interfaces
   - Canonical ABI serialization at component boundaries
 
-- [ ] 7. **Effect ↔ WASI capability mapping**
+- [x] 7. **Effect ↔ WASI capability mapping**
   - `:performs [Net]` ↔ `wasi:http` import
   - `:performs [FileSystem]` ↔ `wasi:filesystem` import
   - Module without `:performs [Net]` cannot import `wasi:http`

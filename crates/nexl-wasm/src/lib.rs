@@ -7,6 +7,7 @@
 //! Pipeline position: nexl-ir → **nexl-wasm** → `.wasm` file
 
 pub mod canonical_abi;
+pub mod effect_wasi;
 mod emit;
 pub mod gc_emit;
 pub mod marshal;
@@ -23,6 +24,10 @@ pub use marshal::{MarshalError, MarshalStrategy, c_function_decl, c_type_name, m
 pub use wit::{
     WitError, WitResource, effect_to_wit_interface, fn_type_to_wit, generate_wit_interface,
     generate_wit_interface_full, generate_wit_resource, type_to_wit, wit_interface_to_effect,
+};
+pub use effect_wasi::{
+    CapabilityViolation, EffectWasiEntry, EFFECT_WASI_MAP, effect_to_wasi_interface,
+    effects_to_wasm_imports, validate_wasi_capabilities, wasi_interface_effects,
 };
 pub use wit_export::{
     WitExportFn, WitImportIface, WitModuleExport, generate_wit_world, nexl_type_to_wit,
