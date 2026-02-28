@@ -63,12 +63,15 @@ fn type_check_diagnostics(nodes: &[Node], source: &str) -> Vec<Diagnostic> {
     let mut env = Env::new();
     let mut state = InferState::new();
     for node in nodes {
-        // Skip module infrastructure and type definition forms — they are
-        // structural declarations, not expressions the type checker handles.
-        if list_head_is(node, "module")
-            || list_head_is(node, "import")
-            || list_head_is(node, "deftype")
-        {
+        // Skip module infrastructure forms.
+        if list_head_is(node, "module") || list_head_is(node, "import") {
+            continue;
+        }
+        // Register deftype declarations so record/ADT types are known.
+        if list_head_is(node, "deftype") {
+            if let Ok(decl) = nexl_infer::parse_deftype(node) {
+                env = nexl_infer::register_deftype(&env, decl);
+            }
             continue;
         }
         let result = if list_head_is(node, "def") {
@@ -458,6 +461,14 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
     let mut env = Env::new();
     let mut state = InferState::new();
     for node in nodes {
+        // Register deftype declarations so record/ADT types are known.
+        if list_head_is(node, "deftype") {
+            if let Ok(decl) = nexl_infer::parse_deftype(node) {
+                env = nexl_infer::register_deftype(&env, decl);
+            }
+            continue;
+        }
+
         if let Some((name_node, docstring)) = defn_name_and_docstring(node) {
             let is_target = span_contains(name_node.span, offset);
             let node_for_infer = defn_node_for_infer(node);

@@ -6415,6 +6415,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn defn_with_record_constructor_infers_record_type() {
+        // Simulate the LSP processing model.nx: deftype, then next-id, then add-todo
+        let def = parse_one("(deftype TodoItem {:id Int :text Str :done Bool})");
+        let decl = super::parse_deftype(&def).unwrap();
+        let mut env = register_deftype(&Env::new(), decl);
+        let mut state = InferState::new();
+
+        // next-id uses (:id todo) on an untyped lambda param
+        let next_id = parse_one(
+            r#"(defn next-id [todos]
+                 (+ 1 (reduce (fn [mx todo]
+                                (let [id (:id todo)] (if (> id mx) id mx)))
+                              0
+                              todos)))"#,
+        );
+        match infer_defn(&next_id, &env, &mut state) {
+            Ok((_name, ty, new_env)) => {
+                eprintln!("next-id: {ty}");
+                env = new_env;
+            }
+            Err(e) => {
+                eprintln!("next-id error: {e:?}");
+                state.push_error(e);
+            }
+        }
+
+        let defn_node = parse_one(
+            r#"(defn add-todo [todos text]
+                 (let [id (next-id todos)]
+                   (append todos (TodoItem {:id id :text text :done false}))))"#,
+        );
+        match infer_defn(&defn_node, &env, &mut state) {
+            Ok((name, ty, _new_env)) => {
+                let ty_str = format!("{ty}");
+                eprintln!("add-todo: {ty_str}");
+                assert_eq!(name, "add-todo");
+                assert!(
+                    ty_str.contains("TodoItem"),
+                    "expected TodoItem in type, got: {ty_str}"
+                );
+            }
+            Err(e) => {
+                eprintln!("add-todo error: {e:?}");
+                panic!("infer_defn failed for add-todo");
+            }
+        }
+        eprintln!("errors: {:?}", state.errors);
+    }
+
     // -----------------------------------------------------------------------
     // constructor application tests
     // -----------------------------------------------------------------------
