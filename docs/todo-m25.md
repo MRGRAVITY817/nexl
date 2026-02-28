@@ -16,7 +16,7 @@
   - Show expected vs actual with source location
   - Cascade suppression: don't flood user with downstream errors
 
-- [ ] 4. **Error message audit — effect system**
+- [x] 4. **Error message audit — effect system**
   - Effect row mismatch: explain which effect is missing and where expected
   - Suggest fix: "add `:performs [Net]` to module declaration"
   - Suppress cascade noise from effect errors

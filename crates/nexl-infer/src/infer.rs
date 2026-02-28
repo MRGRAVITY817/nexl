@@ -3058,16 +3058,49 @@ pub fn validate_module_performs(
     match declared {
         Some(declared) => {
             let declared_set: HashSet<String> = declared.iter().cloned().collect();
+            // Collect all missing effects across all exports.
+            let mut missing: Vec<(String, String)> = Vec::new(); // (export, effect)
             for (export, effects) in export_effects {
                 for effect in effects {
                     if !declared_set.contains(effect) {
-                        return Err(TypeError::new(TypeErrorKind::MalformedForm {
-                            description: format!(
-                                "module :performs missing effect `{effect}` for export `{export}`"
-                            ),
-                        }));
+                        missing.push((export.clone(), effect.clone()));
                     }
                 }
+            }
+            if !missing.is_empty() {
+                // Build a clear, grouped error message.
+                let mut unique_effects: Vec<String> =
+                    missing.iter().map(|(_, e)| e.clone()).collect();
+                unique_effects.sort();
+                unique_effects.dedup();
+
+                let description = if missing.len() == 1 {
+                    let (export, effect) = &missing[0];
+                    format!(
+                        "function `{export}` performs `{effect}`, which is not in module :performs"
+                    )
+                } else {
+                    let details: Vec<String> = missing
+                        .iter()
+                        .map(|(export, effect)| format!("  `{export}` performs `{effect}`"))
+                        .collect();
+                    format!(
+                        "module :performs is incomplete:\n{}",
+                        details.join("\n")
+                    )
+                };
+
+                let help = format!(
+                    "add {} to the module :performs declaration",
+                    unique_effects
+                        .iter()
+                        .map(|e| format!("`{e}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+
+                return Err(TypeError::new(TypeErrorKind::MalformedForm { description })
+                    .with_help(help));
             }
             let mut normalized = declared.to_vec();
             normalized.sort();
@@ -5327,6 +5360,38 @@ mod tests {
             }
             other => panic!("expected MalformedForm, got {other:?}"),
         }
+        // M25: should also have a help suggestion.
+        assert!(
+            err.help.is_some(),
+            "expected help text for missing effect"
+        );
+        let help = err.help.as_deref().unwrap();
+        assert!(
+            help.contains("Net") && help.contains(":performs"),
+            "help should mention missing effect and :performs, got: '{help}'"
+        );
+    }
+
+    // -- Test 29b (M25) --
+    #[test]
+    fn module_performs_missing_multiple_effects_has_help() {
+        let mut exports = HashMap::new();
+        exports.insert(
+            "start!".to_string(),
+            vec!["Net".to_string(), "Console".to_string()],
+        );
+        exports.insert("log!".to_string(), vec!["IO".to_string()]);
+        let declared: Vec<String> = vec![];
+        let err = validate_module_performs(Some(&declared), &exports).unwrap_err();
+        let msg = err.to_string();
+        // Should mention all missing effects.
+        assert!(msg.contains("Console"), "should mention Console: {msg}");
+        assert!(msg.contains("Net"), "should mention Net: {msg}");
+        assert!(msg.contains("IO"), "should mention IO: {msg}");
+        assert!(
+            err.help.is_some(),
+            "should have help for multiple missing effects"
+        );
     }
 
     // -----------------------------------------------------------------------
