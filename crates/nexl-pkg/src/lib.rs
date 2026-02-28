@@ -720,6 +720,9 @@ fn serialize_package_lines(pkg: &PackageSection) -> Vec<String> {
         lines.push(format!(":description {:?}", desc));
     }
     lines.push(format!(":prefix {:?}", pkg.prefix));
+    if pkg.source_dir != "." {
+        lines.push(format!(":source-dir {:?}", pkg.source_dir));
+    }
     lines
 }
 

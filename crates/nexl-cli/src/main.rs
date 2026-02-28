@@ -135,6 +135,15 @@ enum Command {
         #[arg(long = "filter")]
         filter: Option<String>,
     },
+    /// Create a new Nexl project.
+    New {
+        /// Project name (also used as directory name).
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Project template: "default" or "web".
+        #[arg(long = "template", default_value = "default")]
+        template: String,
+    },
 }
 
 #[derive(Debug, Subcommand, PartialEq, Eq)]
@@ -279,6 +288,12 @@ fn main() {
                     print_error(&message);
                     process::exit(1);
                 }
+            }
+        }
+        Command::New { name, template } => {
+            if let Err(message) = command_new(&name, &template) {
+                print_error(&message);
+                process::exit(1);
             }
         }
     }
@@ -597,6 +612,125 @@ fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, Strin
         println!("test result: FAILED. {passed} passed; {failed} failed");
         Ok(false)
     }
+}
+
+/// `nexl new <name> [--template <template>]` — create a new Nexl project.
+fn command_new(name: &str, template: &str) -> Result<(), String> {
+    let project_dir = Path::new(name);
+    if project_dir.exists() {
+        return Err(format!("directory `{name}` already exists"));
+    }
+
+    // Validate template.
+    match template {
+        "default" | "web" => {}
+        other => return Err(format!("unknown template: `{other}` (expected \"default\" or \"web\")")),
+    }
+
+    // Create directory structure.
+    let src_dir = project_dir.join("src");
+    let tests_dir = project_dir.join("tests");
+    std::fs::create_dir_all(&src_dir).map_err(|e| format!("cannot create src/: {e}"))?;
+    std::fs::create_dir_all(&tests_dir).map_err(|e| format!("cannot create tests/: {e}"))?;
+
+    // Write project.nx
+    let manifest = PackageManifest {
+        package: nexl_pkg::PackageSection {
+            name: name.to_string(),
+            version: "0.1.0".to_string(),
+            description: None,
+            prefix: name.to_string(),
+            source_dir: "src".to_string(),
+        },
+        dependencies: std::collections::BTreeMap::new(),
+        dev_dependencies: std::collections::BTreeMap::new(),
+        registries: std::collections::BTreeMap::new(),
+        sandbox: None,
+        profiles: std::collections::BTreeMap::new(),
+    };
+    let manifest_str = serialize_manifest(&manifest);
+    std::fs::write(project_dir.join("project.nx"), &manifest_str)
+        .map_err(|e| format!("cannot write project.nx: {e}"))?;
+
+    // Write source files based on template.
+    let (main_content, test_content) = match template {
+        "web" => (
+            scaffold_web_main(name),
+            scaffold_web_test(name),
+        ),
+        _ => (
+            scaffold_default_main(name),
+            scaffold_default_test(name),
+        ),
+    };
+
+    std::fs::write(src_dir.join("main.nx"), &main_content)
+        .map_err(|e| format!("cannot write src/main.nx: {e}"))?;
+    std::fs::write(tests_dir.join("main_test.nx"), &test_content)
+        .map_err(|e| format!("cannot write tests/main_test.nx: {e}"))?;
+
+    // Write .gitignore
+    std::fs::write(project_dir.join(".gitignore"), "target/\n*.wasm\n")
+        .map_err(|e| format!("cannot write .gitignore: {e}"))?;
+
+    println!("Created project `{name}` in ./{name}");
+    println!();
+    println!("  cd {name}");
+    println!("  nexl run src/main.nx");
+    println!();
+
+    Ok(())
+}
+
+fn scaffold_default_main(name: &str) -> String {
+    format!(
+        r#"(module {name}.main
+  :exports [main])
+
+(defn main []
+  (io/println "Hello from {name}!"))
+
+(main)
+"#
+    )
+}
+
+fn scaffold_default_test(_name: &str) -> String {
+    r#"(deftest "hello works"
+  (assert (= 1 1)))
+"#
+    .to_string()
+}
+
+fn scaffold_web_main(name: &str) -> String {
+    format!(
+        r#"(module {name}.main
+  :exports [main]
+  :performs [Net Log])
+
+(defn handle-request [req]
+  (log/info "request received" {{:path (http/body req)}})
+  (let body (json/encode {{:message "Hello from {name}!"}}))
+  (http/response 200 body))
+
+(defn main []
+  (log/info "starting server" {{:port 8080}})
+  (http/serve handle-request 8080))
+
+(main)
+"#
+    )
+}
+
+fn scaffold_web_test(_name: &str) -> String {
+    r#"(deftest "json encode works"
+  (assert (= (json/encode {:a 1}) "{\"a\":1}")))
+
+(deftest "http response"
+  (let resp (http/response 200 "ok"))
+  (assert (= (http/status resp) 200)))
+"#
+    .to_string()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2181,5 +2315,133 @@ mod tests {
         let result = command_run(path.clone());
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "single-file run should succeed: {result:?}");
+    }
+
+    // ---- nexl new tests ----
+
+    #[test]
+    fn parse_new_command() {
+        let cli = Cli::try_parse_from(["nexl", "new", "my-app"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::New {
+                name: "my-app".to_string(),
+                template: "default".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_new_with_template() {
+        let cli = Cli::try_parse_from(["nexl", "new", "my-app", "--template", "web"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::New {
+                name: "my-app".to_string(),
+                template: "web".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn scaffold_creates_directory() {
+        let root = write_temp_dir("new_scaffold");
+        let name = root.join("test-proj");
+        let name_str = name.to_str().expect("utf8 path");
+        let result = command_new(name_str, "default");
+        assert!(result.is_ok(), "scaffold should succeed: {result:?}");
+        assert!(name.join("src").is_dir(), "src/ should exist");
+        assert!(name.join("tests").is_dir(), "tests/ should exist");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scaffold_creates_project_nx() {
+        let root = write_temp_dir("new_project_nx");
+        let name = root.join("my-proj");
+        let name_str = name.to_str().expect("utf8 path");
+        command_new(name_str, "default").expect("scaffold");
+        let content = std::fs::read_to_string(name.join("project.nx")).expect("read project.nx");
+        assert!(content.contains(":name"), "should have :name");
+        assert!(content.contains(":version"), "should have :version");
+        assert!(content.contains("\"0.1.0\""), "should have version 0.1.0");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scaffold_creates_main_nx() {
+        let root = write_temp_dir("new_main_nx");
+        let name = root.join("hello");
+        let name_str = name.to_str().expect("utf8 path");
+        command_new(name_str, "default").expect("scaffold");
+        let content = std::fs::read_to_string(name.join("src/main.nx")).expect("read main.nx");
+        assert!(content.contains("Hello from"), "should contain hello message");
+        assert!(content.contains("io/println"), "should use io/println");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scaffold_creates_gitignore() {
+        let root = write_temp_dir("new_gitignore");
+        let name = root.join("proj");
+        let name_str = name.to_str().expect("utf8 path");
+        command_new(name_str, "default").expect("scaffold");
+        let content = std::fs::read_to_string(name.join(".gitignore")).expect("read .gitignore");
+        assert!(content.contains("target/"), "should ignore target/");
+        assert!(content.contains("*.wasm"), "should ignore *.wasm");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scaffold_creates_test_file() {
+        let root = write_temp_dir("new_testfile");
+        let name = root.join("proj");
+        let name_str = name.to_str().expect("utf8 path");
+        command_new(name_str, "default").expect("scaffold");
+        let content = std::fs::read_to_string(name.join("tests/main_test.nx")).expect("read test");
+        assert!(content.contains("deftest"), "should contain deftest");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scaffold_web_template() {
+        let root = write_temp_dir("new_web");
+        let name = root.join("web-app");
+        let name_str = name.to_str().expect("utf8 path");
+        command_new(name_str, "web").expect("scaffold");
+        let main = std::fs::read_to_string(name.join("src/main.nx")).expect("read main.nx");
+        assert!(main.contains("http/serve"), "should contain http/serve");
+        assert!(main.contains("json/encode"), "should contain json/encode");
+        assert!(main.contains("log/info"), "should contain log/info");
+        let test = std::fs::read_to_string(name.join("tests/main_test.nx")).expect("read test");
+        assert!(test.contains("json/encode"), "test should use json/encode");
+        assert!(test.contains("http/response"), "test should use http/response");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scaffold_existing_dir_errors() {
+        let root = write_temp_dir("new_existing");
+        // root already exists, so passing it as the project name should fail.
+        let name_str = root.to_str().expect("utf8 path");
+        let result = command_new(name_str, "default");
+        assert!(result.is_err(), "should error for existing dir");
+        assert!(result.unwrap_err().contains("already exists"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scaffold_project_nx_roundtrip() {
+        let root = write_temp_dir("new_roundtrip");
+        let name = root.join("rt-proj");
+        let name_str = name.to_str().expect("utf8 path");
+        command_new(name_str, "default").expect("scaffold");
+        let content = std::fs::read_to_string(name.join("project.nx")).expect("read");
+        let parsed = parse_manifest(&content);
+        assert!(parsed.is_ok(), "project.nx should be parseable: {parsed:?}");
+        let manifest = parsed.unwrap();
+        assert!(manifest.package.version == "0.1.0");
+        assert!(manifest.package.source_dir == "src");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
