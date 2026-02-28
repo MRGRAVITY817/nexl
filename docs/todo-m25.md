@@ -7,7 +7,7 @@
   - `nexl new <name> --template web` → web service scaffold with HTTP, JSON, logging
   - Generated projects run immediately: `nexl run src/main.nx`
 
-- [ ] 2. **`nexl upgrade` — self-update command**
+- [x] 2. **`nexl upgrade` — self-update command**
   - `nexl upgrade` checks for latest version and updates the binary
   - Stub implementation: prints version + instructions (no real download server yet)
 

@@ -135,6 +135,8 @@ enum Command {
         #[arg(long = "filter")]
         filter: Option<String>,
     },
+    /// Check for updates and print upgrade instructions.
+    Upgrade,
     /// Create a new Nexl project.
     New {
         /// Project name (also used as directory name).
@@ -289,6 +291,9 @@ fn main() {
                     process::exit(1);
                 }
             }
+        }
+        Command::Upgrade => {
+            command_upgrade();
         }
         Command::New { name, template } => {
             if let Err(message) = command_new(&name, &template) {
@@ -612,6 +617,17 @@ fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, Strin
         println!("test result: FAILED. {passed} passed; {failed} failed");
         Ok(false)
     }
+}
+
+/// `nexl upgrade` — print current version and upgrade instructions.
+fn command_upgrade() {
+    let version = env!("CARGO_PKG_VERSION");
+    println!("nexl {version} (current)");
+    println!();
+    println!("Self-update is not yet available.");
+    println!("To upgrade, rebuild from source:");
+    println!();
+    println!("  cargo install --path crates/nexl-cli");
 }
 
 /// `nexl new <name> [--template <template>]` — create a new Nexl project.
@@ -2428,6 +2444,12 @@ mod tests {
         assert!(result.is_err(), "should error for existing dir");
         assert!(result.unwrap_err().contains("already exists"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parse_upgrade_command() {
+        let cli = Cli::try_parse_from(["nexl", "upgrade"]).expect("parse");
+        assert_eq!(cli.command, Command::Upgrade);
     }
 
     #[test]
