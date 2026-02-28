@@ -8,7 +8,7 @@
   - `json/encode` + `json/decode` as primary API names (aliases)
   - `json/pretty` — indented output with configurable indent
 
-- [ ] 2. **`http` module — Request/Response types + client**
+- [x] 2. **`http` module — Request/Response types + client**
   - `Request` and `Response` record Values
   - `http/get url` → `(Result Response HttpError)`
   - `http/post url body headers` → `(Result Response HttpError)`

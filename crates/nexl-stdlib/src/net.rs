@@ -28,7 +28,7 @@ pub fn entries() -> Vec<StdlibEntry> {
 /// Parse an `http://host[:port]/path` URL.
 ///
 /// Returns `(host, port, path)`.  Only `http://` is supported; `https://` returns an error.
-fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
+pub(crate) fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
     let url = url.trim();
     if !url.starts_with("http://") {
         return Err(format!(
@@ -65,7 +65,7 @@ fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
 // ─── Core HTTP helpers ────────────────────────────────────────────────────────
 
 /// Strip HTTP/1.x response headers and return the body.
-fn strip_headers(response: &str) -> &str {
+pub(crate) fn strip_headers(response: &str) -> &str {
     if let Some(pos) = response.find("\r\n\r\n") {
         return &response[pos + 4..];
     }
@@ -76,7 +76,7 @@ fn strip_headers(response: &str) -> &str {
 }
 
 /// Perform a blocking HTTP/1.0 GET request.
-fn http_get(url: &str) -> Result<String, String> {
+pub(crate) fn http_get(url: &str) -> Result<String, String> {
     let (host, port, path) = parse_http_url(url)?;
     let addr = format!("{host}:{port}");
     let mut stream = TcpStream::connect(&addr)
@@ -96,7 +96,7 @@ fn http_get(url: &str) -> Result<String, String> {
 }
 
 /// Perform a blocking HTTP/1.0 POST request with a text body.
-fn http_post(url: &str, body: &str) -> Result<String, String> {
+pub(crate) fn http_post(url: &str, body: &str) -> Result<String, String> {
     let (host, port, path) = parse_http_url(url)?;
     let addr = format!("{host}:{port}");
     let mut stream = TcpStream::connect(&addr)
