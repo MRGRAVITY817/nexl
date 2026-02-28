@@ -1,7 +1,7 @@
 //! `nexl-pkg` — package manifest schema for `project.nx` (EDN format).
 
 use meta::{Atom, Node, NodeKind};
-use rusqlite::{Connection, params};
+use redb::{Database, ReadableTable, TableDefinition};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -1159,64 +1159,127 @@ pub struct IncrementalPlan {
     pub cached: Vec<String>,
 }
 
-/// SQLite-backed content-addressed definition store.
+/// redb table: `hash → JSON-serialized StoredEntry`.
+const DEFINITIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("definitions");
+
+/// redb table: `def_name → hash` (secondary index for `get_by_name`).
+const NAME_INDEX: TableDefinition<&str, &str> = TableDefinition::new("name_index");
+
+/// redb table: `"macro_name\0def_hash" → ""` (composite key, prefix-scannable).
+const MACRO_EXPANSIONS: TableDefinition<&str, &str> = TableDefinition::new("macro_expansions");
+
+/// Internal serialization struct for storing definition entries as JSON in redb.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredEntry {
+    def_name: String,
+    type_sig: String,
+    effect_row: String,
+    dep_hashes: Vec<String>,
+    artifact: Vec<u8>,
+}
+
+/// Content-addressed definition store backed by redb.
 ///
 /// Maps definition content hashes to compiled artifacts plus type/effect/dependency
 /// metadata. Used for incremental compilation: if a definition's hash hasn't changed
 /// and none of its dependencies have changed, the cached artifact is reused.
-#[derive(Debug)]
 pub struct DefinitionStore {
-    conn: Connection,
+    db: Database,
+}
+
+impl fmt::Debug for DefinitionStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DefinitionStore").finish_non_exhaustive()
+    }
 }
 
 /// Errors returned by the definition store.
 #[derive(Debug, Error)]
 pub enum StoreError {
-    /// Database error returned by SQLite.
+    /// Database error from redb.
     #[error("database error: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(Box<dyn std::error::Error + Send + Sync>),
 
     /// JSON serialization error.
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 }
 
+impl From<redb::DatabaseError> for StoreError {
+    fn from(e: redb::DatabaseError) -> Self {
+        Self::Database(Box::new(e))
+    }
+}
+
+impl From<redb::StorageError> for StoreError {
+    fn from(e: redb::StorageError) -> Self {
+        Self::Database(Box::new(e))
+    }
+}
+
+impl From<redb::TableError> for StoreError {
+    fn from(e: redb::TableError) -> Self {
+        Self::Database(Box::new(e))
+    }
+}
+
+impl From<redb::TransactionError> for StoreError {
+    fn from(e: redb::TransactionError) -> Self {
+        Self::Database(Box::new(e))
+    }
+}
+
+impl From<redb::CommitError> for StoreError {
+    fn from(e: redb::CommitError) -> Self {
+        Self::Database(Box::new(e))
+    }
+}
+
 impl DefinitionStore {
     /// Open or create a definition store at the given path.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let conn = Connection::open(path)?;
-        let store = Self { conn };
-        store.init()?;
-        Ok(store)
+        let db = Database::create(path)?;
+        Ok(Self { db })
     }
 
     /// Open an in-memory definition store (useful for tests).
     pub fn open_in_memory() -> Result<Self, StoreError> {
-        let conn = Connection::open_in_memory()?;
-        let store = Self { conn };
-        store.init()?;
-        Ok(store)
+        let backend = redb::backends::InMemoryBackend::new();
+        let db = Database::builder().create_with_backend(backend)?;
+        Ok(Self { db })
     }
 
     /// Store an artifact by its content hash (simple API, backward-compatible).
     pub fn put(&self, hash: &str, artifact: &[u8]) -> Result<(), StoreError> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO definitions (hash, def_name, type_sig, effect_row, dep_hashes, artifact) VALUES (?1, '', '', '', '[]', ?2)",
-            params![hash, artifact],
-        )?;
+        let entry = StoredEntry {
+            def_name: String::new(),
+            type_sig: String::new(),
+            effect_row: String::new(),
+            dep_hashes: vec![],
+            artifact: artifact.to_vec(),
+        };
+        let bytes = serde_json::to_vec(&entry)?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(DEFINITIONS)?;
+            table.insert(hash, bytes.as_slice())?;
+        }
+        txn.commit()?;
         Ok(())
     }
 
     /// Fetch an artifact by its content hash (simple API, backward-compatible).
     pub fn get(&self, hash: &str) -> Result<Option<Vec<u8>>, StoreError> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT artifact FROM definitions WHERE hash = ?1")?;
-        let mut rows = stmt.query(params![hash])?;
-        match rows.next()? {
-            Some(row) => {
-                let data: Vec<u8> = row.get(0)?;
-                Ok(Some(data))
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(DEFINITIONS) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        match table.get(hash)? {
+            Some(guard) => {
+                let entry: StoredEntry = serde_json::from_slice(guard.value())?;
+                Ok(Some(entry.artifact))
             }
             None => Ok(None),
         }
@@ -1224,61 +1287,72 @@ impl DefinitionStore {
 
     /// Store a full definition entry with type/effect/dependency metadata.
     pub fn put_definition(&self, entry: &DefinitionEntry) -> Result<(), StoreError> {
-        let dep_hashes_json = serde_json::to_string(&entry.dep_hashes)?;
-        self.conn.execute(
-            "INSERT OR REPLACE INTO definitions (hash, def_name, type_sig, effect_row, dep_hashes, artifact) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                entry.hash,
-                entry.def_name,
-                entry.type_sig,
-                entry.effect_row,
-                dep_hashes_json,
-                entry.artifact,
-            ],
-        )?;
+        let stored = StoredEntry {
+            def_name: entry.def_name.clone(),
+            type_sig: entry.type_sig.clone(),
+            effect_row: entry.effect_row.clone(),
+            dep_hashes: entry.dep_hashes.clone(),
+            artifact: entry.artifact.clone(),
+        };
+        let bytes = serde_json::to_vec(&stored)?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut defs = txn.open_table(DEFINITIONS)?;
+            defs.insert(entry.hash.as_str(), bytes.as_slice())?;
+            let mut names = txn.open_table(NAME_INDEX)?;
+            names.insert(entry.def_name.as_str(), entry.hash.as_str())?;
+        }
+        txn.commit()?;
         Ok(())
     }
 
     /// Fetch a full definition entry by its content hash.
     pub fn get_definition(&self, hash: &str) -> Result<Option<DefinitionEntry>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT hash, def_name, type_sig, effect_row, dep_hashes, artifact FROM definitions WHERE hash = ?1",
-        )?;
-        let mut rows = stmt.query(params![hash])?;
-        match rows.next()? {
-            Some(row) => {
-                let dep_hashes_json: String = row.get(4)?;
-                let dep_hashes: Vec<String> = serde_json::from_str(&dep_hashes_json)?;
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(DEFINITIONS) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        match table.get(hash)? {
+            Some(guard) => {
+                let stored: StoredEntry = serde_json::from_slice(guard.value())?;
                 Ok(Some(DefinitionEntry {
-                    hash: row.get(0)?,
-                    def_name: row.get(1)?,
-                    type_sig: row.get(2)?,
-                    effect_row: row.get(3)?,
-                    dep_hashes,
-                    artifact: row.get(5)?,
+                    hash: hash.to_string(),
+                    def_name: stored.def_name,
+                    type_sig: stored.type_sig,
+                    effect_row: stored.effect_row,
+                    dep_hashes: stored.dep_hashes,
+                    artifact: stored.artifact,
                 }))
             }
             None => Ok(None),
         }
     }
 
-    /// Look up a definition by name (returns the most recent entry).
+    /// Look up a definition by name (returns the entry for that name).
     pub fn get_by_name(&self, def_name: &str) -> Result<Option<DefinitionEntry>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT hash, def_name, type_sig, effect_row, dep_hashes, artifact FROM definitions WHERE def_name = ?1 LIMIT 1",
-        )?;
-        let mut rows = stmt.query(params![def_name])?;
-        match rows.next()? {
-            Some(row) => {
-                let dep_hashes_json: String = row.get(4)?;
-                let dep_hashes: Vec<String> = serde_json::from_str(&dep_hashes_json)?;
+        let txn = self.db.begin_read()?;
+        let names = match txn.open_table(NAME_INDEX) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let hash = match names.get(def_name)? {
+            Some(guard) => guard.value().to_string(),
+            None => return Ok(None),
+        };
+        let table = txn.open_table(DEFINITIONS)?;
+        match table.get(hash.as_str())? {
+            Some(guard) => {
+                let stored: StoredEntry = serde_json::from_slice(guard.value())?;
                 Ok(Some(DefinitionEntry {
-                    hash: row.get(0)?,
-                    def_name: row.get(1)?,
-                    type_sig: row.get(2)?,
-                    effect_row: row.get(3)?,
-                    dep_hashes,
-                    artifact: row.get(5)?,
+                    hash,
+                    def_name: stored.def_name,
+                    type_sig: stored.type_sig,
+                    effect_row: stored.effect_row,
+                    dep_hashes: stored.dep_hashes,
+                    artifact: stored.artifact,
                 }))
             }
             None => Ok(None),
@@ -1287,11 +1361,13 @@ impl DefinitionStore {
 
     /// Check if a definition with the given hash exists in the store.
     pub fn contains(&self, hash: &str) -> Result<bool, StoreError> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT 1 FROM definitions WHERE hash = ?1")?;
-        let mut rows = stmt.query(params![hash])?;
-        Ok(rows.next()?.is_some())
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(DEFINITIONS) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(table.get(hash)?.is_some())
     }
 
     /// Check if a cached definition is still valid by verifying its dependency hashes
@@ -1320,22 +1396,33 @@ impl DefinitionStore {
         def_hash: &str,
         macro_name: &str,
     ) -> Result<(), StoreError> {
-        self.conn.execute(
-            "INSERT OR IGNORE INTO macro_expansions (def_hash, macro_name) VALUES (?1, ?2)",
-            params![def_hash, macro_name],
-        )?;
+        let key = format!("{macro_name}\0{def_hash}");
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(MACRO_EXPANSIONS)?;
+            table.insert(key.as_str(), "")?;
+        }
+        txn.commit()?;
         Ok(())
     }
 
     /// Find all definition hashes that were expanded using the given macro.
     pub fn definitions_using_macro(&self, macro_name: &str) -> Result<Vec<String>, StoreError> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT def_hash FROM macro_expansions WHERE macro_name = ?1")?;
-        let rows = stmt.query_map(params![macro_name], |row| row.get(0))?;
+        let prefix = format!("{macro_name}\0");
+        let range_end = format!("{macro_name}\x01");
+        let txn = self.db.begin_read()?;
+        let table = match txn.open_table(MACRO_EXPANSIONS) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(vec![]),
+            Err(e) => return Err(e.into()),
+        };
         let mut result = Vec::new();
-        for row in rows {
-            result.push(row?);
+        for item in table.range(prefix.as_str()..range_end.as_str())? {
+            let (key, _) = item?;
+            let full_key = key.value();
+            if let Some(def_hash) = full_key.strip_prefix(&prefix) {
+                result.push(def_hash.to_string());
+            }
         }
         Ok(result)
     }
@@ -1347,14 +1434,25 @@ impl DefinitionStore {
     pub fn invalidate_macro(&self, macro_name: &str) -> Result<usize, StoreError> {
         let hashes = self.definitions_using_macro(macro_name)?;
         let count = hashes.len();
-        for hash in &hashes {
-            self.conn
-                .execute("DELETE FROM definitions WHERE hash = ?1", params![hash])?;
+        let prefix = format!("{macro_name}\0");
+        let range_end = format!("{macro_name}\x01");
+        let txn = self.db.begin_write()?;
+        {
+            let mut defs = txn.open_table(DEFINITIONS)?;
+            for hash in &hashes {
+                defs.remove(hash.as_str())?;
+            }
+            let mut macros = txn.open_table(MACRO_EXPANSIONS)?;
+            // Collect keys to remove, then remove them.
+            let keys: Vec<String> = macros
+                .range(prefix.as_str()..range_end.as_str())?
+                .filter_map(|item| item.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            for key in &keys {
+                macros.remove(key.as_str())?;
+            }
         }
-        self.conn.execute(
-            "DELETE FROM macro_expansions WHERE macro_name = ?1",
-            params![macro_name],
-        )?;
+        txn.commit()?;
         Ok(count)
     }
 
@@ -1383,27 +1481,6 @@ impl DefinitionStore {
             }
         }
         Ok(IncrementalPlan { to_compile, cached })
-    }
-
-    fn init(&self) -> Result<(), StoreError> {
-        self.conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS definitions (
-                hash TEXT PRIMARY KEY,
-                def_name TEXT NOT NULL,
-                type_sig TEXT NOT NULL,
-                effect_row TEXT NOT NULL,
-                dep_hashes TEXT NOT NULL DEFAULT '[]',
-                artifact BLOB NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_def_name ON definitions (def_name);
-            CREATE TABLE IF NOT EXISTS macro_expansions (
-                def_hash TEXT NOT NULL,
-                macro_name TEXT NOT NULL,
-                PRIMARY KEY (def_hash, macro_name)
-            );
-            CREATE INDEX IF NOT EXISTS idx_macro_name ON macro_expansions (macro_name);",
-        )?;
-        Ok(())
     }
 }
 

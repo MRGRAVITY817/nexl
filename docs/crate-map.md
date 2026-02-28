@@ -96,7 +96,7 @@ nexl-lsp
 nexl-pkg
 ├── nexl-reader (M0)
 ├── nexl-ast (M0)
-└── rusqlite (external)
+└── redb (external)
 
 nexl-cli (updated)
 └── nexl-lsp (M15)
