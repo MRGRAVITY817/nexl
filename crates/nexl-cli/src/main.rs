@@ -1125,14 +1125,24 @@ fn command_doc(input_path: PathBuf, output_override: Option<PathBuf>) -> Result<
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
     let doc = extract_module_doc(&source).map_err(|e| format!("doc error: {e}"))?;
-    let pages = render_module_pages(&[doc]);
+    let modules = vec![doc];
+    let mut pages = render_module_pages(&modules);
+    // Generate index page for navigation.
+    pages.push(nexl_doc::render_index_page(&modules));
+
     let output_dir = output_override.unwrap_or_else(|| PathBuf::from("docs"));
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| format!("cannot create {:?}: {e}", output_dir))?;
-    for page in pages {
-        let path = output_dir.join(page.filename);
-        std::fs::write(&path, page.html).map_err(|e| format!("cannot write {:?}: {e}", path))?;
+    for page in &pages {
+        let path = output_dir.join(&page.filename);
+        std::fs::write(&path, &page.html)
+            .map_err(|e| format!("cannot write {:?}: {e}", path))?;
     }
+    println!(
+        "nexl: wrote {} pages to {:?}",
+        pages.len(),
+        output_dir
+    );
     Ok(())
 }
 

@@ -33,7 +33,7 @@
   - Complete function names when typing `json/`, `http/`, `db/`, etc.
   - Source from stdlib module entries
 
-- [ ] 8. **Documentation site generator — HTML output**
+- [x] 8. **Documentation site generator — HTML output**
   - `nexl doc --html` produces navigable HTML documentation
   - Includes type signatures, effect rows, docstrings
   - Cross-module hyperlinks
