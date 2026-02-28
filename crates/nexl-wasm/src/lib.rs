@@ -11,6 +11,7 @@ mod emit;
 pub mod gc_emit;
 pub mod marshal;
 pub mod wit;
+pub mod wit_export;
 pub mod wit_import;
 
 pub use canonical_abi::{
@@ -22,6 +23,10 @@ pub use marshal::{MarshalError, MarshalStrategy, c_function_decl, c_type_name, m
 pub use wit::{
     WitError, WitResource, effect_to_wit_interface, fn_type_to_wit, generate_wit_interface,
     generate_wit_interface_full, generate_wit_resource, type_to_wit, wit_interface_to_effect,
+};
+pub use wit_export::{
+    WitExportFn, WitImportIface, WitModuleExport, generate_wit_world, nexl_type_to_wit,
+    record_type_def, variant_type_def,
 };
 pub use wit_import::{
     WitFn, WitImportBinding, WitImportError, WitInterface, WitParam, WitResourceDef, WitType,

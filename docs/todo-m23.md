@@ -31,7 +31,7 @@
   - WIT lists/records/variants → Nexl Vec/records/ADTs
   - Builds on existing `wit.rs` and `canonical_abi.rs`
 
-- [ ] 6. **`wit-export` — expose Nexl modules as WIT interfaces**
+- [x] 6. **`wit-export` — expose Nexl modules as WIT interfaces**
   - `(export-component :wit "my-service.wit")` on a module
   - Nexl types → WIT types (records, variants, enums, resources)
   - Effect declarations → WIT imported interfaces
