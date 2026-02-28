@@ -7,13 +7,11 @@ use crate::node::{Atom, FloatSuffix, IntSuffix, Node, NodeKind};
 /// If `items` is `[Symbol("?"), expr]`, return the inner expr — the formatter
 /// will emit `expr?` (postfix) instead of `(? expr)` (prefix).
 fn as_postfix_question(items: &[Node]) -> Option<&Node> {
-    if items.len() == 2 {
-        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &items[0].kind {
-            if name == "?" {
+    if items.len() == 2
+        && let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &items[0].kind
+            && name == "?" {
                 return Some(&items[1]);
             }
-        }
-    }
     None
 }
 
@@ -249,6 +247,10 @@ impl PrettyPrinter {
         };
 
         match head_name {
+            // deftype before is_body_indent_form — needs its own layout logic.
+            Some("deftype") => {
+                self.write_deftype_form(items, out, indent, column);
+            }
             Some(name) if is_body_indent_form(name) => {
                 self.write_body_form(items, out, indent, column);
             }
@@ -651,6 +653,89 @@ impl PrettyPrinter {
         out.push(')');
     }
 
+    /// Deftype form with two canonical layouts:
+    ///
+    /// *Pipe-style sum type* — body contains `|` symbols:
+    /// ```nexl
+    /// (deftype AccountRole
+    ///   | Buyer
+    ///   | Seller
+    ///   | Admin)
+    /// ```
+    ///
+    /// *Record or complex sum type* — body is maps / compound lists:
+    /// ```nexl
+    /// (deftype Account
+    ///   {:id    Int
+    ///    :email Str})
+    /// ```
+    fn write_deftype_form(&self, items: &[Node], out: &mut String, indent: usize, _column: usize) {
+        let body_indent = indent + self.config.indent_width;
+        out.push('(');
+
+        // keyword: "deftype"
+        self.write_node_indented(&items[0], out, indent + 1, indent + 1);
+
+        // type name on same line
+        if items.len() > 1 {
+            out.push(' ');
+            let name_col = indent + 1 + self.flat_len(&items[0]).min(40) + 1;
+            self.write_node_indented(&items[1], out, body_indent, name_col);
+        }
+
+        let body = &items[2..];
+        if body.is_empty() {
+            out.push(')');
+            return;
+        }
+
+        let has_pipes = body.iter().any(is_pipe_symbol);
+
+        if has_pipes {
+            // One `| Variant` per indented line.
+            let mut i = 0;
+            while i < body.len() {
+                if is_pipe_symbol(&body[i]) {
+                    out.push('\n');
+                    push_indent(out, body_indent);
+                    out.push_str("| ");
+                    i += 1;
+                    if i < body.len() {
+                        self.write_node_indented(
+                            &body[i],
+                            out,
+                            body_indent + 2,
+                            body_indent + 2,
+                        );
+                        i += 1;
+                    }
+                } else {
+                    // Unpaired non-pipe item (defensive)
+                    out.push('\n');
+                    push_indent(out, body_indent);
+                    self.write_node_indented(&body[i], out, body_indent, body_indent);
+                    i += 1;
+                }
+            }
+        } else {
+            // Record map or complex sum type: one item per line.
+            for item in body {
+                out.push('\n');
+                if item.leading_comments.is_empty() {
+                    push_indent(out, body_indent);
+                }
+                if let NodeKind::Map(pairs) = &item.kind {
+                    // Record field maps are always expanded with aligned columns.
+                    self.write_map_always_aligned(pairs, out, body_indent);
+                } else {
+                    self.write_node_indented(item, out, body_indent, body_indent);
+                }
+            }
+        }
+
+        out.push(')');
+    }
+
     /// Call-indent form: if fits → flat; else first arg on same line, rest
     /// aligned under first arg.
     fn write_call_form(&self, items: &[Node], out: &mut String, indent: usize, column: usize) {
@@ -792,6 +877,70 @@ impl PrettyPrinter {
                 self.write_node_indented(v, out, pair_indent, val_col);
             }
         }
+        out.push('}');
+    }
+
+    /// Write a map always expanded with aligned key-value columns.
+    ///
+    /// Unlike [`write_map_indented`] this never tries a flat single-line
+    /// rendering — used for `deftype` record bodies where expansion is always
+    /// preferred regardless of length.
+    fn write_map_always_aligned(&self, pairs: &[(Node, Node)], out: &mut String, indent: usize) {
+        if pairs.is_empty() {
+            out.push_str("{}");
+            return;
+        }
+
+        let pair_indent = indent + 1;
+        out.push('{');
+
+        if self.config.align_columns && pairs.len() >= 2 {
+            let max_key_width = pairs
+                .iter()
+                .map(|(k, _)| self.flat_len(k).min(40))
+                .max()
+                .unwrap_or(0);
+            let max_val_width = pairs
+                .iter()
+                .map(|(_, v)| self.flat_len(v).min(self.config.max_line_width))
+                .max()
+                .unwrap_or(0);
+            let aligned_width = pair_indent + max_key_width + 1 + max_val_width + 1;
+            let use_alignment = aligned_width <= self.config.max_line_width;
+
+            for (i, (k, v)) in pairs.iter().enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                    push_indent(out, pair_indent);
+                }
+                let key_len = self.flat_len(k).min(40);
+                self.write_node_indented(k, out, pair_indent, pair_indent);
+                if use_alignment {
+                    for _ in key_len..max_key_width {
+                        out.push(' ');
+                    }
+                }
+                out.push(' ');
+                let val_col = if use_alignment {
+                    pair_indent + max_key_width + 1
+                } else {
+                    pair_indent + key_len + 1
+                };
+                self.write_node_indented(v, out, pair_indent, val_col);
+            }
+        } else {
+            for (i, (k, v)) in pairs.iter().enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                    push_indent(out, pair_indent);
+                }
+                self.write_node_indented(k, out, pair_indent, pair_indent);
+                out.push(' ');
+                let val_col = pair_indent + self.flat_len(k).min(40) + 1;
+                self.write_node_indented(v, out, pair_indent, val_col);
+            }
+        }
+
         out.push('}');
     }
 
@@ -969,11 +1118,17 @@ fn flat_len_atom(atom: &Atom) -> usize {
             }
         }
         Atom::Str(s) => {
+            // A multiline string can never fit on a single line; returning
+            // usize::MAX prevents the printer from placing it in flat/aligned
+            // mode, which would make subsequent lines appear detached.
+            if s.contains('\n') {
+                return usize::MAX;
+            }
             // 2 for quotes + escaped length
             let mut len = 2;
             for c in s.chars() {
                 len += match c {
-                    '\\' | '"' | '\n' | '\t' | '\r' => 2,
+                    '\\' | '"' | '\t' | '\r' => 2,
                     _ => 1,
                 };
             }
@@ -1022,6 +1177,14 @@ fn push_indent(out: &mut String, n: usize) {
     }
 }
 
+/// Returns true if the node is the `|` pipe symbol used in sum-type definitions.
+fn is_pipe_symbol(node: &Node) -> bool {
+    matches!(
+        &node.kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name.as_str() == "|"
+    )
+}
+
 /// Check if a node kind is a compound form (list, vector, map, or set).
 fn is_compound(kind: &NodeKind) -> bool {
     matches!(
@@ -1054,6 +1217,11 @@ fn needs_multiline_list(items: &[Node]) -> bool {
                 return bindings.len() >= 4;
             }
             false
+        }
+        // deftype: force multi-line when body has pipe symbols or compound items.
+        "deftype" => {
+            let body = &items[2..];
+            body.iter().any(|item| is_pipe_symbol(item) || is_compound(&item.kind))
         }
         // Body-indent forms: force multi-line when any body item is compound.
         name if is_body_indent_form(name) => {
@@ -1230,13 +1398,18 @@ fn write_char(c: char, out: &mut String) {
 }
 
 /// Emit a double-quoted string literal, re-escaping special characters.
+///
+/// Literal newlines are emitted as-is (not as `\n`) so that multiline
+/// strings (e.g. SQL literals) are preserved in their readable form after
+/// formatting.  The Nexl lexer accepts both forms; the canonical formatted
+/// output uses literal newlines.
 fn write_str(s: &str, out: &mut String) {
     out.push('"');
     for c in s.chars() {
         match c {
             '\\' => out.push_str("\\\\"),
             '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
+            '\n' => out.push('\n'),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
             c => out.push(c),
@@ -1396,11 +1569,14 @@ mod tests {
         assert_eq!(pp().print(&node), "\"hello\"");
     }
 
-    // ── 17. print_string_escape_newline ───────────────────────────────────
+    // ── 17. print_string_literal_newline ──────────────────────────────────
+    // Newlines in strings are emitted as literal newlines (canonical form),
+    // not as \n escapes.  Both forms are accepted by the lexer; the formatter
+    // normalises to the readable multiline representation.
     #[test]
-    fn print_string_escape_newline() {
+    fn print_string_literal_newline() {
         let node = atom_node(Atom::Str("a\nb".to_string()));
-        assert_eq!(pp().print(&node), "\"a\\nb\"");
+        assert_eq!(pp().print(&node), "\"a\nb\"");
     }
 
     // ── 18. print_string_escape_backslash ─────────────────────────────────
@@ -2260,5 +2436,101 @@ mod tests {
         let out = pp.print_file(&[node]);
         assert!(out.starts_with("#{"));
         assert!(out.contains('\n'));
+    }
+
+    // ── 74. deftype_complex_sum_unchanged ───────────────────────────────
+    #[test]
+    fn deftype_complex_sum_unchanged() {
+        // Complex sum types (no pipe, compound ctors) — each ctor on own line.
+        let node = list(vec![
+            sym("deftype"),
+            sym("PaymentMethod"),
+            list(vec![sym("Card"),    map_node(vec![(kw("last4"), sym("Str")), (kw("brand"), sym("Str"))])]),
+            list(vec![sym("BankTransfer"), map_node(vec![(kw("iban"), sym("Str"))])]),
+            list(vec![sym("Wallet")]),
+        ]);
+        let expected = "\
+(deftype PaymentMethod
+  (Card {:last4 Str :brand Str})
+  (BankTransfer {:iban Str})
+  (Wallet))
+";
+        assert_eq!(pp().print_file(&[node]), expected);
+    }
+
+    // ── 76. deftype_record_single_pair_expanded ─────────────────────────
+    #[test]
+    fn deftype_record_single_pair_expanded() {
+        // A single-field record: no alignment needed but still expanded.
+        let node = list(vec![
+            sym("deftype"),
+            sym("Wrap"),
+            map_node(vec![(kw("val"), sym("Int"))]),
+        ]);
+        let expected = "\
+(deftype Wrap
+  {:val Int})
+";
+        assert_eq!(pp().print_file(&[node]), expected);
+    }
+
+    // ── 76. deftype_record_map_always_expanded ───────────────────────────
+    #[test]
+    fn deftype_record_map_always_expanded() {
+        // Map fits in 80 cols but should still expand and align columns.
+        let node = list(vec![
+            sym("deftype"),
+            sym("Account"),
+            map_node(vec![
+                (kw("id"),    sym("Int")),
+                (kw("email"), sym("Str")),
+                (kw("name"),  sym("Str")),
+                (kw("role"),  sym("AccountRole")),
+            ]),
+        ]);
+        let expected = "\
+(deftype Account
+  {:id    Int
+   :email Str
+   :name  Str
+   :role  AccountRole})
+";
+        assert_eq!(pp().print_file(&[node]), expected);
+    }
+
+    // ── 76. deftype_pipe_two_variants ───────────────────────────────────
+    #[test]
+    fn deftype_pipe_two_variants() {
+        let node = list(vec![
+            sym("deftype"),
+            sym("Bit"),
+            sym("|"), sym("Zero"),
+            sym("|"), sym("One"),
+        ]);
+        let expected = "\
+(deftype Bit
+  | Zero
+  | One)
+";
+        assert_eq!(pp().print_file(&[node]), expected);
+    }
+
+    // ── 75. deftype_pipe_sum_always_multiline ────────────────────────────
+    #[test]
+    fn deftype_pipe_sum_always_multiline() {
+        let node = list(vec![
+            sym("deftype"),
+            sym("AccountRole"),
+            sym("|"), sym("Buyer"),
+            sym("|"), sym("Seller"),
+            sym("|"), sym("Admin"),
+        ]);
+        let expected = "\
+(deftype AccountRole
+  | Buyer
+  | Seller
+  | Admin)
+";
+        assert_eq!(pp().print_file(&[node]), expected);
     }
 }
