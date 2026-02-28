@@ -20,7 +20,7 @@
   - `wasi:random` — cryptographic and insecure random bytes
   - Expose as stdlib: `(time/now)`, `(random/bytes n)`
 
-- [ ] 4. **`wasi:filesystem`**
+- [x] 4. **`wasi:filesystem`**
   - Open, read, write, stat, readdir, close
   - Expose as stdlib: `(fs/read-file path)`, `(fs/write-file path content)`
   - Preopened directory sandboxing (WASI capability model)

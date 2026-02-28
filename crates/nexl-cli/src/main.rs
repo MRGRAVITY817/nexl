@@ -467,8 +467,14 @@ fn command_run_wasm(input_path: PathBuf, args: Vec<String>) -> Result<(), String
         .map_err(|e| format!("codegen error: {e}"))?;
 
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
+    // Preopen the current working directory as "." so the WASM module can access
+    // the filesystem via WASI (capability-model sandboxing).
+    let cwd = std::env::current_dir().map_err(|e| format!("cannot get cwd: {e}"))?;
+    let cwd_str = cwd
+        .to_str()
+        .ok_or_else(|| "cwd path is not valid UTF-8".to_string())?;
     wasm_runner::WasmRunner::new()
-        .run_wasm(&bytes, &args_ref)
+        .run_wasm_with_fs(&bytes, &args_ref, &[(cwd_str, ".")])
         .map_err(|e| format!("wasm error: {e}"))
 }
 

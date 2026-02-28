@@ -6,7 +6,7 @@
 
 use wasmtime::{Engine, Linker, Module, Store, Val};
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
-use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 /// Executes compiled WASM modules via wasmtime.
 pub struct WasmRunner {
@@ -54,15 +54,16 @@ impl WasmRunner {
     /// `args` is the WASI argv passed to the program (index 0 is the program name).
     /// stdio is inherited from the host process.
     /// Returns `Err` if the entry point is missing or execution traps.
+    #[allow(dead_code)] // used in tests; binary uses run_wasm_with_fs
     pub fn run_wasm(&self, bytes: &[u8], args: &[&str]) -> Result<(), WasmRunError> {
-        self.run_inner(bytes, args, None, None)
+        self.run_inner(bytes, args, None, None, &[])
     }
 
     /// Compile and execute WASM `bytes`, capturing stdout and stderr.
     ///
     /// `args` is the argument list passed to the WASM program (WASI argv).
     /// Returns a [`CapturedOutput`] with the bytes written to stdout and stderr.
-    #[allow(dead_code)] // used in tests; will be consumed by capture-output tooling in M23+
+    #[allow(dead_code)] // used in tests
     pub fn run_wasm_captured(
         &self,
         bytes: &[u8],
@@ -71,7 +72,43 @@ impl WasmRunner {
         use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
         let stdout = MemoryOutputPipe::new(64 * 1024);
         let stderr = MemoryOutputPipe::new(64 * 1024);
-        self.run_inner(bytes, args, Some(stdout.clone()), Some(stderr.clone()))?;
+        self.run_inner(bytes, args, Some(stdout.clone()), Some(stderr.clone()), &[])?;
+        Ok(CapturedOutput {
+            stdout: stdout.contents().to_vec(),
+            stderr: stderr.contents().to_vec(),
+        })
+    }
+
+    /// Compile and run WASM `bytes` with preopened filesystem directories.
+    ///
+    /// `dirs` is a list of `(host_path, guest_path)` pairs. Each pair grants the
+    /// WASM module read+write access to `host_path` under the guest name `guest_path`.
+    /// stdio is inherited from the host process.
+    #[allow(dead_code)]
+    pub fn run_wasm_with_fs(
+        &self,
+        bytes: &[u8],
+        args: &[&str],
+        dirs: &[(&str, &str)],
+    ) -> Result<(), WasmRunError> {
+        self.run_inner(bytes, args, None, None, dirs)
+    }
+
+    /// Compile and run WASM `bytes` with preopened directories, capturing output.
+    ///
+    /// `dirs` is a list of `(host_path, guest_path)` pairs granting filesystem access.
+    /// stdout and stderr are captured and returned as [`CapturedOutput`].
+    #[allow(dead_code)] // used in tests
+    pub fn run_wasm_captured_with_fs(
+        &self,
+        bytes: &[u8],
+        args: &[&str],
+        dirs: &[(&str, &str)],
+    ) -> Result<CapturedOutput, WasmRunError> {
+        use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+        let stdout = MemoryOutputPipe::new(64 * 1024);
+        let stderr = MemoryOutputPipe::new(64 * 1024);
+        self.run_inner(bytes, args, Some(stdout.clone()), Some(stderr.clone()), dirs)?;
         Ok(CapturedOutput {
             stdout: stdout.contents().to_vec(),
             stderr: stderr.contents().to_vec(),
@@ -84,6 +121,7 @@ impl WasmRunner {
         args: &[&str],
         stdout: Option<wasmtime_wasi::p2::pipe::MemoryOutputPipe>,
         stderr: Option<wasmtime_wasi::p2::pipe::MemoryOutputPipe>,
+        dirs: &[(&str, &str)],
     ) -> Result<(), WasmRunError> {
         let module = Module::new(&self.engine, bytes)
             .map_err(|e| WasmRunError(format!("failed to compile module: {e}")))?;
@@ -99,6 +137,11 @@ impl WasmRunner {
             builder.stderr(pipe);
         } else {
             builder.inherit_stderr();
+        }
+        for (host_path, guest_path) in dirs {
+            builder
+                .preopened_dir(host_path, guest_path, DirPerms::all(), FilePerms::all())
+                .map_err(|e| WasmRunError(format!("failed to preopen {host_path:?}: {e}")))?;
         }
         let wasi_ctx = builder.build_p1();
 
@@ -288,6 +331,187 @@ mod tests {
             &[],
         );
         assert!(result.is_ok(), "WASI module should instantiate cleanly, got: {result:?}");
+    }
+
+    /// fd_prestat_get(3) returns errno 0 when a directory is preopened.
+    #[test]
+    fn test_wasi_prestat_with_preopened_dir() {
+        let runner = WasmRunner::new();
+        let tmp = std::env::temp_dir().join("nexl_prestat_test");
+        std::fs::create_dir_all(&tmp).expect("create test dir");
+        let host = tmp.to_str().unwrap().to_owned();
+        let result = runner.run_wasm_captured_with_fs(
+            br#"(module
+                  (import "wasi_snapshot_preview1" "fd_prestat_get"
+                    (func $fd_prestat_get (param i32 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_write"
+                    (func $fd_write (param i32 i32 i32 i32) (result i32)))
+                  (memory (export "memory") 1)
+                  (func $_start (local $errno i32)
+                    (local.set $errno (call $fd_prestat_get (i32.const 3) (i32.const 0)))
+                    (i32.store8 (i32.const 100)
+                      (i32.add (local.get $errno) (i32.const 48)))
+                    (i32.store8 (i32.const 101) (i32.const 10))
+                    (i32.store (i32.const 200) (i32.const 100))
+                    (i32.store (i32.const 204) (i32.const 2))
+                    (drop (call $fd_write
+                      (i32.const 1) (i32.const 200) (i32.const 1) (i32.const 300))))
+                  (export "_start" (func $_start)))"#,
+            &[],
+            &[(&host, ".")],
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        let out = result.expect("should run without error");
+        assert_eq!(
+            out.stdout, b"0\n",
+            "fd_prestat_get should return errno 0 with preopened dir"
+        );
+    }
+
+    /// fd_prestat_get(3) returns errno 8 (EBADF) when no directory is preopened.
+    ///
+    /// Proves sandboxing: WASM modules get no filesystem access without explicit preopen.
+    #[test]
+    fn test_wasi_prestat_no_preopened_dir() {
+        let runner = WasmRunner::new();
+        // run_wasm_captured (no dirs) — fd 3 has nothing preopened.
+        let result = runner.run_wasm_captured(
+            br#"(module
+                  (import "wasi_snapshot_preview1" "fd_prestat_get"
+                    (func $fd_prestat_get (param i32 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_write"
+                    (func $fd_write (param i32 i32 i32 i32) (result i32)))
+                  (memory (export "memory") 1)
+                  (func $_start (local $errno i32)
+                    (local.set $errno (call $fd_prestat_get (i32.const 3) (i32.const 0)))
+                    (i32.store8 (i32.const 100)
+                      (i32.add (local.get $errno) (i32.const 48)))
+                    (i32.store8 (i32.const 101) (i32.const 10))
+                    (i32.store (i32.const 200) (i32.const 100))
+                    (i32.store (i32.const 204) (i32.const 2))
+                    (drop (call $fd_write
+                      (i32.const 1) (i32.const 200) (i32.const 1) (i32.const 300))))
+                  (export "_start" (func $_start)))"#,
+            &[],
+        );
+        let out = result.expect("should run without error");
+        // errno 8 = EBADF — fd 3 does not exist
+        assert_eq!(
+            out.stdout, b"8\n",
+            "fd_prestat_get(3) should return EBADF (8) when no dir preopened"
+        );
+    }
+
+    /// A preopened file can be opened via path_open and read via fd_read.
+    ///
+    /// Memory layout:
+    ///   0..9   — "hello.txt" (filename)
+    ///   32     — fd_out from path_open
+    ///   64..128 — read buffer
+    ///   128..136 — iov for fd_read {buf=64, buf_len=64}
+    ///   136    — nread from fd_read
+    ///   200..208 — iov for fd_write {buf=64, buf_len=nread}
+    ///   220    — nwritten from fd_write
+    #[test]
+    fn test_wasi_read_preopened_file() {
+        let runner = WasmRunner::new();
+        let tmp = std::env::temp_dir().join("nexl_read_test");
+        std::fs::create_dir_all(&tmp).expect("create test dir");
+        std::fs::write(tmp.join("hello.txt"), b"hi\n").expect("write test file");
+        let host = tmp.to_str().unwrap().to_owned();
+
+        let result = runner.run_wasm_captured_with_fs(
+            br#"(module
+                  (import "wasi_snapshot_preview1" "path_open"
+                    (func $path_open
+                      (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_read"
+                    (func $fd_read (param i32 i32 i32 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_write"
+                    (func $fd_write (param i32 i32 i32 i32) (result i32)))
+                  (memory (export "memory") 1)
+                  (data (i32.const 0) "hello.txt")
+                  (func $_start (local $fd i32)
+                    ;; path_open(3, 0, path=0, path_len=9, oflags=0,
+                    ;;           rights_base=fd_read(2), rights_inh=0, fdflags=0, fd_out=32)
+                    (drop (call $path_open
+                      (i32.const 3) (i32.const 0)
+                      (i32.const 0) (i32.const 9)
+                      (i32.const 0) (i64.const 2)
+                      (i64.const 0) (i32.const 0)
+                      (i32.const 32)))
+                    (local.set $fd (i32.load (i32.const 32)))
+                    ;; iov for fd_read: buf=64, buf_len=64
+                    (i32.store (i32.const 128) (i32.const 64))
+                    (i32.store (i32.const 132) (i32.const 64))
+                    (drop (call $fd_read
+                      (local.get $fd) (i32.const 128) (i32.const 1) (i32.const 136)))
+                    ;; iov for fd_write: buf=64, buf_len=nread
+                    (i32.store (i32.const 200) (i32.const 64))
+                    (i32.store (i32.const 204) (i32.load (i32.const 136)))
+                    (drop (call $fd_write
+                      (i32.const 1) (i32.const 200) (i32.const 1) (i32.const 220))))
+                  (export "_start" (func $_start)))"#,
+            &[],
+            &[(&host, ".")],
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+        let out = result.expect("read test should succeed");
+        assert_eq!(out.stdout, b"hi\n", "should read back the preopened file content");
+    }
+
+    /// A WASM module can create and write a file in a preopened directory.
+    ///
+    /// Memory layout:
+    ///   0..7   — "out.txt" (filename, 7 bytes)
+    ///   16..19 — "ok\n" (content, 3 bytes)
+    ///   32     — fd_out from path_open
+    ///   100..108 — iov for fd_write {buf=16, buf_len=3}
+    ///   108    — nwritten from fd_write
+    #[test]
+    fn test_wasi_write_to_preopened_dir() {
+        let runner = WasmRunner::new();
+        let tmp = std::env::temp_dir().join("nexl_write_test");
+        std::fs::create_dir_all(&tmp).expect("create test dir");
+        let host = tmp.to_str().unwrap().to_owned();
+        let out_file = tmp.join("out.txt");
+
+        let result = runner.run_wasm_with_fs(
+            br#"(module
+                  (import "wasi_snapshot_preview1" "path_open"
+                    (func $path_open
+                      (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_write"
+                    (func $fd_write (param i32 i32 i32 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_close"
+                    (func $fd_close (param i32) (result i32)))
+                  (memory (export "memory") 1)
+                  (data (i32.const 0) "out.txt")
+                  (data (i32.const 16) "ok\n")
+                  (func $_start (local $fd i32)
+                    ;; path_open(3, 0, path=0, path_len=7, oflags=creat(1)|trunc(8)=9,
+                    ;;           rights_base=fd_write(64), rights_inh=0, fdflags=0, fd_out=32)
+                    (drop (call $path_open
+                      (i32.const 3) (i32.const 0)
+                      (i32.const 0) (i32.const 7)
+                      (i32.const 9)
+                      (i64.const 64) (i64.const 0)
+                      (i32.const 0) (i32.const 32)))
+                    (local.set $fd (i32.load (i32.const 32)))
+                    ;; iov for fd_write: buf=16, buf_len=3
+                    (i32.store (i32.const 100) (i32.const 16))
+                    (i32.store (i32.const 104) (i32.const 3))
+                    (drop (call $fd_write
+                      (local.get $fd) (i32.const 100) (i32.const 1) (i32.const 108)))
+                    (drop (call $fd_close (local.get $fd))))
+                  (export "_start" (func $_start)))"#,
+            &[],
+            &[(&host, ".")],
+        );
+        result.expect("write test should succeed");
+        let content = std::fs::read(&out_file).expect("out.txt should exist after write");
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(content, b"ok\n", "file content should be 'ok\\n'");
     }
 
     /// clock_time_get for realtime clock (id=0) returns errno 0 — clock is linked.
