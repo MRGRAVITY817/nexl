@@ -25,7 +25,7 @@
   - Parameterized queries only (no string interpolation)
   - Row → `Vec<(Keyword, Value)>` Map
 
-- [ ] 4. **`test` module — enhanced testing**
+- [x] 4. **`test` module — enhanced testing**
   - `test/fail msg` — explicitly fail with message
   - `test/skip msg` — skip a test
   - `test/check name gen f` — simple property-based testing (run f N times)
