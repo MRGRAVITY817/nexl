@@ -43,7 +43,7 @@
   - Module without `:performs [Net]` cannot import `wasi:http`
   - Effect system enforces sandboxing at the WASM level
 
-- [ ] 8. **`wasi:http` + `wasi:sockets`**
+- [x] 8. **`wasi:http` + `wasi:sockets`**
   - `wasi:http/outgoing-handler` — HTTP client requests
   - `wasi:http/incoming-handler` — HTTP server handler
   - `wasi:sockets` — TCP client and server
