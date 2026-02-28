@@ -49,6 +49,9 @@ enum Command {
         /// Compile to WASM and execute via wasmtime instead of the tree-walk evaluator.
         #[arg(long = "wasm")]
         wasm: bool,
+        /// Enable experimental WASI Preview 3 async features (design only; no runtime effect).
+        #[arg(long = "experimental-wasi3")]
+        experimental_wasi3: bool,
         /// Arguments to pass to the program via sys/args
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
@@ -159,7 +162,18 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Run { input, args, wasm } => {
+        Command::Run {
+            input,
+            args,
+            wasm,
+            experimental_wasi3,
+        } => {
+            if experimental_wasi3 {
+                eprintln!(
+                    "{}",
+                    nexl_wasm::wasi3::Wasi3Config::experimental_notice()
+                );
+            }
             nexl_runtime::sys::set_program_args(args.clone());
             let result = if wasm {
                 command_run_wasm(input, args)
@@ -1310,6 +1324,7 @@ mod tests {
             Command::Run {
                 input: PathBuf::from("main.nexl"),
                 wasm: false,
+                experimental_wasi3: false,
                 args: vec![],
             }
         );

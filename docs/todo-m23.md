@@ -55,7 +55,7 @@
   - Compose two Nexl components via `wasm-tools compose`
   - Document the full workflow in `docs/component-composition.md`
 
-- [ ] 10. **WASI 0.3 async readiness** (design only, gate behind flag)
+- [x] 10. **WASI 0.3 async readiness** (design only, gate behind flag)
   - Map Nexl's `Concurrent` effect to WASI async I/O
   - Non-blocking HTTP, filesystem, and socket design doc
   - Gate behind `--experimental-wasi3` flag; no runtime changes until spec is final

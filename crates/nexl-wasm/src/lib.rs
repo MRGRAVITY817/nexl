@@ -15,6 +15,7 @@ pub mod marshal;
 pub mod wit;
 pub mod wit_export;
 pub mod wit_import;
+pub mod wasi3;
 
 pub use canonical_abi::{
     CanonicalAbiError, WasmValType, canonical_alignment, canonical_size, flatten_params,
