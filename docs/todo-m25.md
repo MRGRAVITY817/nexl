@@ -38,7 +38,7 @@
   - Includes type signatures, effect rows, docstrings
   - Cross-module hyperlinks
 
-- [ ] 9. **Cookbook — 10 core recipes**
+- [x] 9. **Cookbook — 10 core recipes**
   - Parse JSON, make HTTP request, query database, read file
   - Handle errors with Result, test with deftest
   - Each recipe: problem, solution, explanation, runnable code

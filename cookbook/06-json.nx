@@ -1,0 +1,22 @@
+;; Recipe 06: JSON Encoding and Decoding
+;;
+;; Problem: Serialize Nexl data to JSON and parse JSON strings.
+;; Solution: Use json/encode, json/decode, and json/pretty.
+;;
+;; Run: nexl run cookbook/06-json.nx
+
+;; Encode a map to JSON:
+(def data {:name "Alice" :scores [95 87 92] :active true})
+(def json-str (json/encode data))
+(io/println json-str)
+
+;; Pretty-print with indentation (2 spaces):
+(io/println (json/pretty data 2))
+
+;; Decode a JSON string back to Nexl values:
+(def parsed (json/decode "{\"x\": 1, \"y\": 2}"))
+(io/println (str "Decoded: " parsed))
+
+;; Unicode escapes work:
+(def unicode-str (json/decode "\"Hello \\u0041\""))
+(io/println (str "Unicode: " unicode-str))

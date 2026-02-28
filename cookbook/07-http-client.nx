@@ -1,0 +1,31 @@
+;; Recipe 07: Making HTTP Requests
+;;
+;; Problem: Fetch data from a web API.
+;; Solution: Use http/get and http/post with Result handling.
+;;
+;; Run: nexl run cookbook/07-http-client.nx
+;;
+;; Note: Requires network access. Will fail if offline.
+
+;; GET request:
+(defn fetch-example []
+  (match (http/get "http://httpbin.org/get")
+    (Ok resp)
+      (do
+        (io/println (str "Status: " (http/status resp)))
+        (io/println (str "Body length: " (count (http/body resp)))))
+    (Err e)
+      (io/println (str "Request failed: " e))))
+
+;; POST request with JSON body:
+(defn post-example []
+  (let [body (json/encode {:message "hello"})
+        headers {:content-type "application/json"}]
+    (match (http/post "http://httpbin.org/post" body headers)
+      (Ok resp) (io/println (str "Posted! Status: " (http/status resp)))
+      (Err e)   (io/println (str "Post failed: " e)))))
+
+;; Build a response manually:
+(def my-response (http/response 200 "OK"))
+(io/println (str "Response status: " (http/status my-response)))
+(io/println (str "Response body: " (http/body my-response)))

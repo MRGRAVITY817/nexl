@@ -1,0 +1,25 @@
+;; Recipe 10: Environment Variables and Configuration
+;;
+;; Problem: Read configuration from environment variables.
+;; Solution: Use env/get, env/require, and env/all.
+;;
+;; Run: nexl run cookbook/10-environment.nx
+;; Try: PORT=3000 nexl run cookbook/10-environment.nx
+
+;; Read an optional env var (returns Option):
+(def home (env/get "HOME"))
+(io/println (str "HOME: " home))
+
+;; Read with a default:
+(def port (match (env/get "PORT")
+  (Some p) p
+  None     "8080"))
+(io/println (str "Port: " port))
+
+;; Get all environment variables as a Map:
+(def all-vars (env/all))
+(io/println (str "Total env vars: " (count all-vars)))
+
+;; env/require errors if the variable is missing:
+;; Uncomment to see the error:
+; (def secret (env/require "MY_SECRET_KEY"))

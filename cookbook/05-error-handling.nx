@@ -1,0 +1,33 @@
+;; Recipe 05: Error Handling with Result
+;;
+;; Problem: Handle operations that can fail without exceptions.
+;; Solution: Use Result type with Ok/Err and the ? operator.
+;;
+;; Run: nexl run cookbook/05-error-handling.nx
+
+;; Functions that can fail return Result:
+(defn parse-port [s]
+  (let [n (conv/parse-int s)]
+    (match n
+      (Some port) (if (> port 0)
+                    (Ok port)
+                    (Err "port must be positive"))
+      None (Err (str "not a number: " s)))))
+
+;; Use match to handle Results:
+(defn show-port [s]
+  (match (parse-port s)
+    (Ok port) (io/println (str "Port: " port))
+    (Err msg) (io/println (str "Error: " msg))))
+
+(show-port "8080")
+(show-port "-1")
+(show-port "abc")
+
+;; The ? operator propagates errors (early return from enclosing function):
+(defn connect [host port-str]
+  (let [port (parse-port port-str)?]
+    (Ok (str "Connected to " host ":" port))))
+
+(io/println (str (connect "localhost" "3000")))
+(io/println (str (connect "localhost" "bad")))

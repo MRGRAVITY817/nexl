@@ -1,0 +1,31 @@
+;; Recipe 08: SQLite Database Access
+;;
+;; Problem: Store and query data in a SQLite database.
+;; Solution: Use db/open, db/execute, db/query, and db/close.
+;;
+;; Run: nexl run cookbook/08-database.nx
+
+;; Open (or create) a database:
+(def db (unwrap (db/open "/tmp/nexl-cookbook.db")))
+
+;; Create a table:
+(db/execute db "CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT, done INTEGER)" [])
+
+;; Insert rows with parameterized queries (prevents SQL injection):
+(db/execute db "INSERT INTO tasks (title, done) VALUES (?, ?)" ["Learn Nexl" 0])
+(db/execute db "INSERT INTO tasks (title, done) VALUES (?, ?)" ["Write cookbook" 1])
+
+;; Query rows — each row is a Map with keyword keys:
+(def rows (unwrap (db/query db "SELECT * FROM tasks" [])))
+(each (fn [row]
+  (io/println (str "Task: " (:title row) " done=" (:done row))))
+  rows)
+
+;; Query with parameters:
+(def incomplete (unwrap (db/query db "SELECT title FROM tasks WHERE done = ?" [0])))
+(io/println (str "Incomplete: " incomplete))
+
+;; Clean up:
+(db/execute db "DROP TABLE tasks" [])
+(db/close db)
+(io/println "Database cleaned up.")

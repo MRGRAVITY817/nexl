@@ -1,0 +1,32 @@
+;; Recipe 03: Pattern Matching
+;;
+;; Problem: Branch on data shapes using structural patterns.
+;; Solution: Use match for exhaustive pattern matching.
+;;
+;; Run: nexl run cookbook/03-pattern-matching.nx
+
+;; Match on values:
+(defn describe [x]
+  (match x
+    0 "zero"
+    1 "one"
+    _ "something else"))
+
+;; Match on Option values:
+(defn unwrap-or [opt default]
+  (match opt
+    (Some v) v
+    None default))
+
+;; Match on Result values:
+(defn show-result [r]
+  (match r
+    (Ok v) (str "Success: " v)
+    (Err e) (str "Error: " e)))
+
+(io/println (describe 0))
+(io/println (describe 42))
+(io/println (str (unwrap-or (Some 10) 0)))
+(io/println (str (unwrap-or None 0)))
+(io/println (show-result (Ok "done")))
+(io/println (show-result (Err "oops")))

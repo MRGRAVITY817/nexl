@@ -1,0 +1,26 @@
+;; Recipe 02: Functions and Let Bindings
+;;
+;; Problem: Define reusable functions and local bindings.
+;; Solution: Use defn for top-level functions, let for local bindings.
+;;
+;; Run: nexl run cookbook/02-functions-and-let.nx
+
+;; Define a function with defn:
+(defn greet [name]
+  (str "Hello, " name "!"))
+
+;; Local bindings with let:
+(defn circle-area [radius]
+  (let [pi 3.14159
+        r-squared (* radius radius)]
+    (* pi r-squared)))
+
+;; Functions are first-class values:
+(defn apply-twice [f x]
+  (f (f x)))
+
+(defn add1 [x] (+ x 1))
+
+(io/println (greet "Alice"))
+(io/println (str "Area: " (circle-area 5.0)))
+(io/println (str "Apply twice: " (apply-twice add1 10)))

@@ -1,0 +1,14 @@
+;; Recipe 01: Hello World
+;;
+;; Problem: Print a greeting to the console.
+;; Solution: Use io/println from the standard library.
+;;
+;; Run: nexl run cookbook/01-hello-world.nx
+
+(io/println "Hello, world!")
+
+;; You can also use str/concat to build strings:
+(io/println (str/concat "Hello, " "Nexl!"))
+
+;; The `str` function converts any value to a string:
+(io/println (str "The answer is " 42))

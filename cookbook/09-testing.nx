@@ -1,0 +1,33 @@
+;; Recipe 09: Writing Tests with deftest
+;;
+;; Problem: Write and run automated tests for your code.
+;; Solution: Use deftest + assert, then run with `nexl test`.
+;;
+;; Run: nexl test cookbook/09-testing.nx
+
+;; Define functions to test:
+(defn factorial [n]
+  (if (= n 0) 1 (* n (factorial (- n 1)))))
+
+(defn fibonacci [n]
+  (if (< n 2) n (+ (fibonacci (- n 1)) (fibonacci (- n 2)))))
+
+;; Write tests with deftest:
+(deftest "factorial of 0 is 1"
+  (assert (= (factorial 0) 1)))
+
+(deftest "factorial of 5 is 120"
+  (assert (= (factorial 5) 120)))
+
+(deftest "fibonacci sequence"
+  (assert (= (fibonacci 0) 0))
+  (assert (= (fibonacci 1) 1))
+  (assert (= (fibonacci 10) 55)))
+
+;; Test error handling:
+(deftest "Ok unwraps correctly"
+  (assert (= (unwrap (Ok 42)) 42)))
+
+;; Use test/fail to mark unfinished tests:
+; (deftest "todo: add more tests"
+;   (test/fail "not implemented"))

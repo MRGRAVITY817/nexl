@@ -1,0 +1,33 @@
+;; Recipe 04: Collections — Vec, Map, Set
+;;
+;; Problem: Work with lists, key-value maps, and sets.
+;; Solution: Use vector literals, map literals, and built-in operations.
+;;
+;; Run: nexl run cookbook/04-collections.nx
+
+;; Vectors (ordered sequences):
+(def numbers [1 2 3 4 5])
+(io/println (str "Numbers: " numbers))
+(io/println (str "First: " (get numbers 0)))
+(io/println (str "Count: " (count numbers)))
+
+;; Maps (keyword → value):
+(def person {:name "Alice" :age 30 :city "Seattle"})
+(io/println (str "Person: " person))
+(io/println (str "Name: " (:name person)))
+(io/println (str "Age: " (:age person)))
+
+;; Nested data:
+(def config {:db {:host "localhost" :port 5432}
+             :log {:level "info"}})
+(io/println (str "Config: " config))
+
+;; Map/filter/reduce on vectors:
+(def doubled (map (fn [x] (* x 2)) numbers))
+(io/println (str "Doubled: " doubled))
+
+(def evens (filter (fn [x] (= (math/mod x 2) 0)) numbers))
+(io/println (str "Evens: " evens))
+
+(def total (reduce + 0 numbers))
+(io/println (str "Sum: " total))
