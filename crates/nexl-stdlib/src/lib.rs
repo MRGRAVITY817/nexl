@@ -13,6 +13,7 @@ pub mod json;
 pub mod log;
 pub mod math;
 pub mod net;
+pub mod random;
 pub mod str;
 pub mod sys;
 pub mod test;
@@ -37,6 +38,7 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("io", io::entries()),
         ("json", json::entries()),
         ("time", time::entries()),
+        ("random", random::entries()),
         ("crypto", crypto::entries()),
         ("log", log::entries()),
         ("test", test::entries()),
@@ -78,8 +80,8 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "core", "str", "math", "conv", "io", "json", "time", "crypto", "log", "test",
-                "net", "async", "sys"
+                "core", "str", "math", "conv", "io", "json", "time", "random", "crypto", "log",
+                "test", "net", "async", "sys"
             ]
         );
     }

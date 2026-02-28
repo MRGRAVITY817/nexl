@@ -14,7 +14,7 @@
   - `wasi:cli/exit` — process exit codes
   - `nexl run --wasm` programs can print to stdout and read args
 
-- [ ] 3. **`wasi:clocks` + `wasi:random`**
+- [x] 3. **`wasi:clocks` + `wasi:random`**
   - `wasi:clocks/wall-clock` — current time
   - `wasi:clocks/monotonic-clock` — elapsed time / sleep
   - `wasi:random` — cryptographic and insecure random bytes

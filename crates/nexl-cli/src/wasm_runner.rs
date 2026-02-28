@@ -290,6 +290,98 @@ mod tests {
         assert!(result.is_ok(), "WASI module should instantiate cleanly, got: {result:?}");
     }
 
+    /// clock_time_get for realtime clock (id=0) returns errno 0 — clock is linked.
+    #[test]
+    fn test_wasi_clock_realtime() {
+        let runner = WasmRunner::new();
+        // Module calls clock_time_get(0, 1_000_000, time_ptr=0), converts the
+        // returned errno to an ASCII digit, and writes it + newline to stdout.
+        let result = runner.run_wasm_captured(
+            br#"(module
+                  (import "wasi_snapshot_preview1" "clock_time_get"
+                    (func $clock_time_get (param i32 i64 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_write"
+                    (func $fd_write (param i32 i32 i32 i32) (result i32)))
+                  (memory (export "memory") 1)
+                  (func $_start (local $errno i32)
+                    (local.set $errno
+                      (call $clock_time_get (i32.const 0) (i64.const 1000000) (i32.const 0)))
+                    (i32.store8 (i32.const 100)
+                      (i32.add (local.get $errno) (i32.const 48)))
+                    (i32.store8 (i32.const 101) (i32.const 10))
+                    (i32.store (i32.const 200) (i32.const 100))
+                    (i32.store (i32.const 204) (i32.const 2))
+                    (drop (call $fd_write
+                      (i32.const 1) (i32.const 200) (i32.const 1) (i32.const 300))))
+                  (export "_start" (func $_start)))
+            "#,
+            &[],
+        );
+        let out = result.expect("clock_time_get module should run without error");
+        assert_eq!(out.stdout, b"0\n", "clock_time_get(realtime) should return errno 0");
+    }
+
+    /// clock_time_get for monotonic clock (id=1) returns errno 0 — clock is linked.
+    #[test]
+    fn test_wasi_clock_monotonic() {
+        let runner = WasmRunner::new();
+        let result = runner.run_wasm_captured(
+            br#"(module
+                  (import "wasi_snapshot_preview1" "clock_time_get"
+                    (func $clock_time_get (param i32 i64 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_write"
+                    (func $fd_write (param i32 i32 i32 i32) (result i32)))
+                  (memory (export "memory") 1)
+                  (func $_start (local $errno i32)
+                    (local.set $errno
+                      (call $clock_time_get (i32.const 1) (i64.const 1000000) (i32.const 0)))
+                    (i32.store8 (i32.const 100)
+                      (i32.add (local.get $errno) (i32.const 48)))
+                    (i32.store8 (i32.const 101) (i32.const 10))
+                    (i32.store (i32.const 200) (i32.const 100))
+                    (i32.store (i32.const 204) (i32.const 2))
+                    (drop (call $fd_write
+                      (i32.const 1) (i32.const 200) (i32.const 1) (i32.const 300))))
+                  (export "_start" (func $_start)))
+            "#,
+            &[],
+        );
+        let out = result.expect("clock_time_get module should run without error");
+        assert_eq!(
+            out.stdout, b"0\n",
+            "clock_time_get(monotonic) should return errno 0"
+        );
+    }
+
+    /// random_get fills a buffer with random bytes and returns errno 0 — random is linked.
+    #[test]
+    fn test_wasi_random_get() {
+        let runner = WasmRunner::new();
+        // Module calls random_get(buf=0, len=8), writes errno as ASCII digit to stdout.
+        let result = runner.run_wasm_captured(
+            br#"(module
+                  (import "wasi_snapshot_preview1" "random_get"
+                    (func $random_get (param i32 i32) (result i32)))
+                  (import "wasi_snapshot_preview1" "fd_write"
+                    (func $fd_write (param i32 i32 i32 i32) (result i32)))
+                  (memory (export "memory") 1)
+                  (func $_start (local $errno i32)
+                    (local.set $errno (call $random_get (i32.const 0) (i32.const 8)))
+                    (i32.store8 (i32.const 100)
+                      (i32.add (local.get $errno) (i32.const 48)))
+                    (i32.store8 (i32.const 101) (i32.const 10))
+                    (i32.store (i32.const 200) (i32.const 100))
+                    (i32.store (i32.const 204) (i32.const 2))
+                    (drop (call $fd_write
+                      (i32.const 1) (i32.const 200) (i32.const 1) (i32.const 300))))
+                  (export "_start" (func $_start)))
+            "#,
+            &[],
+        );
+        let out = result.expect("random_get module should run without error");
+        assert_eq!(out.stdout, b"0\n", "random_get should return errno 0");
+    }
+
     /// run_wasm succeeds on a minimal module with a no-op `_start` export.
     #[test]
     fn test_run_empty_start() {

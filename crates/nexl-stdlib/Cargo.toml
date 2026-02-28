@@ -6,3 +6,4 @@ license.workspace = true
 
 [dependencies]
 nexl-runtime = { path = "../nexl-runtime" }
+getrandom = "0.2"
