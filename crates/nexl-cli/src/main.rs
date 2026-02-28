@@ -6,6 +6,7 @@
 //! by replacing the extension with `.wasm`.
 
 mod repl_protocol;
+mod wasm_runner;
 
 use clap::{Parser, Subcommand};
 use meta::{Atom, Node, NodeKind};
@@ -45,6 +46,9 @@ enum Command {
     Run {
         #[arg(value_name = "FILE")]
         input: PathBuf,
+        /// Compile to WASM and execute via wasmtime instead of the tree-walk evaluator.
+        #[arg(long = "wasm")]
+        wasm: bool,
         /// Arguments to pass to the program via sys/args
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
@@ -155,9 +159,14 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Run { input, args } => {
-            nexl_runtime::sys::set_program_args(args);
-            if let Err(message) = command_run(input) {
+        Command::Run { input, args, wasm } => {
+            nexl_runtime::sys::set_program_args(args.clone());
+            let result = if wasm {
+                command_run_wasm(input, args)
+            } else {
+                command_run(input)
+            };
+            if let Err(message) = result {
                 print_error(&message);
                 process::exit(1);
             }
@@ -432,6 +441,34 @@ fn discover_and_load_modules(
     }
 
     Ok(loaded)
+}
+
+fn command_run_wasm(input_path: PathBuf, _args: Vec<String>) -> Result<(), String> {
+    let source = std::fs::read_to_string(&input_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
+
+    let module_name = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("module")
+        .to_string();
+
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
+
+    let ir_module = nexl_ir::Lowerer::new(&module_name)
+        .lower_module(&nodes)
+        .map_err(|e| format!("lowering error: {e}"))?;
+
+    let ir_module = nexl_ir::optimize::optimize(&ir_module);
+
+    let bytes = nexl_wasm::Emitter::new()
+        .emit(&ir_module)
+        .map_err(|e| format!("codegen error: {e}"))?;
+
+    wasm_runner::WasmRunner::new()
+        .run_wasm(&bytes)
+        .map_err(|e| format!("wasm error: {e}"))
 }
 
 fn command_run(input_path: PathBuf) -> Result<(), String> {
@@ -1265,6 +1302,7 @@ mod tests {
             cli.command,
             Command::Run {
                 input: PathBuf::from("main.nexl"),
+                wasm: false,
                 args: vec![],
             }
         );
