@@ -2,6 +2,12 @@
 
 ## Tasks
 
+- [x] **Triple-quoted and raw string literals** — `"""..."""` auto-dedent, `r"..."` / `r#"..."#` verbatim
+  - `StringKind` enum (Regular, Triple, Raw) in nexl-reader; `dedent_triple` in reader
+  - 18 new tests (6 triple, 6 raw, 6 dedent); all existing tests green
+  - 18 stdlib `.nx` docstrings converted to triple-quoted (section headers flush-left in hover)
+  - nexl-spec §2.4 + Appendix D updated; tree-sitter `raw_string_literal` rule added
+
 - [x] **nexl-market** — Multi-vendor marketplace (DDD) at `/Users/tripboi/Projects/nexl-market/`
   - 5 bounded contexts: Catalog, Orders, Payments, Delivery, Accounts
   - deftype records + sum types, `:requires`/`:ensures` contracts
