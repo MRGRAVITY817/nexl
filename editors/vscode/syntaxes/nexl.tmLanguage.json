@@ -1,0 +1,125 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nexl",
+  "scopeName": "source.nexl",
+  "fileTypes": [".nx"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#character" },
+    { "include": "#keyword" },
+    { "include": "#number" },
+    { "include": "#boolean" },
+    { "include": "#unit" },
+    { "include": "#special-form" },
+    { "include": "#type-name" },
+    { "include": "#discard" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.semicolon.nexl",
+      "match": ";.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.nexl",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.unicode.nexl",
+          "match": "\\\\u\\{[0-9a-fA-F]+\\}"
+        },
+        {
+          "name": "constant.character.escape.nexl",
+          "match": "\\\\[nrt\\\\\"{}]"
+        },
+        {
+          "name": "meta.embedded.expression.nexl",
+          "begin": "(?<!\\{)\\{(?!\\{)",
+          "end": "\\}",
+          "patterns": [{ "include": "$self" }]
+        }
+      ]
+    },
+    "character": {
+      "patterns": [
+        {
+          "name": "constant.character.nexl",
+          "match": "\\\\(space|newline|tab|return)"
+        },
+        {
+          "name": "constant.character.unicode.nexl",
+          "match": "\\\\u\\{[0-9a-fA-F]+\\}"
+        },
+        {
+          "name": "constant.character.nexl",
+          "match": "\\\\[a-zA-Z0-9]"
+        }
+      ]
+    },
+    "keyword": {
+      "name": "constant.language.keyword.nexl",
+      "match": ":(?:[a-zA-Z][a-zA-Z0-9!?*+\\-/<=>&._]*)"
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.nexl",
+          "match": "-?0[xX][0-9a-fA-F][0-9a-fA-F_]*"
+        },
+        {
+          "name": "constant.numeric.binary.nexl",
+          "match": "-?0[bB][01][01_]*"
+        },
+        {
+          "name": "constant.numeric.octal.nexl",
+          "match": "-?0[oO][0-7][0-7_]*"
+        },
+        {
+          "name": "constant.numeric.ratio.nexl",
+          "match": "-?[0-9][0-9_]*/[0-9][0-9_]*"
+        },
+        {
+          "name": "constant.numeric.float.nexl",
+          "match": "-?[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?(f32|f64)?"
+        },
+        {
+          "name": "constant.numeric.integer.nexl",
+          "match": "-?[0-9][0-9_]*(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128)?"
+        }
+      ]
+    },
+    "boolean": {
+      "name": "constant.language.boolean.nexl",
+      "match": "\\b(true|false)\\b"
+    },
+    "unit": {
+      "name": "constant.language.unit.nexl",
+      "match": "\\bunit\\b"
+    },
+    "special-form": {
+      "name": "keyword.control.nexl",
+      "match": "(?<=\\()\\s*(def|defn|fn|let|do|if|cond|match|when|unless|deftype|defeffect|defprotocol|defmacro|handle|import|module|try|for|each|times|loop|quote|quasiquote|unquote|unquote-splice|defextern|defexport|defpattern|impl|recur|set!|new|and|or|not|assert!)(?=[\\s\\)])"
+    },
+    "type-name": {
+      "name": "entity.name.type.nexl",
+      "match": "\\b[A-Z][a-zA-Z0-9]*\\b"
+    },
+    "discard": {
+      "name": "comment.block.discard.nexl",
+      "match": "#_"
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.section.list.begin.nexl", "match": "\\(" },
+        { "name": "punctuation.section.list.end.nexl",   "match": "\\)" },
+        { "name": "punctuation.section.vector.begin.nexl", "match": "\\[" },
+        { "name": "punctuation.section.vector.end.nexl",   "match": "\\]" },
+        { "name": "punctuation.section.set.begin.nexl",  "match": "#\\{" },
+        { "name": "punctuation.section.map.begin.nexl",  "match": "\\{" },
+        { "name": "punctuation.section.map.end.nexl",    "match": "\\}" }
+      ]
+    }
+  }
+}

@@ -5,14 +5,21 @@ if exists('b:current_syntax')
   finish
 endif
 
+" Synchronize syntax state: look back up to 100 lines so that multiline
+" string literals (e.g. SQL strings) are correctly recognised as strings
+" throughout.  Without this, lispindent() and other features that consult
+" syntax state will not know a line is inside a string, causing = (re-indent)
+" to corrupt multiline string content.
+syntax sync minlines=100
+
 " Comments
 syntax match nexlComment ";.*$" contains=nexlTodo
 syntax keyword nexlTodo TODO FIXME NOTE HACK XXX contained
 
-" Strings
+" Strings — region (not match) so they span multiple lines correctly
 syntax region nexlString start=/"/ skip=/\\\\\|\\"/ end=/"/ contains=nexlStringEscape
-syntax match nexlStringEscape /\\[nrt\\"0]/ contained
-syntax match nexlStringEscape /\\u{[0-9a-fA-F]\+}/ contained
+syntax match  nexlStringEscape /\\[nrt\\"{}]/ contained
+syntax match  nexlStringEscape /\\u{[0-9a-fA-F]\+}/ contained
 
 " Character literals
 syntax match nexlChar /\\[a-zA-Z0-9]/

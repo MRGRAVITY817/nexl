@@ -1,0 +1,26 @@
+{
+  "name": "nexl-vscode",
+  "displayName": "Nexl Language Support",
+  "description": "Syntax highlighting and language support for the Nexl language (.nx files)",
+  "version": "0.1.0",
+  "publisher": "nexl",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "nexl",
+        "aliases": ["Nexl", "nexl"],
+        "extensions": [".nx"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nexl",
+        "scopeName": "source.nexl",
+        "path": "./syntaxes/nexl.tmLanguage.json"
+      }
+    ]
+  }
+}
