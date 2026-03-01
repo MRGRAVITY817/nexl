@@ -1244,6 +1244,67 @@ fn resolve_module_to_file_path(module_path: &str, ctx: &ProjectContext) -> Optio
     if abs.is_file() { Some(abs) } else { None }
 }
 
+/// Collect top-level named symbols from a parsed file for `textDocument/documentSymbol`.
+///
+/// Recognises:
+/// - `(defn name ...)` → FUNCTION
+/// - `(def name ...)` → VARIABLE
+/// - `(deftype name ...)` → CLASS
+fn collect_document_symbols(nodes: &[Node], source: &str) -> Vec<DocumentSymbol> {
+    let mut symbols = Vec::new();
+    for node in nodes {
+        let form_range = span_to_range(source, node.span);
+        if let Some((name_node, _)) = defn_name_and_docstring(node) {
+            if let Some(name) = symbol_name(name_node) {
+                #[allow(deprecated)]
+                symbols.push(DocumentSymbol {
+                    name,
+                    detail: None,
+                    kind: SymbolKind::FUNCTION,
+                    tags: None,
+                    deprecated: None,
+                    range: form_range,
+                    selection_range: span_to_range(source, name_node.span),
+                    children: None,
+                });
+            }
+        } else if let Some(name_node) = def_name_node(node) {
+            if let Some(name) = symbol_name(name_node) {
+                #[allow(deprecated)]
+                symbols.push(DocumentSymbol {
+                    name,
+                    detail: None,
+                    kind: SymbolKind::VARIABLE,
+                    tags: None,
+                    deprecated: None,
+                    range: form_range,
+                    selection_range: span_to_range(source, name_node.span),
+                    children: None,
+                });
+            }
+        } else if list_head_is(node, "deftype") {
+            if let NodeKind::List(items) = &node.kind {
+                if let Some(name_node) = items.get(1) {
+                    if let Some(name) = symbol_name(name_node) {
+                        #[allow(deprecated)]
+                        symbols.push(DocumentSymbol {
+                            name,
+                            detail: None,
+                            kind: SymbolKind::CLASS,
+                            tags: None,
+                            deprecated: None,
+                            range: form_range,
+                            selection_range: span_to_range(source, name_node.span),
+                            children: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    symbols
+}
+
 /// Read a file, parse it, and search for a definition by name.
 fn find_definition_in_file(path: &Path, name: &str) -> Option<(Url, Range)> {
     let source = std::fs::read_to_string(path).ok()?;
@@ -1265,6 +1326,7 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
@@ -1468,6 +1530,22 @@ impl LanguageServer for Backend {
             new_text: formatted,
         };
         Ok(Some(vec![edit]))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let source = match self.get_document_text(&params.text_document.uri) {
+            Some(source) => source,
+            None => return Ok(None),
+        };
+        let nodes = match nexl_reader::read(&source, FileId(0)) {
+            Ok(nodes) => nodes,
+            Err(_) => return Ok(None),
+        };
+        let symbols = collect_document_symbols(&nodes, &source);
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 }
 
@@ -2687,6 +2765,68 @@ mod tests {
         let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
         let items = record_field_completions(&nodes);
         assert!(items.is_empty(), "sum types should produce no field completions");
+    }
+
+    #[tokio::test]
+    async fn document_symbol_capability_advertised() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let result = backend
+            .initialize(InitializeParams::default())
+            .await
+            .expect("initialize should succeed");
+        assert_eq!(
+            result.capabilities.document_symbol_provider,
+            Some(OneOf::Left(true)),
+            "documentSymbol capability should be advertised"
+        );
+    }
+
+    #[test]
+    fn document_symbol_mixed_file() {
+        let src = "(deftype Role | Admin | User)\n(def max-retries 3)\n(defn login [email] true)";
+        let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
+        let symbols = collect_document_symbols(&nodes, src);
+        assert_eq!(symbols.len(), 3, "expected three symbols: {symbols:?}");
+        assert_eq!(symbols[0].name, "Role");
+        assert_eq!(symbols[0].kind, SymbolKind::CLASS);
+        assert_eq!(symbols[1].name, "max-retries");
+        assert_eq!(symbols[1].kind, SymbolKind::VARIABLE);
+        assert_eq!(symbols[2].name, "login");
+        assert_eq!(symbols[2].kind, SymbolKind::FUNCTION);
+    }
+
+    #[test]
+    fn document_symbol_finds_deftype() {
+        let src = "(deftype Color | Red | Green | Blue)";
+        let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
+        let symbols = collect_document_symbols(&nodes, src);
+        assert_eq!(symbols.len(), 1, "expected one symbol");
+        let sym = &symbols[0];
+        assert_eq!(sym.name, "Color");
+        assert_eq!(sym.kind, SymbolKind::CLASS);
+    }
+
+    #[test]
+    fn document_symbol_finds_def() {
+        let src = "(def counter 0)";
+        let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
+        let symbols = collect_document_symbols(&nodes, src);
+        assert_eq!(symbols.len(), 1, "expected one symbol");
+        let sym = &symbols[0];
+        assert_eq!(sym.name, "counter");
+        assert_eq!(sym.kind, SymbolKind::VARIABLE);
+    }
+
+    #[test]
+    fn document_symbol_finds_defn() {
+        let src = "(defn greet [name] \"hi\")";
+        let nodes = nexl_reader::read(src, FileId(0)).expect("parse");
+        let symbols = collect_document_symbols(&nodes, src);
+        assert_eq!(symbols.len(), 1, "expected one symbol");
+        let sym = &symbols[0];
+        assert_eq!(sym.name, "greet");
+        assert_eq!(sym.kind, SymbolKind::FUNCTION);
     }
 
     #[test]
