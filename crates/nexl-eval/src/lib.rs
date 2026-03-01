@@ -3563,6 +3563,72 @@ mod tests {
         assert_eq!(result, Value::Int(0));
     }
 
+    // --- let-else tests (spec §4.12) ---
+
+    #[test]
+    fn let_else_some_matches_value() {
+        // (let [(Some x) (Some 42) | 0] x) → 42
+        // Pattern succeeds: x is bound to 42, body runs.
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(let [(Some x) (Some 42) | 0] x)", &env).unwrap();
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn let_else_none_uses_fallback() {
+        // (let [(Some x) None | 0] 99) → 0
+        // Pattern fails: fallback 0 is returned, body 99 is never evaluated.
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(let [(Some x) None | 0] 99)", &env).unwrap();
+        assert_eq!(result, Value::Int(0));
+    }
+
+    #[test]
+    fn let_else_ok_matches() {
+        // (let [(Ok n) (Ok 7) | -1] n) → 7
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(let [(Ok n) (Ok 7) | -1] n)", &env).unwrap();
+        assert_eq!(result, Value::Int(7));
+    }
+
+    #[test]
+    fn let_else_err_uses_fallback() {
+        // (let [(Ok n) (Err "oops") | -1] n) → -1
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(let [(Ok n) (Err \"oops\") | -1] n)", &env).unwrap();
+        assert_eq!(result, Value::Int(-1));
+    }
+
+    #[test]
+    fn let_else_multi_binding_second_fails() {
+        // Both (Some x) and (Ok y) bindings present; second fails.
+        // First succeeds (x=1), second (Ok y) on (Err "bad") fails → fallback -1 returned.
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(let [(Some x) (Some 1) | 99
+                   (Ok y)   (Err \"bad\") | -1]
+               (+ x y))",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(-1));
+    }
+
+    #[test]
+    fn let_else_multi_binding_first_fails() {
+        // First binding (Some x) on None fails → fallback 99 returned immediately;
+        // second binding and body are never evaluated (spec §4.12 evaluation semantics).
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(let [(Some x) None     | 99
+                   (Ok y)   (Ok 2)   | -1]
+               (+ x y))",
+            &env,
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(99));
+    }
+
     // --- panic tests ---
 
     #[test]
