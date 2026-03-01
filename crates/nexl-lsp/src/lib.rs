@@ -356,6 +356,488 @@ fn stdlib_docs() -> &'static HashMap<String, String> {
     })
 }
 
+/// Return documentation for a built-in type name, if known.
+fn builtin_type_doc(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "Int" => r#"**`Int`** — 64-bit signed integer.
+
+The default integer type in Nexl. Represents whole numbers from
+−9,223,372,036,854,775,808 to 9,223,372,036,854,775,807.
+
+## Literals
+```nexl
+42
+-7
+0
+1_000_000   ; underscores allowed as separators
+```
+
+## Arithmetic
+```nexl
+(+ 1 2)      ; => 3
+(- 10 3)     ; => 7
+(* 4 5)      ; => 20
+(/ 10 2)     ; => 5
+(mod 10 3)   ; => 1
+```
+
+## See Also
+- `Float` — floating-point numbers
+- `Int32`, `Int64` — fixed-width variants
+- `conv/->int` — convert from Str or Float
+"#,
+        "Float" => r#"**`Float`** — 64-bit IEEE 754 double-precision floating-point number.
+
+The default floating-point type. Provides ~15 significant decimal digits
+of precision. Use `Ratio` when exact arithmetic is needed.
+
+## Literals
+```nexl
+3.14
+-0.5
+1.0e10    ; scientific notation
+0.001
+```
+
+## Arithmetic
+```nexl
+(+ 1.5 2.5)     ; => 4.0
+(* 2.0 3.14)    ; => 6.28
+(/ 1.0 3.0)     ; => 0.3333...
+(math/sqrt 2.0) ; => 1.4142...
+```
+
+## See Also
+- `Int` — integer type
+- `Ratio` — exact rational arithmetic
+- `F32`, `F64` — fixed-width variants
+- `conv/->float` — convert from Str or Int
+"#,
+        "Str" => r#"**`Str`** — UTF-8 encoded string.
+
+Strings are immutable and support full Unicode. String literals use
+double quotes; escape sequences include `\n`, `\t`, `\\`, `\"`.
+
+## Literals
+```nexl
+"hello"
+"Hello, world!\n"
+"unicode: \u00e9"
+""   ; empty string
+```
+
+## Common operations
+```nexl
+(str/split "a,b,c" ",")    ; => ["a" "b" "c"]
+(str/join ["a" "b"] ", ")  ; => "a, b"
+(str/upper "hello")        ; => "HELLO"
+(str/trim "  hi  ")        ; => "hi"
+(count "hello")             ; => 5
+(str "value: " 42)          ; coerce + concat
+```
+
+## See Also
+- `str` module — full string function reference
+- `Char` — individual Unicode scalar value
+- `conv/->str` — convert any value to Str
+"#,
+        "Bool" => r#"**`Bool`** — Boolean value: `true` or `false`.
+
+Nexl conditionals require strict `Bool` — there is no truthy/falsy
+coercion (ADR-004). Comparisons and logical operators all return `Bool`.
+
+## Literals
+```nexl
+true
+false
+```
+
+## Operations
+```nexl
+(and true false)   ; => false
+(or  true false)   ; => true
+(not true)         ; => false
+
+(= 1 1)    ; => true
+(< 1 2)    ; => true
+(> 3 1)    ; => true
+```
+
+## See Also
+- `if` — requires Bool test
+- `when`, `unless` — conditional forms
+"#,
+        "Unit" => r#"**`Unit`** — The unit type; the single value returned by side-effecting expressions.
+
+`Unit` has exactly one value, also written `Unit`. It is the return type
+of functions that are called for their side effects (e.g. `io/println`,
+`each`). Nexl uses `Unit` rather than `nil` or `void` (ADR-001).
+
+## Usage
+```nexl
+(io/println "hello")   ; => Unit
+(each [x [1 2 3]] x)   ; => Unit
+
+;; Type annotation
+(defn greet [name] :-> Unit
+  (io/println (str "Hello, " name "!")))
+```
+
+## See Also
+- `Never` — the bottom type (functions that never return)
+- `do` — returns the last expression's value
+"#,
+        "Vec" => r#"**`Vec`** — Persistent ordered vector (generic).
+
+`(Vec a)` is a generic vector of elements of type `a`. Vectors are
+immutable — operations return new vectors. Literal syntax uses `[...]`.
+
+## Literals
+```nexl
+[1 2 3]
+["a" "b" "c"]
+[]            ; empty vector
+```
+
+## Common operations
+```nexl
+(count [1 2 3])            ; => 3
+(get [10 20 30] 1)         ; => 20
+(append [1 2] 3)           ; => [1 2 3]
+(first [1 2 3])            ; => 1
+(rest  [1 2 3])            ; => [2 3]
+(map (fn [x] (* x 2)) v)   ; => doubled vector
+(filter (fn [x] (> x 0)) v)
+(slice v 1 3)              ; => subvector [1, 3)
+```
+
+## See Also
+- `Set` — unordered, unique elements
+- `Map` — key-value pairs
+- `for` — list comprehension producing a Vec
+"#,
+        "Map" => r#"**`Map`** — Persistent hash map from keys to values (generic).
+
+`(Map k v)` maps keys of type `k` to values of type `v`. Maps are
+immutable. Literal syntax uses `{:key value ...}`.
+
+## Literals
+```nexl
+{:name "Alice" :age 30}
+{}   ; empty map
+```
+
+## Common operations
+```nexl
+(get m :name)              ; => "Alice"  (or nil if missing)
+(put m :city "Paris")      ; => new map with :city added
+(remove m :age)            ; => new map without :age
+(keys m)                   ; => [:name :age]
+(vals m)                   ; => ["Alice" 30]
+(contains? m :name)        ; => true
+(count m)                  ; => 2
+```
+
+## See Also
+- `Vec` — ordered collection
+- `Set` — unique-element collection
+- `entries` — get `[[key val] ...]` pairs
+"#,
+        "Set" => r#"**`Set`** — Persistent hash set of unique elements (generic).
+
+`(Set a)` contains unique elements of type `a`. Set membership tests
+are O(log n). Literal syntax uses `#{...}`.
+
+## Literals
+```nexl
+#{1 2 3}
+#{"a" "b"}
+#{}   ; empty set
+```
+
+## Common operations
+```nexl
+(add s 4)               ; => new set with 4
+(remove s 2)            ; => new set without 2
+(contains? s 3)         ; => true
+(count s)               ; => 3
+(union s1 s2)
+(intersection s1 s2)
+(difference s1 s2)
+```
+
+## See Also
+- `Vec` — ordered, allows duplicates
+- `Map` — key-value pairs
+"#,
+        "Option" => r#"**`Option`** — A value that may or may not be present.
+
+`(Option a)` is either `(Some value)` or `None`. Use `Option` to
+represent nullable or optional data without null pointer exceptions.
+
+## Constructors
+```nexl
+(Some 42)    ; present
+None         ; absent
+```
+
+## Pattern matching
+```nexl
+(match (db/query ...)
+  (Some row)  (:name row)
+  _           "unknown")
+```
+
+## Common patterns
+```nexl
+;; Propagate None with ?
+(defn find-user [id]
+  (let [row (db/query conn id)?]
+    (:name row)))
+
+;; Default value
+(match (env/get "PORT")
+  (Some p)  (conv/->int p)
+  _         8080)
+```
+
+## See Also
+- `Result` — failure with an error message
+- `match` — pattern matching on constructors
+- `?` — propagate None/Err out of a function
+"#,
+        "Result" => r#"**`Result`** — A value representing success or failure.
+
+`(Result a e)` is either `(Ok value)` or `(Err error)`. Use `Result`
+for operations that can fail with a meaningful error message.
+
+## Constructors
+```nexl
+(Ok 42)          ; success
+(Err "not found") ; failure
+```
+
+## Pattern matching
+```nexl
+(match (http/get url)
+  (Ok resp)  (http/body resp)
+  (Err msg)  (do (log/error msg) ""))
+```
+
+## Error propagation with `?`
+```nexl
+(defn load-config []
+  (let [raw  (io/read-file "config.json")?
+        data (json/decode raw)?]
+    (Ok data)))
+```
+
+## try/catch
+```nexl
+(try (json/decode input)
+  (catch e
+    (do (log/warn e) {})))
+```
+
+## See Also
+- `Option` — absence without an error reason
+- `?` — propagate Err out of a function
+- `try` — catch and recover from errors
+"#,
+        "Fn" => r#"**`Fn`** — Function type.
+
+`(Fn [param-types] -> return-type)` describes the type of a function.
+Effect rows appear as `(Fn [A] -> B ! [Eff])`.
+
+## Syntax in type annotations
+```nexl
+(Fn [Int] -> Int)
+(Fn [Str Str] -> Bool)
+(Fn [] -> Unit)
+(Fn [Int] -> Int ! [Console])   ; with effect
+```
+
+## Usage
+```nexl
+;; Higher-order function
+(defn apply-twice [f x]
+  (f (f x)))
+
+;; Storing functions
+(def transform (fn [x] (* x 2)))
+(apply-twice transform 3)   ; => 12
+```
+
+## See Also
+- `fn` — create an anonymous function
+- `defn` — define a named function
+- `partial` — partial application
+"#,
+        "Ratio" => r#"**`Ratio`** — Exact rational number (arbitrary precision).
+
+Represents a fraction as `numerator/denominator` in lowest terms.
+Use `Ratio` when floating-point rounding is unacceptable (financial
+calculations, exact geometry, etc.).
+
+## Literals
+```nexl
+1/3
+22/7
+-5/4
+```
+
+## Operations
+```nexl
+(+ 1/3 1/6)    ; => 1/2  (exact)
+(* 2/3 3/4)    ; => 1/2
+(= 2/4 1/2)    ; => true  (auto-reduced)
+```
+
+## See Also
+- `Float` — approximate floating-point
+- `Int` — whole numbers
+"#,
+        "Char" => r#"**`Char`** — A single Unicode scalar value.
+
+Represents a single Unicode code point. Char literals use the `\c`
+syntax (backslash prefix).
+
+## Literals
+```nexl
+\a
+\newline
+\space
+\u00e9   ; é
+```
+
+## Usage
+```nexl
+(str/chars "hello")   ; => [\h \e \l \l \o]
+(= \a \a)             ; => true
+```
+
+## See Also
+- `Str` — sequence of Chars
+- `str/chars` — split a string into chars
+- `str/graphemes` — Unicode grapheme clusters
+"#,
+        "Keyword" => r#"**`Keyword`** — An interned symbolic constant, always prefixed with `:`.
+
+Keywords evaluate to themselves, are compared by identity (fast), and
+are commonly used as map keys, enum-like flags, and option names.
+
+## Literals
+```nexl
+:name
+:status
+:ok
+:not-found
+```
+
+## Usage
+```nexl
+(def m {:status :active :role :admin})
+(get m :status)          ; => :active
+(= :ok :ok)              ; => true
+(contains? m :role)      ; => true
+```
+
+## See Also
+- `Map` — keyword keys are idiomatic
+- `Symbol` — unquoted name in source code
+"#,
+        "Symbol" => r#"**`Symbol`** — A named reference in Nexl source code.
+
+Symbols name bindings, functions, and types. At the type level, `Symbol`
+is the type of first-class symbol values (rare outside macros).
+
+## Examples
+```nexl
+;; In macro contexts
+(defmacro-syntax quote-name [x]
+  (list 'Symbol (str x)))
+```
+
+## See Also
+- `Keyword` — self-evaluating constant (`:name`)
+- `defn`, `def` — bind symbols to values
+"#,
+        "Never" => r#"**`Never`** — The bottom type; the return type of expressions that never return.
+
+A function returning `Never` either loops forever, calls `sys/exit`, or
+always throws an error. `Never` is a subtype of every type, so a
+`never`-typed branch is accepted anywhere.
+
+## Usage
+```nexl
+(defn abort! [msg] :-> Never
+  (io/println msg)
+  (sys/exit 1))
+
+;; The `abort!` branch is valid regardless of the surrounding type:
+(if ok? result (abort! "fatal"))
+```
+
+## See Also
+- `Unit` — returns normally but carries no information
+- `sys/exit` — one way to produce a Never value
+"#,
+        "Any" => r#"**`Any`** — The top type; accepts any value without type checking.
+
+`Any` is a dynamic escape hatch. Values of type `Any` bypass static
+type checking — use sparingly, only at system boundaries (FFI, dynamic
+data, deserialized JSON before validation).
+
+## Usage
+```nexl
+;; JSON decode returns (Map Str Any) before you validate the shape
+(def raw (json/decode text))
+
+;; Cast back to a concrete type via pattern matching or contract
+(defn parse-user [m :- (Map Str Any)] :-> User
+  (User {:name (get m "name") :age (get m "age")}))
+```
+
+## See Also
+- `Result` — prefer typed errors over dynamic Any
+- `Option` — prefer typed optionality
+"#,
+        "Tuple" => r#"**`Tuple`** — A fixed-length heterogeneous product type.
+
+`(Tuple A B ...)` holds exactly 2–8 values of potentially different types.
+Tuple literals use `(#a b c)` syntax. Elements are accessed positionally.
+
+## Literals
+```nexl
+(#1 "hello")          ; Tuple of Int and Str
+(#true 42 "ok")       ; Tuple of Bool, Int, Str
+```
+
+## Pattern matching
+```nexl
+(match coord
+  (#x y)  (io/println (str "x=" x " y=" y)))
+```
+
+## See Also
+- `Vec` — homogeneous, variable-length
+- `deftype` — named records are usually preferred over tuples
+"#,
+        // Fixed-width numeric types — grouped short docs
+        "Int8"  => "**`Int8`** — 8-bit signed integer (−128 to 127). See also: `Int`, `Int16`, `Int32`, `Int64`.",
+        "Int16" => "**`Int16`** — 16-bit signed integer (−32,768 to 32,767). See also: `Int`, `Int8`, `Int32`, `Int64`.",
+        "Int32" => "**`Int32`** — 32-bit signed integer (−2,147,483,648 to 2,147,483,647). See also: `Int`, `Int64`.",
+        "Int64" => "**`Int64`** — 64-bit signed integer. Alias for `Int`. See also: `Int`, `Int32`.",
+        "U8"    => "**`U8`** — 8-bit unsigned integer (0 to 255). Commonly used for byte buffers. See also: `U16`, `U32`, `U64`.",
+        "U16"   => "**`U16`** — 16-bit unsigned integer (0 to 65,535). See also: `U8`, `U32`, `U64`.",
+        "U32"   => "**`U32`** — 32-bit unsigned integer (0 to 4,294,967,295). See also: `U8`, `U64`.",
+        "U64"   => "**`U64`** — 64-bit unsigned integer (0 to 18,446,744,073,709,551,615). See also: `U8`, `U32`.",
+        "F32"   => "**`F32`** — 32-bit IEEE 754 single-precision float (~7 significant digits). See also: `Float` (`F64`).",
+        "F64"   => "**`F64`** — 64-bit IEEE 754 double-precision float. Alias for `Float`. See also: `F32`, `Float`.",
+        _ => return None,
+    })
+}
+
 /// Return documentation for a special form, if known.
 fn special_form_doc(name: &str) -> Option<&'static str> {
     Some(match name {
@@ -1066,6 +1548,17 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: format!("```nexl\n{name}\n```\n\n{doc}"),
+            }),
+            range: Some(span_to_range(source, span)),
+        });
+    }
+
+    // 5. Check built-in type documentation
+    if let Some(doc) = builtin_type_doc(&name) {
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: doc.to_string(),
             }),
             range: Some(span_to_range(source, span)),
         });
@@ -2929,6 +3422,119 @@ mod tests {
         assert!(special_form_doc("if").is_some());
         assert!(special_form_doc("match").is_some());
         assert!(special_form_doc("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_builtin_type_doc_coverage() {
+        // Core primitives
+        assert!(builtin_type_doc("Int").is_some());
+        assert!(builtin_type_doc("Float").is_some());
+        assert!(builtin_type_doc("Str").is_some());
+        assert!(builtin_type_doc("Bool").is_some());
+        assert!(builtin_type_doc("Unit").is_some());
+        // Collections
+        assert!(builtin_type_doc("Vec").is_some());
+        assert!(builtin_type_doc("Map").is_some());
+        assert!(builtin_type_doc("Set").is_some());
+        // Result types
+        assert!(builtin_type_doc("Option").is_some());
+        assert!(builtin_type_doc("Result").is_some());
+        // Others
+        assert!(builtin_type_doc("Fn").is_some());
+        assert!(builtin_type_doc("Never").is_some());
+        assert!(builtin_type_doc("Any").is_some());
+        // Fixed-width
+        assert!(builtin_type_doc("U8").is_some());
+        assert!(builtin_type_doc("F32").is_some());
+        assert!(builtin_type_doc("Int32").is_some());
+        // Unknown
+        assert!(builtin_type_doc("NotAType").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_hover_builtin_type_int() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-type.nexl");
+        let source = "(defn id [x :- Int] x)";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        let offset = source.find("Int").expect("Int in source");
+        let position = offset_to_position(source, offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("Int"), "should contain type name");
+        assert!(value.contains("64-bit"), "should contain Int doc");
+    }
+
+    #[tokio::test]
+    async fn test_hover_builtin_type_option() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("hover-option.nexl");
+        let source = "(defn maybe [] (Some 42))";
+
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source.to_string(),
+                },
+            })
+            .await;
+
+        // Hover over "Option" as a bare symbol
+        let source2 = "Option";
+        let uri2 = test_uri("hover-option2.nexl");
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri2.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: source2.to_string(),
+                },
+            })
+            .await;
+        let position = offset_to_position(source2, 0);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri2 },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("Option"), "should contain Option");
+        assert!(value.contains("Some"), "should mention Some constructor");
     }
 
     // ── Cross-module go-to-definition tests ──────────────────────────────
