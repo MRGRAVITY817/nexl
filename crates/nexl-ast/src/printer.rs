@@ -519,16 +519,16 @@ impl PrettyPrinter {
     }
 
     /// Match form: `(match expr\n  pattern body\n  ...)`
-    fn write_match_form(&self, items: &[Node], out: &mut String, indent: usize, _column: usize) {
-        let body_indent = indent + self.config.indent_width;
+    fn write_match_form(&self, items: &[Node], out: &mut String, _indent: usize, column: usize) {
+        let body_indent = column + self.config.indent_width;
         out.push('(');
         // "match"
-        self.write_node_indented(&items[0], out, indent + 1, indent + 1);
+        self.write_node_indented(&items[0], out, column + 1, column + 1);
 
         // scrutinee on same line
         if items.len() > 1 {
             out.push(' ');
-            let scr_col = indent + 1 + self.flat_len(&items[0]).min(10) + 1;
+            let scr_col = column + 1 + self.flat_len(&items[0]).min(10) + 1;
             self.write_node_indented(&items[1], out, body_indent, scr_col);
         }
 
@@ -843,13 +843,10 @@ impl PrettyPrinter {
                 .map(|(k, _)| self.flat_len(k).min(40))
                 .max()
                 .unwrap_or(0);
-            let max_val_width = pairs
-                .iter()
-                .map(|(_, v)| self.flat_len(v).min(self.config.max_line_width))
-                .max()
-                .unwrap_or(0);
-            let aligned_width = pair_indent + max_key_width + 1 + max_val_width + 1;
-            let use_alignment = aligned_width <= self.config.max_line_width;
+            // Alignment is based solely on key widths: as long as the value
+            // column fits within the line width, align all keys regardless of
+            // how wide the values are.  Values that overflow break on their own.
+            let use_alignment = pair_indent + max_key_width + 1 <= self.config.max_line_width;
 
             for (i, (k, v)) in pairs.iter().enumerate() {
                 if i > 0 {
@@ -906,13 +903,9 @@ impl PrettyPrinter {
                 .map(|(k, _)| self.flat_len(k).min(40))
                 .max()
                 .unwrap_or(0);
-            let max_val_width = pairs
-                .iter()
-                .map(|(_, v)| self.flat_len(v).min(self.config.max_line_width))
-                .max()
-                .unwrap_or(0);
-            let aligned_width = pair_indent + max_key_width + 1 + max_val_width + 1;
-            let use_alignment = aligned_width <= self.config.max_line_width;
+            // Alignment is based solely on key widths — same rationale as
+            // write_map_indented: value overflow is handled per-value.
+            let use_alignment = pair_indent + max_key_width + 1 <= self.config.max_line_width;
 
             for (i, (k, v)) in pairs.iter().enumerate() {
                 if i > 0 {
@@ -2548,6 +2541,106 @@ mod tests {
   | One)
 ";
         assert_eq!(pp().print_file(&[node]), expected);
+    }
+
+    // ── 77. map_keys_aligned_when_values_are_multiline ──────────────────
+    #[test]
+    fn map_keys_aligned_when_values_are_multiline() {
+        // Keys must always be column-aligned to the widest key even when the
+        // values are forced-multiline forms (match with compound bodies).
+        // Previously use_alignment was gated on `aligned_width <= max_line_width`,
+        // which included max_val_width.  For multiline values flat_len returns
+        // usize::MAX which gets capped at max_line_width, making aligned_width
+        // always exceed the limit → use_alignment = false → misaligned keys.
+        let mk_match = |s: &str| {
+            // Match form with compound body (map) forces needs_multiline_list=true,
+            // so flat_len returns usize::MAX — this is the trigger for the bug.
+            list(vec![
+                sym("match"),
+                sym(s),
+                list(vec![sym("Some"), sym("r")]),
+                map_node(vec![(kw("id"), sym("r"))]),  // compound → forces multiline
+                sym("None"),
+                map_node(vec![]),
+            ])
+        };
+        let node = map_node(vec![
+            (kw("order"),    mk_match("x")),
+            (kw("payment"),  mk_match("y")),
+            (kw("delivery"), mk_match("z")),
+        ]);
+        let out = pp().print_file(&[node]);
+        let lines: Vec<&str> = out.lines().collect();
+        // Find the column where "(match" appears on :order and :delivery lines.
+        let order_col = lines[0].find("(match").expect("order line has (match");
+        let delivery_col = lines
+            .iter()
+            .find(|l| l.trim_start().starts_with(":delivery"))
+            .and_then(|l| l.find("(match"))
+            .expect(":delivery line has (match");
+        assert_eq!(
+            order_col, delivery_col,
+            "all map values must start at the same column; output:\n{out}"
+        );
+    }
+
+    // ── 78. match_as_map_value_arms_indented_from_match ─────────────────
+    #[test]
+    fn match_as_map_value_arms_indented_from_match() {
+        // When a match form is the value in a map entry, the arms must be
+        // indented relative to the column of `(match`, not relative to the
+        // map's `{`.  With 2 pairs the alignment branch of write_map_indented
+        // is taken; val_col ends up at column 6 ({:r_ _ = 1+3+1+1 = 6 after
+        // pair_indent=1, max_key_width=3), so body_indent must be 6+2=8.
+        let node = map_node(vec![
+            (kw("r"), list(vec![sym("match"), sym("x"), sym("A"), int(1), sym("B"), int(2)])),
+            (kw("ok"), int(0)),
+        ]);
+        let pp_val = PrettyPrinter::new(PrintConfig {
+            max_line_width: 20,
+            ..PrintConfig::default()
+        });
+        let out = pp_val.print_file(&[node]);
+        // Arms must appear further right than the key `:r` (column 1),
+        // specifically at body_indent = val_col + indent_width.
+        // Concretely, both `A` and `B` lines must start with more spaces
+        // than the second pair line ` :ok 0` (which starts with 1 space).
+        let lines: Vec<&str> = out.lines().collect();
+        // Line 0: "{:r  (match x"  — match starts inside the map
+        // Line 1: "        A 1"    — arms indented from (match, NOT from {
+        // Line 2: "        B 2)"
+        // Line 3: " :ok 0}"
+        assert!(lines[0].starts_with("{:r"), "first line should start with map + :r: {out:?}");
+        assert!(lines[0].contains("(match x"), "scrutinee on same line as match: {out:?}");
+        let arm_line = lines[1];
+        let arm_indent = arm_line.len() - arm_line.trim_start().len();
+        // The second-pair line starts with 1 space (pair_indent=1); arms must
+        // be indented MORE than that — specifically well past column 1.
+        assert!(arm_indent > 4, "match arms should be indented from (match, got {arm_indent} spaces in {out:?}");
+    }
+
+    // ── 78. match_as_map_value_no_alignment ─────────────────────────────
+    #[test]
+    fn match_as_map_value_no_alignment() {
+        // Single-pair map (no alignment branch): arms still indent from
+        // (match, not from {.
+        let node = map_node(vec![(
+            kw("r"),
+            list(vec![sym("match"), sym("x"), sym("A"), int(1), sym("B"), int(2)]),
+        )]);
+        let pp_val = PrettyPrinter::new(PrintConfig {
+            max_line_width: 20,
+            ..PrintConfig::default()
+        });
+        let out = pp_val.print_file(&[node]);
+        let lines: Vec<&str> = out.lines().collect();
+        // Line 0: "{:r (match x"
+        // Line 1: "       A 1"   — indented from (match at col 4, so 4+2=6
+        // Line 2: "       B 2}"
+        assert!(lines[0].starts_with("{:r"), "first line: {out:?}");
+        assert!(lines[0].contains("(match x"), "scrutinee inline: {out:?}");
+        let arm_indent = lines[1].len() - lines[1].trim_start().len();
+        assert!(arm_indent > 3, "arms must indent from (match, got {arm_indent} in {out:?}");
     }
 
     // ── 75. deftype_pipe_sum_always_multiline ────────────────────────────
