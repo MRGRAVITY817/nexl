@@ -189,6 +189,12 @@ impl PrettyPrinter {
 
     fn write_kind_indented(&self, kind: &NodeKind, out: &mut String, indent: usize, column: usize) {
         match kind {
+            // Multiline strings use triple-quoted form with the content
+            // re-indented to match the surrounding code.  dedent_triple will
+            // strip the indent on the next read, recovering the original value.
+            NodeKind::Atom(Atom::Str(s)) if s.contains('\n') => {
+                write_multiline_str(s, out, indent);
+            }
             NodeKind::Atom(atom) => self.write_atom(atom, out),
             NodeKind::List(items) => {
                 if items.is_empty() {
@@ -963,6 +969,11 @@ impl PrettyPrinter {
 
     fn write_kind(&self, kind: &NodeKind, out: &mut String) {
         match kind {
+            // Multiline strings always use triple-quoted form, even in the flat
+            // path.  Indent=0 since there's no indentation context here.
+            NodeKind::Atom(Atom::Str(s)) if s.contains('\n') => {
+                write_multiline_str(s, out, 0);
+            }
             NodeKind::Atom(atom) => self.write_atom(atom, out),
             NodeKind::List(nodes) => {
                 if let Some(inner) = as_postfix_question(nodes) {
@@ -1403,31 +1414,43 @@ fn write_char(c: char, out: &mut String) {
 /// strings (e.g. SQL literals) are preserved in their readable form after
 /// formatting.  The Nexl lexer accepts both forms; the canonical formatted
 /// output uses literal newlines.
+/// Emit a single-line string literal (no embedded newlines).
 fn write_str(s: &str, out: &mut String) {
-    if s.contains('\n') {
-        // Multi-line strings use triple-quoted form so the formatter
-        // roundtrips them correctly (dedent_triple strips the leading/trailing
-        // blank lines we add here, recovering the original content).
-        out.push_str("\"\"\"");
-        out.push('\n');
-        out.push_str(s);
-        if !s.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str("\"\"\"");
-        return;
-    }
     out.push('"');
     for c in s.chars() {
         match c {
             '\\' => out.push_str("\\\\"),
             '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"), // shouldn't appear — use write_multiline_str
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
             c => out.push(c),
         }
     }
     out.push('"');
+}
+
+/// Emit a multiline string as a triple-quoted literal with content indented
+/// at `indent` spaces.  The closing `"""` is on its own line at `indent`.
+///
+/// `dedent_triple` will strip the common `indent`-space prefix when the file
+/// is next read, recovering the original string value exactly.
+fn write_multiline_str(s: &str, out: &mut String, indent: usize) {
+    let pad: String = " ".repeat(indent);
+    out.push_str("\"\"\"");
+    out.push('\n');
+    for line in s.split('\n') {
+        if line.is_empty() {
+            out.push('\n');
+        } else {
+            out.push_str(&pad);
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    // Closing delimiter at the same indent level as the opening.
+    out.push_str(&pad);
+    out.push_str("\"\"\"");
 }
 
 // ---------------------------------------------------------------------------
