@@ -1,0 +1,200 @@
+;; stdlib/http — HTTP client and server (stub) functions.
+;;
+;; This file is the source of truth for `http` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/http.rs.
+;;
+;; The `Response` type is a `Map` with keys:
+;;   :status  Int   — HTTP status code
+;;   :body    Str   — response body as a string
+;;   :headers Map   — response headers (Str → Str)
+
+(defn get
+  "Perform an HTTP GET request and return the response.
+
+  Sends a simple HTTP GET to `url`. Does not follow redirects beyond
+  what the OS TCP stack provides. TLS is supported on platforms that
+  have a system TLS stack.
+
+  In the eval environment (dev mode) this performs a real network
+  request. In WASM builds, network access is mediated by the
+  Component Model `wasi:http` capability.
+
+  ## Parameters
+  - `url` — the request URL as a `Str`.
+
+  ## Returns
+  `(Result Response Str)` where `Response` is a map:
+  `{:status Int :body Str :headers Map}`
+
+  ## Examples
+
+      (def resp (http/get \"https://api.example.com/data\")?)
+      (def body (http/body resp))
+      (def data (json/decode body)?)
+
+      (match (http/get url)
+        (Ok r)  (io/println (str \"Status: \" (http/status r)))
+        (Err e) (io/println (str \"Request failed: \" e)))
+
+  ## See Also
+  - `http/post` — send a request with a body
+  - `http/status` / `http/body` / `http/headers` — extract response fields
+  "
+  [url]
+  (native "http/get" url))
+
+(defn post
+  "Perform an HTTP POST request with a string body and return the response.
+
+  Sends `body` as the raw request body. Set `Content-Type` in `headers`
+  for JSON or form-encoded requests.
+
+  ## Parameters
+  - `url` — the request URL as a `Str`.
+  - `body` — the request body as a `Str`.
+
+  ## Returns
+  `(Result Response Str)` where `Response` is `{:status Int :body Str :headers Map}`
+
+  ## Examples
+
+      (def payload (json/encode {:name \"Alice\" :score 99}))
+      (def resp (http/post \"https://api.example.com/scores\" payload)?)
+      (io/println (str \"Posted, status: \" (http/status resp)))
+
+      ;; With form data
+      (def form \"username=alice&password=secret\")
+      (http/post \"https://example.com/login\" form)?
+
+  ## See Also
+  - `http/get` — GET request (no body)
+  - `json/encode` — build a JSON body
+  "
+  [url body]
+  (native "http/post" url body))
+
+(defn response
+  "Construct an HTTP response map.
+
+  Used in server handlers to build a structured response. Returns a
+  map matching the `Response` shape expected by `http/serve` handlers.
+
+  ## Parameters
+  - `status` — HTTP status code as `Int` (e.g. 200, 404).
+  - `body` — response body as `Str`.
+  - `headers` — response headers as `Map` (Str → Str).
+
+  ## Returns
+  `Response` map: `{:status Int :body Str :headers Map}`
+
+  ## Examples
+
+      (http/response 200 (json/encode result) {:content-type \"application/json\"})
+      (http/response 404 \"Not found\" {})
+      (http/response 302 \"\" {:location \"/login\"})
+
+  ## See Also
+  - `http/serve` — start a server that calls a handler producing responses
+  - `http/status` / `http/body` / `http/headers` — extract response fields
+  "
+  [status body headers]
+  (native "http/response" status body headers))
+
+(defn status
+  "Extract the `:status` field from an HTTP response map.
+
+  ## Parameters
+  - `resp` — a `Response` map (as returned by `http/get`, `http/post`, or `http/response`).
+
+  ## Returns
+  `Int` — the HTTP status code.
+
+  ## Examples
+
+      (def resp (http/get url)?)
+      (when (= (http/status resp) 200)
+        (process (http/body resp)))
+
+      (if (< (http/status resp) 400)
+        (handle-success resp)
+        (handle-error resp))
+
+  ## See Also
+  - `http/body` — extract the response body
+  - `http/headers` — extract response headers
+  "
+  [resp]
+  (native "http/status" resp))
+
+(defn body
+  "Extract the `:body` field from an HTTP response map.
+
+  ## Parameters
+  - `resp` — a `Response` map.
+
+  ## Returns
+  `Str` — the raw response body.
+
+  ## Examples
+
+      (def resp (http/get url)?)
+      (def data (json/decode (http/body resp))?)
+
+      (io/println (str \"Body length: \" (count (http/body resp))))
+
+  ## See Also
+  - `http/status` — check status before reading body
+  - `json/decode` — parse a JSON body
+  "
+  [resp]
+  (native "http/body" resp))
+
+(defn headers
+  "Extract the `:headers` field from an HTTP response map.
+
+  ## Parameters
+  - `resp` — a `Response` map.
+
+  ## Returns
+  `Map` — response headers as a `Str → Str` map (lowercase keys).
+
+  ## Examples
+
+      (def ct (get (http/headers resp) \"content-type\"))
+      (match ct
+        (Some t) (io/println (str \"Content-Type: \" t))
+        None     (io/println \"No content-type header\"))
+
+  ## See Also
+  - `http/body` — extract the response body
+  - `http/status` — extract the status code
+  "
+  [resp]
+  (native "http/headers" resp))
+
+(defn serve
+  "Start an HTTP server. *Stub in eval mode — requires WASM Component Model.*
+
+  In a compiled WASM component this binds to the `wasi:http/incoming-handler`
+  export and calls `handler` for each request. In the eval environment
+  this function logs a notice and returns `Unit` immediately.
+
+  ## Parameters
+  - `port` — TCP port to listen on (ignored in eval mode).
+  - `handler` — `(Fn [Request] Response)` called for each request.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (http/serve 8080
+        (fn [req]
+          (http/response 200 \"Hello!\" {})))
+
+  ## See Also
+  - `http/response` — build a response in the handler
+  - `http/get` / `http/post` — make outbound requests
+  "
+  [port handler]
+  (native "http/serve" port handler))

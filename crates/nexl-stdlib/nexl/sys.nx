@@ -1,0 +1,76 @@
+;; stdlib/sys — System-level process utilities.
+;;
+;; This file is the source of truth for `sys` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/sys.rs.
+
+(defn args
+  "Return command-line arguments passed after the script path.
+
+  When running `nexl run script.nx -- arg1 arg2`, this returns
+  `[\"arg1\" \"arg2\"]`. The interpreter name and script path are
+  not included.
+
+  ## Returns
+  `(Vec Str)`
+
+  ## Examples
+
+      (def cli-args (sys/args))
+      (when (= (count cli-args) 0)
+        (io/println \"Usage: nexl run tool.nx <input-file>\")
+        (sys/exit 1))
+      (def input-file (match (first cli-args) (Some f) f None \"\"))
+
+  ## See Also
+  - `env/get` — read environment variables instead
+  - `sys/exit` — exit the process
+  "
+  []
+  (native "sys/args"))
+
+(defn getenv
+  "Read an environment variable, returning `(Option Str)`.
+
+  Identical to `env/get` but namespaced under `sys`. Prefer `env/get`
+  for consistency with the rest of the `env` module.
+
+  ## Parameters
+  - `name` — variable name as `Str`.
+
+  ## Returns
+  `(Option Str)`
+
+  ## Examples
+
+      (sys/getenv \"HOME\")   ; => (Some \"/home/alice\") or None
+
+  ## See Also
+  - `env/get` — canonical version in the env module
+  - `env/require` — error if missing
+  "
+  [name]
+  (native "sys/getenv" name))
+
+(defn exit
+  "Exit the process with the given status code.
+
+  A status of 0 indicates success; any non-zero value indicates failure.
+  This function does not return. Prefer structured error handling over
+  `sys/exit` in library code; use it only in top-level scripts.
+
+  ## Parameters
+  - `code` — exit status code as `Int` (0 = success).
+
+  ## Returns
+  Never.
+
+  ## Examples
+
+      (when (not valid-input?)
+        (io/println \"Error: invalid arguments.\")
+        (sys/exit 1))
+
+      (sys/exit 0)   ; clean exit
+  "
+  [code]
+  (native "sys/exit" code))

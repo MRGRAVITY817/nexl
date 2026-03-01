@@ -10,8 +10,9 @@ use nexl_errors::{Diagnostic as NexlDiagnostic, Severity as NexlSeverity};
 use nexl_infer::{Env, InferState};
 use nexl_types::{EffectRow, Type, TypeError, TypeErrorKind, TypeVar};
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -297,133 +298,61 @@ fn span_contains(span: Span, offset: usize) -> bool {
     offset >= start && offset < end
 }
 
-/// Return documentation for a stdlib function, if known.
+/// Return documentation for a stdlib function by looking it up in the parsed
+/// Nexl declaration files (the single source of truth for stdlib docs).
 fn stdlib_doc(name: &str) -> Option<&'static str> {
-    Some(match name {
-        // ── arithmetic ──────────────────────────────────────────────
-        "+" => "`(+ args...)` — Variadic addition (Int or Float). Identity = 0.",
-        "-" => "`(- x)` or `(- x y ...)` — Unary negation or variadic subtraction.",
-        "*" => "`(* args...)` — Variadic multiplication (Int or Float). Identity = 1.",
-        "/" => "`(/ x y)` — Integer or float division. Division by zero is a runtime error.",
-        "mod" => "`(mod x y)` — Integer remainder.",
-        // ── comparison ──────────────────────────────────────────────
-        "=" => "`(= a b)` — Structural equality.",
-        "<" => "`(< a b)` — Less-than on Int or Float.",
-        ">" => "`(> a b)` — Greater-than on Int or Float.",
-        "<=" => "`(<= a b)` — Less-than-or-equal on Int or Float.",
-        ">=" => "`(>= a b)` — Greater-than-or-equal on Int or Float.",
-        // ── logic ───────────────────────────────────────────────────
-        "not" => "`(not x)` — Boolean negation.",
-        "and" => "`(and a b ...)` — Short-circuit boolean AND. Stops at first falsy.",
-        "or" => "`(or a b ...)` — Short-circuit boolean OR. Stops at first truthy.",
-        // ── string / collection ─────────────────────────────────────
-        "str" => "`(str args...)` — Convert each argument to its display string and concatenate.",
-        "count" => "`(count coll)` — Number of elements in a collection or string.",
-        "get" => "`(get coll key)` — Return `(Some value)` if key is in bounds, else `None`.",
-        "put" => "`(put coll key val)` — Update the value at key/index.",
-        "append" => "`(append vec val)` — Append to the end of a vector.",
-        "first" => "`(first vec)` — Return `(Some x)` for the first element, or `None`.",
-        "rest" => "`(rest vec)` — Return the tail of the vector (empty if length <= 1).",
-        "last" => "`(last vec)` — Return `(Some x)` for the last element, or `None`.",
-        "slice" => "`(slice vec start end)` — Return elements in [start, end).",
-        "remove" => "`(remove map key)` — Remove key from map if present.",
-        "keys" => "`(keys map)` — Return map keys in insertion order.",
-        "vals" => "`(vals map)` — Return map values in insertion order.",
-        "entries" => "`(entries map)` — Return map entries as a Vec of 2-tuples.",
-        "contains?" => "`(contains? coll key)` — Check for key membership.",
-        "add" => "`(add set val)` — Add element to a set if missing.",
-        "union" => "`(union a b)` — Set union.",
-        "intersection" => "`(intersection a b)` — Set intersection.",
-        "difference" => "`(difference a b)` — Set difference (elements in a not in b).",
-        // ── higher-order ────────────────────────────────────────────
-        "map" => "`(map f coll)` — Apply f to each element, return new collection.",
-        "filter" => "`(filter pred coll)` — Keep elements where pred returns true.",
-        "reduce" => "`(reduce f init coll)` — Reduce collection with accumulator.",
-        "sort" => "`(sort vec)` — Stable sort using default comparison (Int, Float, Str).",
-        "sort-by" => "`(sort-by f vec)` — Stable sort by key function.",
-        "reverse" => "`(reverse vec)` — Reverse a vector.",
-        "range" => {
-            "`(range n)` or `(range start end)` or `(range start end step)` — Generate integer range."
+    stdlib_docs().get(name).map(|s| s.as_str())
+}
+
+/// Lazily build and cache the stdlib documentation map from the embedded
+/// Nexl declaration files in `nexl-stdlib/nexl/`.
+///
+/// Keys are:
+/// - Unqualified function names for builtins: `"+"`, `"map"`, `"get"`, …
+/// - Qualified names for module functions: `"io/println"`, `"str/split"`, …
+/// - Both forms for module functions (unqualified as fallback).
+fn stdlib_docs() -> &'static HashMap<String, String> {
+    static DOCS: OnceLock<HashMap<String, String>> = OnceLock::new();
+    DOCS.get_or_init(|| {
+        let mut map = HashMap::new();
+        for (module_name, src) in nexl_stdlib::nexl_declaration_sources() {
+            let nodes = match nexl_reader::read(src, FileId(0)) {
+                Ok(nodes) => nodes,
+                Err(_) => continue,
+            };
+            for node in &nodes {
+                // Extract docstring from (defn name "docstring" ...) forms.
+                if let Some((name_node, Some(doc))) = defn_name_and_docstring(node) {
+                    if let Some(fn_name) = symbol_name(name_node) {
+                        if *module_name == "builtins" {
+                            // Builtins use unqualified keys only.
+                            map.insert(fn_name, doc);
+                        } else {
+                            // Module functions: store as "module/fn" and also
+                            // unqualified (fallback for imported names).
+                            let qualified = format!("{module_name}/{fn_name}");
+                            map.insert(fn_name, doc.clone());
+                            map.insert(qualified, doc);
+                        }
+                    }
+                }
+                // Also handle (def name "docstring") for constants like math/pi.
+                if let Some(name_node) = def_name_node(node) {
+                    if let NodeKind::List(items) = &node.kind {
+                        if let Some(doc_node) = items.get(2) {
+                            if let NodeKind::Atom(Atom::Str(doc)) = &doc_node.kind {
+                                if let Some(fn_name) = symbol_name(name_node) {
+                                    let qualified = format!("{module_name}/{fn_name}");
+                                    map.insert(fn_name, doc.clone());
+                                    map.insert(qualified, doc.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        "flat-map" => "`(flat-map f vec)` — Map then flatten one level.",
-        "group-by" => "`(group-by f vec)` — Group elements by key function, returns Map.",
-        "zip" => "`(zip a b)` — Zip two Vecs into a Vec of 2-element Vecs.",
-        "take" => "`(take n vec)` — Take first n elements.",
-        "drop" => "`(drop n vec)` — Drop first n elements.",
-        "take-while" => "`(take-while pred vec)` — Take while predicate is true.",
-        "drop-while" => "`(drop-while pred vec)` — Drop while predicate is true.",
-        // ── bitwise ─────────────────────────────────────────────────
-        "bit-and" => "`(bit-and a b)` — Bitwise AND of two integers.",
-        "bit-or" => "`(bit-or a b)` — Bitwise OR of two integers.",
-        "bit-xor" => "`(bit-xor a b)` — Bitwise XOR of two integers.",
-        "bit-not" => "`(bit-not x)` — Bitwise NOT of an integer.",
-        "bit-shift-left" => "`(bit-shift-left x n)` — Shift left by n bits.",
-        "bit-shift-right" => "`(bit-shift-right x n)` — Arithmetic shift right by n bits.",
-        // ── option/result constructors ──────────────────────────────
-        "Some" => "`(Some val)` — Wrap a value in an Option.",
-        "None" => "`None` — The absent Option value.",
-        "Ok" => "`(Ok val)` — Wrap a success value in a Result.",
-        "Err" => "`(Err val)` — Wrap an error value in a Result.",
-        // ── str module ──────────────────────────────────────────────
-        "str/split" => "`(str/split s sep)` — Split string by separator, return Vec of Str.",
-        "str/join" => "`(str/join vec sep)` — Join a Vec of Str with separator.",
-        "str/trim" => "`(str/trim s)` — Remove leading and trailing whitespace.",
-        "str/upper" => "`(str/upper s)` — Convert to uppercase.",
-        "str/lower" => "`(str/lower s)` — Convert to lowercase.",
-        "str/starts-with?" => "`(str/starts-with? s prefix)` — Check if string starts with prefix.",
-        "str/ends-with?" => "`(str/ends-with? s suffix)` — Check if string ends with suffix.",
-        "str/contains?" => "`(str/contains? s sub)` — Check if string contains substring.",
-        "str/replace" => "`(str/replace s from to)` — Replace all occurrences of `from` with `to`.",
-        "str/index-of" => {
-            "`(str/index-of s sub)` — Return `(Some Int)` of first occurrence, or `None`."
-        }
-        "str/blank?" => "`(str/blank? s)` — True if empty or only whitespace.",
-        "str/chars" => "`(str/chars s)` — Return Vec of Char (Unicode scalar values).",
-        "str/graphemes" => "`(str/graphemes s)` — Return Vec of Str (grapheme clusters).",
-        "str/trim-start" => "`(str/trim-start s)` — Remove leading whitespace.",
-        "str/trim-end" => "`(str/trim-end s)` — Remove trailing whitespace.",
-        "str/format" => "`(str/format template args...)` — Positional `{}` placeholder formatting.",
-        // ── math module ─────────────────────────────────────────────
-        "math/abs" => "`(math/abs x)` — Absolute value (works for Int and Float).",
-        "math/floor" => "`(math/floor x)` — Floor (returns Float).",
-        "math/ceil" => "`(math/ceil x)` — Ceiling (returns Float).",
-        "math/round" => "`(math/round x)` — Round to nearest integer (returns Float).",
-        "math/pow" => "`(math/pow base exp)` — Exponentiation (returns Float).",
-        "math/sqrt" => "`(math/sqrt x)` — Square root (returns Float).",
-        "math/log" => "`(math/log x)` — Natural logarithm (returns Float).",
-        "math/exp" => "`(math/exp x)` — e^x (returns Float).",
-        "math/sin" => "`(math/sin x)` — Sine (radians, returns Float).",
-        "math/cos" => "`(math/cos x)` — Cosine (radians, returns Float).",
-        "math/tan" => "`(math/tan x)` — Tangent (radians, returns Float).",
-        "math/asin" => "`(math/asin x)` — Arc sine (returns Float in radians).",
-        "math/acos" => "`(math/acos x)` — Arc cosine (returns Float in radians).",
-        "math/atan" => "`(math/atan x)` — Arc tangent (returns Float in radians).",
-        "math/atan2" => "`(math/atan2 y x)` — Two-argument arc tangent (returns Float in radians).",
-        "math/min" => "`(math/min a b)` — Minimum of two numbers.",
-        "math/max" => "`(math/max a b)` — Maximum of two numbers.",
-        "math/clamp" => "`(math/clamp x lo hi)` — Clamp x to [lo, hi].",
-        "math/pi" => "`math/pi` — The constant π.",
-        "math/e" => "`math/e` — The constant e.",
-        // ── io module ───────────────────────────────────────────────
-        "io/println" => "`(io/println s)` — Print string with newline.",
-        "io/print" => "`(io/print s)` — Print string without newline.",
-        "io/read-file" => {
-            "`(io/read-file path)` — Read file contents as Str. Returns `(Result Str Str)`."
-        }
-        "io/write-file" => {
-            "`(io/write-file path content)` — Write string to file. Returns `(Result Unit Str)`."
-        }
-        "io/path-join" => "`(io/path-join parts...)` — Join path components.",
-        // ── core module ─────────────────────────────────────────────
-        "core/identity" => "`(core/identity x)` — Returns its argument unchanged.",
-        "core/comp" => "`(core/comp f g)` — Returns a function that applies g then f.",
-        "core/partial" => "`(core/partial f args...)` — Returns a function with args pre-applied.",
-        "core/constantly" => "`(core/constantly x)` — Returns a function that always returns x.",
-        "core/juxt" => {
-            "`(core/juxt f g ...)` — Returns a function that applies each fn and collects results."
-        }
-        "core/apply" => "`(core/apply f args)` — Call f with args. Last argument must be a Vec.",
-        _ => return None,
+        map
     })
 }
 
@@ -2283,7 +2212,7 @@ mod tests {
         let value = hover_value(&hover);
         assert!(value.contains("map"), "should contain the name");
         assert!(
-            value.contains("Apply f to each element"),
+            value.contains("returning a new vector"),
             "should contain stdlib doc"
         );
     }
@@ -2323,7 +2252,7 @@ mod tests {
         let value = hover_value(&hover);
         assert!(value.contains("str/split"), "should contain the name");
         assert!(
-            value.contains("Split string by separator"),
+            value.contains("Split a string into a vector"),
             "should contain stdlib doc"
         );
     }

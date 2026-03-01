@@ -1,0 +1,40 @@
+;; stdlib/random — Cryptographically secure random bytes.
+;;
+;; This file is the source of truth for `random` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/random.rs.
+;;
+;; `random/bytes` uses the OS CSPRNG (getrandom on Unix/macOS,
+;; BCryptGenRandom on Windows). It is suitable for security-sensitive
+;; use cases such as generating tokens and salts.
+
+(defn bytes
+  "Return a vector of `n` cryptographically random bytes (each an `Int` in 0–255).
+
+  Uses the operating system's secure random number generator. Safe for
+  generating session tokens, salts, and cryptographic key material.
+  Panics if the OS CSPRNG is unavailable.
+
+  ## Parameters
+  - `n` — number of random bytes to generate (`Int`, must be ≥ 0).
+
+  ## Returns
+  `(Vec Int)` — each element in the range [0, 255].
+
+  ## Examples
+
+      (def token-bytes (random/bytes 32))
+      ;; Convert to a hex string for use as an opaque token
+      (def hex (str/join (map (fn [b] (str/format \"{:02x}\" [b])) token-bytes) \"\"))
+
+      ;; Generate a random salt for password hashing
+      (def salt (random/bytes 16))
+
+      ;; Simple random integer in [0, N)
+      (def b (first (random/bytes 1)))
+      (def rand-0-99 (mod (match b (Some v) v None 0) 100))
+
+  ## See Also
+  - `crypto/hash` — hash a string
+  "
+  [n]
+  (native "random/bytes" n))

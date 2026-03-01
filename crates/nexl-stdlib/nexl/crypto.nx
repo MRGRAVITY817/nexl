@@ -1,0 +1,67 @@
+;; stdlib/crypto — Cryptographic utilities.
+;;
+;; This file is the source of truth for `crypto` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/crypto.rs.
+
+(defn hash
+  "Compute a 64-bit integer hash of a string.
+
+  Uses a fast, non-cryptographic hashing algorithm (suitable for hash
+  tables and fingerprinting, NOT for password storage or MACs). The
+  output is deterministic within a process but may differ between
+  compiler versions.
+
+  For cryptographic purposes, use a proper library via WASM imports.
+
+  ## Parameters
+  - `s` — the string to hash.
+
+  ## Returns
+  `Int` — a 64-bit signed hash value.
+
+  ## Examples
+
+      (crypto/hash \"hello\")          ; => some deterministic Int
+      (= (crypto/hash \"x\") (crypto/hash \"x\"))  ; => true  (deterministic)
+      (= (crypto/hash \"a\") (crypto/hash \"b\"))  ; => false  (almost certainly)
+
+      ;; Use as a cache key
+      (def cache-key (crypto/hash (json/encode request)))
+
+  ## See Also
+  - `random/bytes` — generate random bytes for keys/salts
+  - `crypto/constant-time=` — safe string comparison
+  "
+  [s]
+  (native "crypto/hash" s))
+
+(defn constant-time=
+  "Compare two strings in constant time, resistant to timing attacks.
+
+  Unlike `=`, this function always takes the same amount of time
+  regardless of where the strings differ. Use when comparing secrets
+  such as HMAC digests or session tokens to prevent timing side-channels.
+
+  Returns `true` if both strings are byte-for-byte equal, `false` otherwise.
+
+  ## Parameters
+  - `a` — first string.
+  - `b` — second string to compare against.
+
+  ## Returns
+  `Bool`
+
+  ## Examples
+
+      (def expected-token \"abc123\")
+      (def provided-token (env/require \"API_TOKEN\")?)
+
+      (when (not (crypto/constant-time= expected-token provided-token))
+        (panic \"Unauthorized\"))
+
+  ## See Also
+  - `=` — ordinary equality (not timing-safe)
+  - `random/bytes` — generate token material
+  "
+  [a b]
+  (native "crypto/constant-time=" a b))

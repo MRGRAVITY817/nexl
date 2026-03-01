@@ -1,0 +1,995 @@
+;; Nexl built-in operators and core collection functions.
+;;
+;; These are available without any import declaration. This file
+;; documents them for LSP hover display. Bodies are stubs.
+
+;; ── Arithmetic ────────────────────────────────────────────────────────────────
+
+(defn +
+  "Add zero or more numbers, returning their sum.
+
+  With no arguments returns the additive identity 0. With one argument
+  returns that argument unchanged. With two or more arguments returns
+  the sum, left-to-right.
+
+  Accepts `Int` and `Float`. Mixed types produce `Float`.
+
+  ## Examples
+
+      (+)          ; => 0
+      (+ 5)        ; => 5
+      (+ 1 2 3)    ; => 6
+      (+ 1.5 2.5)  ; => 4.0
+      (+ 1 2.0)    ; => 3.0  (promoted to Float)
+
+  ## See Also
+  - `-` — subtraction / negation
+  - `*` — multiplication
+  "
+  [& args]
+  (native "+" args))
+
+(defn -
+  "Subtract numbers, or negate a single number.
+
+  With one argument returns its negation. With two or more, subtracts
+  each subsequent value from the first.
+
+  ## Examples
+
+      (- 5)        ; => -5
+      (- 10 3)     ; => 7
+      (- 10 3 2)   ; => 5
+      (- 0.5)      ; => -0.5
+
+  ## See Also
+  - `+` — addition
+  "
+  [& args]
+  (native "-" args))
+
+(defn *
+  "Multiply zero or more numbers, returning their product.
+
+  With no arguments returns the multiplicative identity 1.
+
+  ## Examples
+
+      (*)           ; => 1
+      (* 3)         ; => 3
+      (* 2 3 4)     ; => 24
+      (* 2.0 3)     ; => 6.0
+
+  ## See Also
+  - `/` — division
+  - `math/pow` — exponentiation
+  "
+  [& args]
+  (native "*" args))
+
+(defn /
+  "Divide the first number by subsequent numbers.
+
+  Integer division truncates toward zero when both operands are `Int`.
+  Returns `Float` if either operand is `Float`. Division by zero is a
+  runtime error.
+
+  ## Examples
+
+      (/ 10 2)       ; => 5
+      (/ 7 2)        ; => 3    (integer division — truncated)
+      (/ 7 2.0)      ; => 3.5  (Float division)
+      (/ 1.0 3)      ; => 0.333...
+
+  ## See Also
+  - `mod` — remainder
+  - `*` — multiplication
+  "
+  [& args]
+  (native "/" args))
+
+(defn mod
+  "Return the remainder after dividing `x` by `y`.
+
+  The result has the same sign as `x`. Both arguments must be `Int`.
+  Division by zero is a runtime error.
+
+  ## Parameters
+  - `x` — dividend.
+  - `y` — divisor (non-zero).
+
+  ## Returns
+  `Int`
+
+  ## Examples
+
+      (mod 10 3)    ; => 1
+      (mod -7 3)    ; => -1
+      (mod 6 2)     ; => 0
+
+  ## See Also
+  - `/` — integer division
+  "
+  [x y]
+  (native "mod" x y))
+
+;; ── Comparison ────────────────────────────────────────────────────────────────
+
+(defn =
+  "Return `true` if `a` and `b` are structurally equal.
+
+  Works for any Nexl value type: numbers, strings, booleans, vectors,
+  maps, sets, and ADTs. Two collections are equal if they have the same
+  type, length, and pairwise-equal elements.
+
+  ## Examples
+
+      (= 1 1)           ; => true
+      (= \"a\" \"a\")   ; => true
+      (= [1 2] [1 2])   ; => true
+      (= {:a 1} {:a 1}) ; => true
+      (= 1 1.0)         ; => false  (different types)
+
+  ## See Also
+  - `<` / `>` / `<=` / `>=` — ordering comparisons
+  - `not` — boolean negation
+  "
+  [a b]
+  (native "=" a b))
+
+(defn <
+  "Return `true` if `a` is strictly less than `b`.
+
+  Works for `Int`, `Float`, and `Str` (lexicographic). Mixed `Int`/`Float`
+  comparisons promote `Int` to `Float`.
+
+  ## Examples
+
+      (< 1 2)         ; => true
+      (< 2 1)         ; => false
+      (< \"a\" \"b\") ; => true  (lexicographic)
+      (< 1 1)         ; => false
+
+  ## See Also
+  - `<=` — less-than-or-equal
+  - `>` / `>=` — greater-than variants
+  "
+  [a b]
+  (native "<" a b))
+
+(defn >
+  "Return `true` if `a` is strictly greater than `b`.
+
+  ## Examples
+
+      (> 2 1)   ; => true
+      (> 1 2)   ; => false
+      (> 1 1)   ; => false
+  "
+  [a b]
+  (native ">" a b))
+
+(defn <=
+  "Return `true` if `a` is less than or equal to `b`.
+
+  ## Examples
+
+      (<= 1 2)   ; => true
+      (<= 1 1)   ; => true
+      (<= 2 1)   ; => false
+  "
+  [a b]
+  (native "<=" a b))
+
+(defn >=
+  "Return `true` if `a` is greater than or equal to `b`.
+
+  ## Examples
+
+      (>= 2 1)   ; => true
+      (>= 1 1)   ; => true
+      (>= 1 2)   ; => false
+  "
+  [a b]
+  (native ">=" a b))
+
+;; ── Logic ─────────────────────────────────────────────────────────────────────
+
+(defn not
+  "Return the boolean negation of `x`.
+
+  `x` must be a `Bool`. Unlike many languages, Nexl does not treat
+  non-boolean values as truthy/falsy — `not` requires a `Bool`.
+
+  ## Parameters
+  - `x` — `Bool` value.
+
+  ## Returns
+  `Bool`
+
+  ## Examples
+
+      (not true)    ; => false
+      (not false)   ; => true
+      (not (= 1 2)) ; => true
+
+  ## See Also
+  - `and` / `or` — short-circuit boolean operators
+  "
+  [x]
+  (native "not" x))
+
+(defn and
+  "Short-circuit boolean AND.
+
+  Evaluates arguments left-to-right. Returns `false` at the first
+  `false` argument without evaluating the rest. Returns `true` if
+  all arguments are `true`. With no arguments returns `true`.
+
+  Note: in Nexl `and` is a special form, not a function. It cannot be
+  passed to `map` or `filter`.
+
+  ## Examples
+
+      (and true true)         ; => true
+      (and true false)        ; => false  (short-circuits)
+      (and (valid? x) (ok? y)) ; => evaluates (ok? y) only if (valid? x) is true
+  "
+  [& args]
+  (native "and" args))
+
+(defn or
+  "Short-circuit boolean OR.
+
+  Evaluates arguments left-to-right. Returns `true` at the first
+  `true` argument without evaluating the rest. Returns `false` if
+  all arguments are `false`. With no arguments returns `false`.
+
+  Note: in Nexl `or` is a special form, not a function.
+
+  ## Examples
+
+      (or false true)    ; => true  (short-circuits)
+      (or false false)   ; => false
+      (or (cached?) (fetch!)) ; => fetches only if not cached
+  "
+  [& args]
+  (native "or" args))
+
+;; ── String / Collection ───────────────────────────────────────────────────────
+
+(defn str
+  "Convert arguments to strings and concatenate them.
+
+  Each argument is converted using its display representation, then all
+  are concatenated without any separator. With no arguments returns `\"\"`.
+
+  ## Examples
+
+      (str \"Hello, \" \"world!\")   ; => \"Hello, world!\"
+      (str 1 \" + \" 2 \" = \" 3)    ; => \"1 + 2 = 3\"
+      (str)                         ; => \"\"
+      (str [1 2 3])                 ; => \"[1 2 3]\"
+
+  ## See Also
+  - `str/format` — placeholder-based formatting
+  - `str/join` — join a collection with a separator
+  "
+  [& args]
+  (native "str" args))
+
+(defn count
+  "Return the number of elements in a collection or bytes in a string.
+
+  For `Vec`, `Map`, `Set` — returns the number of elements.
+  For `Str` — returns the number of UTF-8 bytes (not Unicode code points).
+  Use `(count (str/chars s))` for code-point count.
+
+  ## Examples
+
+      (count [1 2 3])         ; => 3
+      (count {:a 1 :b 2})     ; => 2
+      (count #{:x :y})        ; => 2
+      (count \"hello\")       ; => 5  (5 bytes)
+      (count \"\")            ; => 0
+
+  ## See Also
+  - `str/chars` — Unicode code points
+  - `first` / `last` — access specific elements
+  "
+  [coll]
+  (native "count" coll))
+
+(defn get
+  "Return the value at `key` in `coll`, wrapped in `(Some ...)`, or `None`.
+
+  - For `Vec`: `key` is a 0-based `Int` index.
+  - For `Map`: `key` is any value (typically a keyword or string).
+  - For `Str`: `key` is a byte index — returns `(Some Char)` or `None`.
+
+  ## Examples
+
+      (get [10 20 30] 1)          ; => (Some 20)
+      (get [10 20 30] 5)          ; => None
+      (get {:name \"Alice\"} :name) ; => (Some \"Alice\")
+      (get {:a 1} :missing)        ; => None
+
+  ## See Also
+  - `put` — update a value at a key
+  - `contains?` — test membership without unwrapping
+  "
+  [coll key]
+  (native "get" coll key))
+
+(defn put
+  "Return a new collection with the value at `key` set to `val`.
+
+  For `Vec`: `key` must be a valid 0-based index (in bounds).
+  For `Map`: inserts or updates the key.
+  For `Set`: inserts `key` (val is ignored).
+
+  Does not mutate in place — all Nexl collections are immutable.
+
+  ## Examples
+
+      (put [1 2 3] 1 99)               ; => [1 99 3]
+      (put {:name \"Alice\"} :name \"Bob\") ; => {:name \"Bob\"}
+      (put {:a 1} :b 2)                ; => {:a 1 :b 2}
+
+  ## See Also
+  - `get` — read a value
+  - `remove` — delete a key
+  - `append` — add to end of a Vec
+  "
+  [coll key val]
+  (native "put" coll key val))
+
+(defn append
+  "Return a new vector with `val` appended to the end of `vec`.
+
+  ## Parameters
+  - `vec` — the source `Vec`.
+  - `val` — value to append.
+
+  ## Returns
+  `Vec`
+
+  ## Examples
+
+      (append [1 2] 3)     ; => [1 2 3]
+      (append [] \"hi\")   ; => [\"hi\"]
+
+  ## See Also
+  - `put` — insert at an arbitrary index
+  - `slice` — extract a sub-range
+  "
+  [vec val]
+  (native "append" vec val))
+
+(defn first
+  "Return the first element of `coll` wrapped in `(Some ...)`, or `None`.
+
+  Works for `Vec` and `Str` (returns `(Some Char)`).
+
+  ## Examples
+
+      (first [1 2 3])   ; => (Some 1)
+      (first [])        ; => None
+
+  ## See Also
+  - `last` — last element
+  - `rest` — everything but the first element
+  "
+  [coll]
+  (native "first" coll))
+
+(defn rest
+  "Return the vector with the first element removed.
+
+  Returns an empty vector if `coll` has 0 or 1 elements.
+
+  ## Examples
+
+      (rest [1 2 3])   ; => [2 3]
+      (rest [1])       ; => []
+      (rest [])        ; => []
+
+  ## See Also
+  - `first` — the head element
+  - `drop` — skip the first n elements
+  "
+  [coll]
+  (native "rest" coll))
+
+(defn last
+  "Return the last element of `coll` wrapped in `(Some ...)`, or `None`.
+
+  ## Examples
+
+      (last [1 2 3])   ; => (Some 3)
+      (last [])        ; => None
+
+  ## See Also
+  - `first` — first element
+  - `drop` — remove leading elements
+  "
+  [coll]
+  (native "last" coll))
+
+(defn slice
+  "Return the sub-vector of elements in the half-open range [start, end).
+
+  `start` and `end` are 0-based byte/element indices. `end` is exclusive.
+  Out-of-bounds values are clamped silently.
+
+  ## Examples
+
+      (slice [0 1 2 3 4] 1 4)   ; => [1 2 3]
+      (slice [0 1 2] 0 2)       ; => [0 1]
+      (slice [0 1 2] 1 10)      ; => [1 2]  (end clamped)
+
+  ## See Also
+  - `take` / `drop` — prefix / suffix variants
+  "
+  [vec start end]
+  (native "slice" vec start end))
+
+(defn remove
+  "Return a new map with `key` removed, or the collection unchanged if absent.
+
+  For `Map`: deletes the entry with the given key.
+  For `Set`: removes the element.
+
+  ## Examples
+
+      (remove {:a 1 :b 2} :a)   ; => {:b 2}
+      (remove {:a 1} :missing)  ; => {:a 1}
+
+  ## See Also
+  - `put` — add or update a key
+  - `contains?` — check before removing
+  "
+  [coll key]
+  (native "remove" coll key))
+
+(defn keys
+  "Return the keys of a map in insertion order.
+
+  ## Examples
+
+      (keys {:a 1 :b 2 :c 3})   ; => [:a :b :c]
+      (keys {})                  ; => []
+
+  ## See Also
+  - `vals` — values only
+  - `entries` — key–value pairs
+  "
+  [m]
+  (native "keys" m))
+
+(defn vals
+  "Return the values of a map in insertion order.
+
+  ## Examples
+
+      (vals {:a 1 :b 2 :c 3})   ; => [1 2 3]
+      (vals {})                  ; => []
+
+  ## See Also
+  - `keys` — keys only
+  - `entries` — key–value pairs
+  "
+  [m]
+  (native "vals" m))
+
+(defn entries
+  "Return the entries of a map as a vector of 2-element vectors.
+
+  Each entry is `[key val]` in insertion order.
+
+  ## Examples
+
+      (entries {:a 1 :b 2})   ; => [[:a 1] [:b 2]]
+      (entries {})             ; => []
+
+      ;; Iterate over all entries
+      (each [[k v] (entries my-map)]
+        (io/println (str k \" = \" v)))
+
+  ## See Also
+  - `keys` — keys only
+  - `vals` — values only
+  "
+  [m]
+  (native "entries" m))
+
+(defn contains?
+  "Return `true` if `coll` contains `key`.
+
+  - For `Map`: tests key presence.
+  - For `Set`: tests element membership.
+  - For `Vec`: tests index validity (0-based).
+
+  ## Examples
+
+      (contains? {:a 1 :b 2} :a)   ; => true
+      (contains? {:a 1} :c)        ; => false
+      (contains? #{1 2 3} 2)       ; => true
+      (contains? [10 20 30] 1)     ; => true   (index 1 is valid)
+      (contains? [10 20 30] 5)     ; => false
+
+  ## See Also
+  - `get` — retrieve the value, not just existence
+  "
+  [coll key]
+  (native "contains?" coll key))
+
+(defn add
+  "Return a new set with `val` added.
+
+  If `val` is already in the set, the set is returned unchanged.
+
+  ## Examples
+
+      (add #{1 2} 3)   ; => #{1 2 3}
+      (add #{1 2} 2)   ; => #{1 2}   (no duplicate)
+
+  ## See Also
+  - `remove` — remove from set
+  - `union` / `intersection` / `difference` — set operations
+  "
+  [s val]
+  (native "add" s val))
+
+(defn union
+  "Return the set union of `a` and `b`.
+
+  Contains all elements present in either set.
+
+  ## Examples
+
+      (union #{1 2} #{2 3})   ; => #{1 2 3}
+      (union #{} #{1})        ; => #{1}
+
+  ## See Also
+  - `intersection` / `difference` — other set operations
+  "
+  [a b]
+  (native "union" a b))
+
+(defn intersection
+  "Return the set intersection of `a` and `b`.
+
+  Contains only elements present in both sets.
+
+  ## Examples
+
+      (intersection #{1 2 3} #{2 3 4})   ; => #{2 3}
+      (intersection #{1 2} #{3 4})       ; => #{}
+
+  ## See Also
+  - `union` / `difference` — other set operations
+  "
+  [a b]
+  (native "intersection" a b))
+
+(defn difference
+  "Return the set difference `a \\ b` (elements in `a` but not in `b`).
+
+  ## Examples
+
+      (difference #{1 2 3} #{2 3})   ; => #{1}
+      (difference #{1 2} #{3 4})     ; => #{1 2}
+
+  ## See Also
+  - `union` / `intersection` — other set operations
+  "
+  [a b]
+  (native "difference" a b))
+
+;; ── Higher-Order ──────────────────────────────────────────────────────────────
+
+(defn map
+  "Apply `f` to each element of `coll`, returning a new vector.
+
+  The function `f` receives one element at a time and its return values
+  form the result vector (same length as `coll`). Does not mutate `coll`.
+
+  ## Parameters
+  - `f` — `(Fn [x] Any)` — transformation function.
+  - `coll` — `Vec` to transform.
+
+  ## Returns
+  `Vec`
+
+  ## Examples
+
+      (map (fn [x] (* x 2)) [1 2 3 4])     ; => [2 4 6 8]
+      (map str/upper [\"a\" \"b\" \"c\"])   ; => [\"A\" \"B\" \"C\"]
+      (map (fn [x] (+ x 1)) [])            ; => []
+
+  ## See Also
+  - `filter` — keep elements by predicate
+  - `reduce` — fold to a single value
+  - `flat-map` — map then flatten
+  "
+  [f coll]
+  (native "map" f coll))
+
+(defn filter
+  "Return a new vector containing only elements for which `pred` returns `true`.
+
+  Preserves the relative order of matching elements. Does not mutate `coll`.
+
+  ## Parameters
+  - `pred` — `(Fn [x] Bool)` — predicate function.
+  - `coll` — `Vec` to filter.
+
+  ## Returns
+  `Vec`
+
+  ## Examples
+
+      (filter odd? [1 2 3 4 5])             ; => [1 3 5]
+      (filter (fn [x] (> x 2)) [1 2 3 4])  ; => [3 4]
+      (filter str/blank? [\"\" \"a\" \"  \"]) ; => [\"\" \"  \"]
+
+  ## See Also
+  - `map` — transform each element
+  - `take-while` / `drop-while` — prefix-based filtering
+  "
+  [pred coll]
+  (native "filter" pred coll))
+
+(defn reduce
+  "Fold `coll` to a single value by repeatedly applying `f`.
+
+  Starting from `init`, applies `(f acc element)` for each element of
+  `coll` left-to-right, threading the accumulator through each step.
+
+  ## Parameters
+  - `f` — `(Fn [acc x] acc)` — combining function.
+  - `init` — initial accumulator value.
+  - `coll` — `Vec` to fold.
+
+  ## Returns
+  Final accumulator value.
+
+  ## Examples
+
+      (reduce + 0 [1 2 3 4 5])         ; => 15
+      (reduce * 1 [1 2 3 4])           ; => 24
+      (reduce append [] [[1] [2] [3]]) ; => [1 2 3]  (flatten one level)
+
+      ;; Build a map from entries
+      (reduce (fn [m [k v]] (put m k v)) {} pairs)
+
+  ## See Also
+  - `map` — transform without folding
+  - `filter` — select elements
+  "
+  [f init coll]
+  (native "reduce" f init coll))
+
+(defn sort
+  "Return a stable-sorted copy of `vec` using default comparison.
+
+  Elements must be homogeneously `Int`, `Float`, or `Str`. Mixed types
+  are a runtime error. Uses `<=` as the ordering predicate.
+
+  ## Examples
+
+      (sort [3 1 4 1 5 9])        ; => [1 1 3 4 5 9]
+      (sort [\"banana\" \"apple\"])  ; => [\"apple\" \"banana\"]
+      (sort [])                    ; => []
+
+  ## See Also
+  - `sort-by` — sort by a key function
+  - `reverse` — reverse without sorting
+  "
+  [vec]
+  (native "sort" vec))
+
+(defn sort-by
+  "Return a stable-sorted copy of `vec`, using `f` to extract sort keys.
+
+  Keys are compared using the default ordering (Int, Float, or Str).
+
+  ## Parameters
+  - `f` — `(Fn [x] key)` — key extraction function.
+  - `vec` — `Vec` to sort.
+
+  ## Returns
+  `Vec` sorted by `f` ascending.
+
+  ## Examples
+
+      (sort-by count [\"bb\" \"aaa\" \"c\"])     ; => [\"c\" \"bb\" \"aaa\"]
+      (sort-by :age [{:age 30} {:age 25}])     ; => [{:age 25} {:age 30}]
+      (sort-by (fn [x] (- x)) [3 1 4 1])      ; => [4 3 1 1]  (descending)
+
+  ## See Also
+  - `sort` — sort using natural ordering
+  "
+  [f vec]
+  (native "sort-by" f vec))
+
+(defn reverse
+  "Return a new vector with elements in reverse order.
+
+  ## Examples
+
+      (reverse [1 2 3])   ; => [3 2 1]
+      (reverse [])        ; => []
+
+  ## See Also
+  - `sort` — sort instead of reversing
+  "
+  [vec]
+  (native "reverse" vec))
+
+(defn range
+  "Generate a vector of integers.
+
+  - `(range n)` → `[0 1 ... n-1]`
+  - `(range start end)` → `[start start+1 ... end-1]`
+  - `(range start end step)` → `[start start+step ...]` while `< end`
+
+  ## Examples
+
+      (range 5)            ; => [0 1 2 3 4]
+      (range 2 6)          ; => [2 3 4 5]
+      (range 0 10 2)       ; => [0 2 4 6 8]
+      (range 5 0 -1)       ; => [5 4 3 2 1]
+
+  ## See Also
+  - `take` / `drop` — prefix / suffix of a range
+  "
+  [& args]
+  (native "range" args))
+
+(defn flat-map
+  "Apply `f` to each element of `vec`, then flatten one level.
+
+  Equivalent to `(reduce append [] (map f vec))` but more efficient.
+  `f` must return a `Vec` for each element.
+
+  ## Examples
+
+      (flat-map (fn [x] [x (* x x)]) [1 2 3])   ; => [1 1 2 4 3 9]
+      (flat-map str/chars [\"ab\" \"cd\"])         ; => [\\a \\b \\c \\d]
+
+  ## See Also
+  - `map` — map without flattening
+  "
+  [f vec]
+  (native "flat-map" f vec))
+
+(defn group-by
+  "Group elements of `vec` by the key returned by `f`.
+
+  Returns a `Map` from key to `Vec` of elements sharing that key.
+  Order within each group preserves the original order in `vec`.
+
+  ## Examples
+
+      (group-by (fn [x] (mod x 2)) [1 2 3 4 5])
+      ; => {1 [1 3 5], 0 [2 4]}
+
+      (group-by :role [{:name \"Alice\" :role \"admin\"}
+                       {:name \"Bob\" :role \"user\"}
+                       {:name \"Eve\" :role \"admin\"}])
+      ; => {\"admin\" [{:name \"Alice\"...} {:name \"Eve\"...}]
+      ;     \"user\"  [{:name \"Bob\"...}]}
+
+  ## See Also
+  - `sort-by` — sort by key instead of grouping
+  "
+  [f vec]
+  (native "group-by" f vec))
+
+(defn zip
+  "Combine two vectors element-wise into a vector of 2-element vectors.
+
+  The result length equals the shorter of the two input vectors.
+
+  ## Examples
+
+      (zip [1 2 3] [:a :b :c])   ; => [[1 :a] [2 :b] [3 :c]]
+      (zip [1 2 3] [\"a\"])       ; => [[1 \"a\"]]  (shorter wins)
+      (zip [] [1 2])              ; => []
+
+  ## See Also
+  - `entries` — zip keys and values from a map
+  "
+  [a b]
+  (native "zip" a b))
+
+(defn take
+  "Return the first `n` elements of `vec`.
+
+  If `n` ≥ `(count vec)`, returns the whole vector.
+
+  ## Examples
+
+      (take 3 [1 2 3 4 5])   ; => [1 2 3]
+      (take 10 [1 2])        ; => [1 2]
+      (take 0 [1 2])         ; => []
+
+  ## See Also
+  - `drop` — remove the first n elements
+  - `slice` — arbitrary range
+  "
+  [n vec]
+  (native "take" n vec))
+
+(defn drop
+  "Return `vec` with the first `n` elements removed.
+
+  If `n` ≥ `(count vec)`, returns an empty vector.
+
+  ## Examples
+
+      (drop 2 [1 2 3 4])   ; => [3 4]
+      (drop 10 [1 2])      ; => []
+      (drop 0 [1 2])       ; => [1 2]
+
+  ## See Also
+  - `take` — keep only the first n elements
+  - `rest` — remove exactly one element
+  "
+  [n vec]
+  (native "drop" n vec))
+
+(defn take-while
+  "Return the longest prefix of `vec` for which `pred` returns `true`.
+
+  Stops at the first element where `pred` returns `false`.
+
+  ## Examples
+
+      (take-while (fn [x] (< x 4)) [1 2 3 4 5])   ; => [1 2 3]
+      (take-while even? [2 4 1 6])                  ; => [2 4]
+      (take-while (fn [_] false) [1 2])             ; => []
+
+  ## See Also
+  - `drop-while` — the complementary suffix
+  - `filter` — keeps all matching elements (not just prefix)
+  "
+  [pred vec]
+  (native "take-while" pred vec))
+
+(defn drop-while
+  "Return `vec` with the leading elements satisfying `pred` removed.
+
+  Drops elements while `pred` returns `true`, then returns the rest
+  (including the first element that returned `false` and all subsequent).
+
+  ## Examples
+
+      (drop-while (fn [x] (< x 3)) [1 2 3 4 5])   ; => [3 4 5]
+      (drop-while even? [2 4 1 6])                  ; => [1 6]
+      (drop-while (fn [_] true) [1 2])              ; => []
+
+  ## See Also
+  - `take-while` — the complementary prefix
+  "
+  [pred vec]
+  (native "drop-while" pred vec))
+
+;; ── Bitwise ───────────────────────────────────────────────────────────────────
+
+(defn bit-and
+  "Return the bitwise AND of two integers.
+
+  ## Examples
+
+      (bit-and 0b1100 0b1010)   ; => 8   (0b1000)
+      (bit-and 0xFF 0x0F)       ; => 15  (0x0F)
+  "
+  [a b]
+  (native "bit-and" a b))
+
+(defn bit-or
+  "Return the bitwise OR of two integers.
+
+  ## Examples
+
+      (bit-or 0b1100 0b0011)   ; => 15  (0b1111)
+  "
+  [a b]
+  (native "bit-or" a b))
+
+(defn bit-xor
+  "Return the bitwise XOR of two integers.
+
+  ## Examples
+
+      (bit-xor 0b1100 0b1010)   ; => 6  (0b0110)
+      (bit-xor 42 42)           ; => 0
+  "
+  [a b]
+  (native "bit-xor" a b))
+
+(defn bit-not
+  "Return the bitwise complement (NOT) of an integer.
+
+  ## Examples
+
+      (bit-not 0)   ; => -1
+      (bit-not -1)  ; => 0
+  "
+  [x]
+  (native "bit-not" x))
+
+(defn bit-shift-left
+  "Shift `x` left by `n` bits.
+
+  ## Examples
+
+      (bit-shift-left 1 4)    ; => 16
+      (bit-shift-left 3 2)    ; => 12
+  "
+  [x n]
+  (native "bit-shift-left" x n))
+
+(defn bit-shift-right
+  "Arithmetic right-shift `x` by `n` bits (sign-preserving).
+
+  ## Examples
+
+      (bit-shift-right 16 4)   ; => 1
+      (bit-shift-right -8 1)   ; => -4  (sign bit preserved)
+  "
+  [x n]
+  (native "bit-shift-right" x n))
+
+;; ── Option / Result ───────────────────────────────────────────────────────────
+
+(defn Some
+  "Wrap `val` in a `Some` variant of `Option`.
+
+  Use in pattern matching to construct an `Option` value. `None` is a
+  bare symbol (no constructor call needed).
+
+  ## Examples
+
+      (Some 42)           ; => (Some 42)
+      (Some \"hello\")    ; => (Some \"hello\")
+
+      (match (get vec idx)
+        (Some v) (process v)
+        None     (use-default))
+  "
+  [val]
+  (native "Some" val))
+
+(defn Ok
+  "Wrap `val` in an `Ok` variant of `Result`, indicating success.
+
+  ## Examples
+
+      (Ok 42)           ; => (Ok 42)
+      (Ok {:id 1})      ; => (Ok {:id 1})
+
+      (match (db/execute db sql params)
+        (Ok rows-affected) (io/println (str \"Rows: \" rows-affected))
+        (Err e)            (panic e))
+  "
+  [val]
+  (native "Ok" val))
+
+(defn Err
+  "Wrap `val` in an `Err` variant of `Result`, indicating failure.
+
+  ## Examples
+
+      (Err \"not found\")     ; => (Err \"not found\")
+      (Err {:code 404})      ; => (Err {:code 404})
+
+      (if valid?
+        (Ok result)
+        (Err \"validation failed\"))
+  "
+  [val]
+  (native "Err" val))

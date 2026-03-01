@@ -1,0 +1,77 @@
+;; stdlib/net — Low-level TCP and HTTP client (eval mode).
+;;
+;; This file is the source of truth for `net` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/net.rs.
+;;
+;; `net` provides simple raw network calls for use in eval mode.
+;; For a higher-level API see the `http` module.
+
+(defn get
+  "Perform an HTTP GET request and return the response body as a string.
+
+  Opens a raw TCP connection, sends an HTTP/1.0 GET request, and
+  returns the body. Does not follow redirects. For status codes and
+  headers use the `http` module instead.
+
+  ## Parameters
+  - `url` — the URL as a `Str`.
+
+  ## Returns
+  `(Result Str Str)` — `Ok(body)` or `Err(message)`.
+
+  ## Examples
+
+      (def body (net/get \"http://example.com\")?)
+      (io/println (str \"Got \" (count body) \" bytes\"))
+
+  ## See Also
+  - `http/get` — higher-level API with status/headers
+  "
+  [url]
+  (native "net/get" url))
+
+(defn post
+  "Perform an HTTP POST request and return the response body as a string.
+
+  ## Parameters
+  - `url` — the URL as a `Str`.
+  - `body` — the request body as a `Str`.
+
+  ## Returns
+  `(Result Str Str)` — `Ok(body)` or `Err(message)`.
+
+  ## Examples
+
+      (def resp (net/post url (json/encode payload))?)
+
+  ## See Also
+  - `http/post` — higher-level API with status/headers
+  "
+  [url body]
+  (native "net/post" url body))
+
+(defn serve
+  "Start an HTTP server. *Stub — requires WASM Component Model.*
+
+  ## Parameters
+  - `port` — TCP port as `Int`.
+  - `handler` — request handler function.
+
+  ## See Also
+  - `http/serve` — equivalent in the http module
+  "
+  [port handler]
+  (native "net/serve" port handler))
+
+(defn tcp-connect
+  "Connect to a TCP endpoint. *Stub — requires WASM Component Model.*
+
+  ## Parameters
+  - `host` — hostname as `Str`.
+  - `port` — port as `Int`.
+
+  ## Returns
+  `(Result Any Str)`
+  "
+  [host port]
+  (native "net/tcp-connect" host port))

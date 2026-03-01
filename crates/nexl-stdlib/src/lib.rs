@@ -28,6 +28,37 @@ pub type StdlibEntry = (
     fn(&[nexl_runtime::Value]) -> Result<nexl_runtime::Value, String>,
 );
 
+/// Return embedded Nexl declaration source files for each stdlib module.
+///
+/// Each entry is `(module_name, nexl_source_code)`. The `"builtins"` entry
+/// covers built-in operators and collection functions (unqualified names).
+/// All other entries map to `"module_name/fn_name"` qualified keys.
+///
+/// These files are the single source of truth for stdlib documentation.
+/// The LSP parses them with `nexl_reader` to build its hover-doc map.
+pub fn nexl_declaration_sources() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("builtins", include_str!("../nexl/builtins.nx")),
+        ("core",     include_str!("../nexl/core.nx")),
+        ("str",      include_str!("../nexl/str.nx")),
+        ("math",     include_str!("../nexl/math.nx")),
+        ("conv",     include_str!("../nexl/conv.nx")),
+        ("io",       include_str!("../nexl/io.nx")),
+        ("json",     include_str!("../nexl/json.nx")),
+        ("http",     include_str!("../nexl/http.nx")),
+        ("db",       include_str!("../nexl/db.nx")),
+        ("env",      include_str!("../nexl/env.nx")),
+        ("time",     include_str!("../nexl/time.nx")),
+        ("random",   include_str!("../nexl/random.nx")),
+        ("crypto",   include_str!("../nexl/crypto.nx")),
+        ("log",      include_str!("../nexl/log.nx")),
+        ("test",     include_str!("../nexl/test.nx")),
+        ("net",      include_str!("../nexl/net.nx")),
+        ("async",    include_str!("../nexl/async.nx")),
+        ("sys",      include_str!("../nexl/sys.nx")),
+    ]
+}
+
 /// Return all stdlib module registrations as `(module_name, entries)` pairs.
 ///
 /// The module names here correspond to the Nexl qualified names used in

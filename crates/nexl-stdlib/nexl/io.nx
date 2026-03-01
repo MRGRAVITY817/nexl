@@ -1,0 +1,256 @@
+;; stdlib/io — Console I/O and file-system operations.
+;;
+;; This file is the source of truth for `io` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/io.rs.
+;; Bodies here are stubs; the live implementations are native.
+
+(defn println
+  "Print a value to stdout followed by a newline.
+
+  Converts any Nexl value to its string representation using the same
+  rules as `str`. Safe to call with any type — numbers, booleans,
+  vectors, maps, and `Unit` are all accepted.
+
+  ## Parameters
+  - `s` — value to print. Any type.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (io/println \"Hello, world!\")        ; Hello, world!
+      (io/println 42)                       ; 42
+      (io/println [1 2 3])                  ; [1 2 3]
+      (io/println {:name \"Alice\" :age 30}) ; {:name Alice :age 30}
+      (io/println true)                     ; true
+
+  ## See Also
+  - `io/print` — same but without the trailing newline
+  - `io/read-line` — read a line from stdin
+  - `str` — explicit value-to-string conversion
+  "
+  [s]
+  (native "io/println" s))
+
+(defn print
+  "Print a value to stdout without a trailing newline.
+
+  Identical to `io/println` except no `\\n` is appended. Useful when
+  building output incrementally or prompting for input on the same line.
+
+  ## Parameters
+  - `s` — value to print. Any type.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (io/print \"Enter your name: \")
+      (def name (io/read-line))
+
+      (do
+        (io/print \"Loading\")
+        (io/print \".\")
+        (io/print \".\")
+        (io/println \"done\"))          ; Loading...done
+
+  ## See Also
+  - `io/println` — print with trailing newline
+  "
+  [s]
+  (native "io/print" s))
+
+(defn read-line
+  "Read one line of text from stdin, stripping the trailing newline.
+
+  Blocks until the user presses Enter. Returns `(Ok Str)` on success
+  or `(Err Str)` if stdin is closed (EOF) or an I/O error occurs.
+
+  ## Returns
+  `(Result Str Str)`
+
+  ## Examples
+
+      (def line (io/read-line)?)          ; propagate error with ?
+      (io/println (str \"You typed: \" line))
+
+      (match (io/read-line)
+        (Ok text) (io/println (str \"Got: \" text))
+        (Err e)   (io/println (str \"EOF or error: \" e)))
+
+  ## See Also
+  - `io/print` — display a prompt before calling read-line
+  - `io/read-file` — read an entire file at once
+  "
+  []
+  (native "io/read-line"))
+
+(defn read-file
+  "Read the entire contents of a file as a UTF-8 string.
+
+  Returns `(Ok Str)` containing the file contents, or `(Err Str)` with
+  an OS error message if the file does not exist, cannot be opened, or
+  contains invalid UTF-8.
+
+  ## Parameters
+  - `path` — file path as a `Str`.
+
+  ## Returns
+  `(Result Str Str)`
+
+  ## Examples
+
+      (def src (io/read-file \"config.json\")?)
+      (def cfg (json/decode src)?)
+
+      (match (io/read-file \"/etc/hosts\")
+        (Ok content) (io/println (str \"Lines: \" (count (str/split content \"\\n\"))))
+        (Err e)      (io/println (str \"Error: \" e)))
+
+  ## See Also
+  - `io/write-file` — write text to a file
+  - `io/file-exists?` — check before reading
+  "
+  [path]
+  (native "io/read-file" path))
+
+(defn write-file
+  "Write a string to a file, creating or replacing it.
+
+  Creates the file if it does not exist. Replaces the entire content
+  if it does. Returns `(Ok Unit)` on success, `(Err Str)` on failure.
+
+  ## Parameters
+  - `path` — destination file path as a `Str`.
+  - `content` — text to write as a `Str`.
+
+  ## Returns
+  `(Result Unit Str)`
+
+  ## Examples
+
+      (io/write-file \"output.txt\" \"Hello, world!\")?
+
+      (def report (str/format \"Score: {}\" [score]))
+      (match (io/write-file \"report.txt\" report)
+        (Ok _)  (io/println \"Report saved.\")
+        (Err e) (io/println (str \"Write failed: \" e)))
+
+  ## See Also
+  - `io/read-file` — read a file back
+  - `io/path-join` — build the path first
+  "
+  [path content]
+  (native "io/write-file" path content))
+
+(defn path-join
+  "Join path components with the OS path separator.
+
+  Accepts any number of string segments and joins them with `/` (Unix)
+  or `\\` (Windows). Trailing separators on intermediate segments are
+  handled correctly. Does not resolve or normalise the path.
+
+  ## Parameters
+  - `parts...` — one or more path segments as `Str`.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (io/path-join \"src\" \"main.nx\")           ; => \"src/main.nx\"
+      (io/path-join \"/home\" \"alice\" \"docs\")   ; => \"/home/alice/docs\"
+      (io/path-join base-dir \"config.json\")     ; dynamic prefix
+
+  ## See Also
+  - `io/read-file` — use the joined path to read
+  - `io/file-exists?` — check existence before reading
+  "
+  [& parts]
+  (native "io/path-join" parts))
+
+(defn file-exists?
+  "Return `true` if a file or directory exists at `path`.
+
+  Does not distinguish between files and directories. Does not follow
+  symlinks on all platforms; treat the result as advisory.
+
+  ## Parameters
+  - `path` — path to test as a `Str`.
+
+  ## Returns
+  `Bool`
+
+  ## Examples
+
+      (when (io/file-exists? \".env\")
+        (env/load-dotenv \".env\"))
+
+      (if (io/file-exists? output-path)
+        (io/println \"Output already exists — skipping.\")
+        (generate! output-path))
+
+  ## See Also
+  - `io/read-file` — read a file (returns Err if missing)
+  - `io/read-dir` — list directory contents
+  "
+  [path]
+  (native "io/file-exists?" path))
+
+(defn read-dir
+  "Return the names of all entries inside a directory.
+
+  Returns `(Ok (Vec Str))` with bare entry names (not full paths) in
+  no guaranteed order, or `(Err Str)` if the path is not a directory
+  or cannot be read.
+
+  ## Parameters
+  - `path` — directory path as a `Str`.
+
+  ## Returns
+  `(Result (Vec Str) Str)`
+
+  ## Examples
+
+      (def entries (io/read-dir \"src\")?)
+      (def nx-files (filter (fn [f] (str/ends-with? f \".nx\")) entries))
+
+      (match (io/read-dir \".\")
+        (Ok names) (each [name names] (io/println name))
+        (Err e)    (io/println (str \"Error: \" e)))
+
+  ## See Also
+  - `io/file-exists?` — test a single path
+  - `io/path-join` — build full paths from entries
+  "
+  [path]
+  (native "io/read-dir" path))
+
+(defn delete-file
+  "Delete a file at `path`.
+
+  Returns `(Ok Unit)` on success, `(Err Str)` if the file does not
+  exist or the operation is denied. Does not delete directories.
+
+  ## Parameters
+  - `path` — path of the file to delete as a `Str`.
+
+  ## Returns
+  `(Result Unit Str)`
+
+  ## Examples
+
+      (io/delete-file \"temp.txt\")?
+
+      (match (io/delete-file cache-path)
+        (Ok _)  (io/println \"Cache cleared.\")
+        (Err e) (io/println (str \"Could not delete: \" e)))
+
+  ## See Also
+  - `io/file-exists?` — check first if needed
+  - `io/write-file` — recreate after deletion
+  "
+  [path]
+  (native "io/delete-file" path))

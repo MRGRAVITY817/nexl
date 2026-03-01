@@ -1,0 +1,128 @@
+;; stdlib/json — JSON encoding and decoding.
+;;
+;; This file is the source of truth for `json` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/json.rs.
+
+(defn encode
+  "Serialise a Nexl value to a compact JSON string.
+
+  Converts Nexl values to their JSON equivalents:
+  - `Int` / `Float` → JSON number
+  - `Bool` → `true` / `false`
+  - `Str` → JSON string (with proper escaping for `\"`, `\\`, and control chars)
+  - `Vec` → JSON array `[...]`
+  - `Map` → JSON object `{...}` (keys are stringified)
+  - `Unit` → `null`
+  - `None` → `null`
+  - `(Some x)` → serialises `x` directly
+  - `(Ok x)` / `(Err x)` → `{\"ok\": x}` / `{\"err\": x}`
+
+  For human-readable output see `json/pretty`.
+
+  ## Parameters
+  - `val` — any Nexl value to serialise.
+
+  ## Returns
+  `Str` — compact single-line JSON.
+
+  ## Examples
+
+      (json/encode 42)                  ; => \"42\"
+      (json/encode \"hello\")           ; => \"\\\"hello\\\"\"
+      (json/encode [1 2 3])            ; => \"[1,2,3]\"
+      (json/encode {:name \"Alice\" :age 30})
+      ; => \"{\\\"name\\\":\\\"Alice\\\",\\\"age\\\":30}\"
+      (json/encode true)               ; => \"true\"
+      (json/encode unit)               ; => \"null\"
+
+  ## See Also
+  - `json/pretty` — indented, human-readable output
+  - `json/decode` — parse JSON back to a Nexl value
+  "
+  [val]
+  (native "json/encode" val))
+
+(defn decode
+  "Parse a JSON string into a Nexl value.
+
+  Converts JSON types to Nexl equivalents:
+  - JSON number (integer) → `Int`
+  - JSON number (fractional) → `Float`
+  - JSON string → `Str`
+  - `true` / `false` → `Bool`
+  - JSON array → `Vec`
+  - JSON object → `Map` (keys become `Str`)
+  - `null` → `Unit`
+
+  Returns `(Err Str)` if the input is not valid JSON.
+
+  ## Parameters
+  - `s` — JSON text as a `Str`.
+
+  ## Returns
+  `(Result Any Str)`
+
+  ## Examples
+
+      (def val (json/decode \"{\\\"x\\\":1,\\\"y\\\":2}\")?)
+      (get val \"x\")                    ; => (Some 1)
+
+      (match (json/decode input)
+        (Ok v)  (process v)
+        (Err e) (io/println (str \"Bad JSON: \" e)))
+
+      ;; Round-trip
+      (def original {:items [1 2 3] :done false})
+      (def roundtrip (json/decode (json/encode original))?)
+
+  ## See Also
+  - `json/encode` — serialise to JSON
+  - `json/pretty` — human-readable JSON output
+  "
+  [s]
+  (native "json/decode" s))
+
+(defn pretty
+  "Serialise a Nexl value to indented, human-readable JSON.
+
+  Produces the same output as `json/encode` but formats arrays and
+  objects with 2-space indentation across multiple lines. Useful for
+  debugging, log output, and writing configuration files.
+
+  ## Parameters
+  - `val` — any Nexl value to serialise.
+
+  ## Returns
+  `Str` — multi-line indented JSON.
+
+  ## Examples
+
+      (io/println (json/pretty {:name \"Alice\" :scores [95 87 100]}))
+      ;; {
+      ;;   \"name\": \"Alice\",
+      ;;   \"scores\": [
+      ;;     95,
+      ;;     87,
+      ;;     100
+      ;;   ]
+      ;; }
+
+      (io/write-file \"out.json\" (json/pretty result))?
+
+  ## See Also
+  - `json/encode` — compact single-line output
+  - `json/decode` — parse JSON
+  "
+  [val]
+  (native "json/pretty" val))
+
+;; Aliases kept for compatibility.
+(defn stringify
+  "Alias for `json/encode`. Prefer `json/encode` in new code."
+  [val]
+  (native "json/encode" val))
+
+(defn parse
+  "Alias for `json/decode`. Prefer `json/decode` in new code."
+  [s]
+  (native "json/decode" s))

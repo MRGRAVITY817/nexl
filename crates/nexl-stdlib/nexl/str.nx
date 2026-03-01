@@ -1,0 +1,420 @@
+;; stdlib/str — String manipulation functions.
+;;
+;; This file is the source of truth for `str` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/str.rs.
+
+(defn split
+  "Split a string into a vector of substrings by a separator.
+
+  Every occurrence of `sep` is used as a split point. If `sep` is not
+  found in `s`, a one-element vector containing the whole string is
+  returned. Empty strings are included in the result when `sep` appears
+  at the start, end, or consecutively.
+
+  ## Parameters
+  - `s` — the string to split.
+  - `sep` — the separator string (not a regex).
+
+  ## Returns
+  `(Vec Str)`
+
+  ## Examples
+
+      (str/split \"a,b,c\" \",\")        ; => [\"a\" \"b\" \"c\"]
+      (str/split \"hello\" \"l\")        ; => [\"he\" \"\" \"o\"]
+      (str/split \"abc\" \"x\")          ; => [\"abc\"]
+      (str/split \"\" \",\")             ; => [\"\"]
+
+      ;; Split CSV line
+      (def cols (str/split line \",\"))
+
+  ## See Also
+  - `str/join` — inverse operation
+  - `str/contains?` — test before splitting
+  "
+  [s sep]
+  (native "str/split" s sep))
+
+(defn join
+  "Join a vector of strings into one, inserting a separator between each.
+
+  If the vector is empty, returns an empty string. If it has one element,
+  returns that element unchanged. The separator is only inserted *between*
+  elements — never at the start or end.
+
+  ## Parameters
+  - `parts` — `(Vec Str)` to join.
+  - `sep` — separator string inserted between elements.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (str/join [\"a\" \"b\" \"c\"] \",\")    ; => \"a,b,c\"
+      (str/join [\"one\"] \" | \")           ; => \"one\"
+      (str/join [] \"-\")                  ; => \"\"
+      (str/join words \" \")              ; reassemble sentence
+
+  ## See Also
+  - `str/split` — inverse operation
+  - `str/format` — placeholder-based formatting
+  "
+  [parts sep]
+  (native "str/join" parts sep))
+
+(defn trim
+  "Remove leading and trailing whitespace from a string.
+
+  'Whitespace' includes spaces, tabs (`\\t`), newlines (`\\n`), and
+  carriage returns (`\\r`). Characters inside the string are unaffected.
+
+  ## Parameters
+  - `s` — the string to trim.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (str/trim \"  hello  \")    ; => \"hello\"
+      (str/trim \"\\t\\nfoo\\n\") ; => \"foo\"
+      (str/trim \"no-change\")    ; => \"no-change\"
+      (str/trim \"\")             ; => \"\"
+
+  ## See Also
+  - `str/trim-start` — trim only the left side
+  - `str/trim-end` — trim only the right side
+  - `str/blank?` — test if only whitespace
+  "
+  [s]
+  (native "str/trim" s))
+
+(defn trim-start
+  "Remove leading (left-side) whitespace from a string.
+
+  ## Parameters
+  - `s` — the string to trim.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (str/trim-start \"  hello  \")  ; => \"hello  \"
+      (str/trim-start \"\\nfoo\")     ; => \"foo\"
+
+  ## See Also
+  - `str/trim` — trim both sides
+  - `str/trim-end` — trim trailing whitespace
+  "
+  [s]
+  (native "str/trim-start" s))
+
+(defn trim-end
+  "Remove trailing (right-side) whitespace from a string.
+
+  ## Parameters
+  - `s` — the string to trim.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (str/trim-end \"  hello  \")  ; => \"  hello\"
+      (str/trim-end \"foo\\n\")     ; => \"foo\"
+
+  ## See Also
+  - `str/trim` — trim both sides
+  - `str/trim-start` — trim leading whitespace
+  "
+  [s]
+  (native "str/trim-end" s))
+
+(defn upper
+  "Convert all characters in a string to uppercase.
+
+  Uses Unicode simple case mapping. Characters without an uppercase
+  form (digits, punctuation, etc.) are unchanged.
+
+  ## Parameters
+  - `s` — the string to convert.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (str/upper \"hello\")       ; => \"HELLO\"
+      (str/upper \"Hello World\") ; => \"HELLO WORLD\"
+      (str/upper \"café\")        ; => \"CAFÉ\"
+      (str/upper \"abc123\")      ; => \"ABC123\"
+
+  ## See Also
+  - `str/lower` — convert to lowercase
+  "
+  [s]
+  (native "str/upper" s))
+
+(defn lower
+  "Convert all characters in a string to lowercase.
+
+  Uses Unicode simple case mapping. Characters without a lowercase
+  form are unchanged.
+
+  ## Parameters
+  - `s` — the string to convert.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (str/lower \"HELLO\")       ; => \"hello\"
+      (str/lower \"Hello World\") ; => \"hello world\"
+      (str/lower \"CAFÉ\")        ; => \"café\"
+
+  ## See Also
+  - `str/upper` — convert to uppercase
+  "
+  [s]
+  (native "str/lower" s))
+
+(defn starts-with?
+  "Return `true` if `s` begins with `prefix`.
+
+  ## Parameters
+  - `s` — the string to test.
+  - `prefix` — the expected prefix.
+
+  ## Returns
+  `Bool`
+
+  ## Examples
+
+      (str/starts-with? \"hello\" \"he\")   ; => true
+      (str/starts-with? \"hello\" \"lo\")   ; => false
+      (str/starts-with? \"abc\" \"\")       ; => true  (empty prefix always matches)
+      (str/starts-with? \"\" \"x\")         ; => false
+
+  ## See Also
+  - `str/ends-with?` — test suffix
+  - `str/contains?` — test any substring
+  "
+  [s prefix]
+  (native "str/starts-with?" s prefix))
+
+(defn ends-with?
+  "Return `true` if `s` ends with `suffix`.
+
+  ## Parameters
+  - `s` — the string to test.
+  - `suffix` — the expected suffix.
+
+  ## Returns
+  `Bool`
+
+  ## Examples
+
+      (str/ends-with? \"hello.nx\" \".nx\")   ; => true
+      (str/ends-with? \"hello\" \"lo\")       ; => true
+      (str/ends-with? \"hello\" \"he\")       ; => false
+      (str/ends-with? \"abc\" \"\")           ; => true
+
+  ## See Also
+  - `str/starts-with?` — test prefix
+  - `str/contains?` — test any substring
+  "
+  [s suffix]
+  (native "str/ends-with?" s suffix))
+
+(defn contains?
+  "Return `true` if `s` contains the substring `sub`.
+
+  ## Parameters
+  - `s` — the string to search in.
+  - `sub` — the substring to look for.
+
+  ## Returns
+  `Bool`
+
+  ## Examples
+
+      (str/contains? \"hello world\" \"world\")  ; => true
+      (str/contains? \"abc\" \"d\")              ; => false
+      (str/contains? \"abc\" \"\")              ; => true
+
+  ## See Also
+  - `str/index-of` — find the position, not just existence
+  - `str/starts-with?` / `str/ends-with?` — anchored tests
+  "
+  [s sub]
+  (native "str/contains?" s sub))
+
+(defn replace
+  "Replace all occurrences of `from` with `to` in `s`.
+
+  Not regex-based — `from` is treated as a literal string. Replacements
+  are applied left-to-right and the result is not re-scanned, so chaining
+  replacements does not produce exponential blowup.
+
+  ## Parameters
+  - `s` — the source string.
+  - `from` — substring to find and replace.
+  - `to` — replacement string.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (str/replace \"hello world\" \"world\" \"Nexl\")  ; => \"hello Nexl\"
+      (str/replace \"aabbcc\" \"b\" \"X\")             ; => \"aaXXcc\"
+      (str/replace \"abc\" \"d\" \"e\")                ; => \"abc\"  (no match)
+      (str/replace \"   \" \" \" \"-\")               ; => \"---\"
+
+  ## See Also
+  - `str/index-of` — find position before replacing
+  - `str/contains?` — test before replacing
+  "
+  [s from to]
+  (native "str/replace" s from to))
+
+(defn index-of
+  "Return the byte index of the first occurrence of `sub` in `s`.
+
+  Returns `(Some Int)` with the 0-based byte offset of the start of the
+  first match, or `None` if `sub` is not found. Byte-oriented — not
+  character-oriented. Take care with multi-byte Unicode.
+
+  ## Parameters
+  - `s` — the string to search in.
+  - `sub` — the substring to find.
+
+  ## Returns
+  `(Option Int)`
+
+  ## Examples
+
+      (str/index-of \"hello\" \"ll\")    ; => (Some 2)
+      (str/index-of \"hello\" \"z\")     ; => None
+      (str/index-of \"abcabc\" \"bc\")   ; => (Some 1)  (first occurrence)
+
+      (match (str/index-of haystack needle)
+        (Some i) (io/println (str \"Found at \" i))
+        None     (io/println \"Not found\"))
+
+  ## See Also
+  - `str/contains?` — existence check only
+  - `str/replace` — substitute the match
+  "
+  [s sub]
+  (native "str/index-of" s sub))
+
+(defn blank?
+  "Return `true` if `s` is empty or contains only whitespace characters.
+
+  ## Parameters
+  - `s` — the string to test.
+
+  ## Returns
+  `Bool`
+
+  ## Examples
+
+      (str/blank? \"\")        ; => true
+      (str/blank? \"  \\t \")  ; => true
+      (str/blank? \" x \")    ; => false
+
+  ## See Also
+  - `str/trim` — strip whitespace before testing
+  "
+  [s]
+  (native "str/blank?" s))
+
+(defn chars
+  "Return a vector of the Unicode scalar values (characters) in `s`.
+
+  Each element is a `Char`. For strings containing multi-byte UTF-8
+  sequences the result length may be smaller than `(count s)` (which
+  counts bytes). For grapheme-cluster–aware splitting, use
+  `str/graphemes` instead.
+
+  ## Parameters
+  - `s` — the string to decompose.
+
+  ## Returns
+  `(Vec Char)`
+
+  ## Examples
+
+      (str/chars \"abc\")     ; => [\\a \\b \\c]
+      (str/chars \"hi!\")     ; => [\\h \\i \\!]
+      (count (str/chars \"café\"))  ; => 4  (4 code points)
+
+  ## See Also
+  - `str/graphemes` — user-visible character clusters
+  - `count` — byte length of a string
+  "
+  [s]
+  (native "str/chars" s))
+
+(defn graphemes
+  "Return a vector of user-visible grapheme clusters in `s`.
+
+  Each element is a `Str` (possibly multi-code-point). Useful for
+  correctly splitting text that contains combining characters, emoji
+  sequences, or regional indicator pairs.
+
+  ## Parameters
+  - `s` — the string to decompose.
+
+  ## Returns
+  `(Vec Str)`
+
+  ## Examples
+
+      (str/graphemes \"café\")          ; => [\"c\" \"a\" \"f\" \"é\"]
+      (count (str/graphemes \"👨‍👩‍👧\")) ; => 1  (family emoji = 1 cluster)
+
+  ## See Also
+  - `str/chars` — Unicode scalar values instead
+  "
+  [s]
+  (native "str/graphemes" s))
+
+(defn format
+  "Format a string by replacing `{}` placeholders with values.
+
+  Each `{}` in `template` is replaced in order by the corresponding
+  element of `args`, converted to string via `str`. Fewer args than
+  placeholders leaves trailing `{}` unchanged. Extra args are ignored.
+
+  ## Parameters
+  - `template` — string containing `{}` placeholders.
+  - `args` — `(Vec Any)` of values to substitute.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (str/format \"Hello, {}!\" [\"Alice\"])
+      ; => \"Hello, Alice!\"
+
+      (str/format \"{} + {} = {}\" [1 2 3])
+      ; => \"1 + 2 = 3\"
+
+      (str/format \"Score: {}/{}\" [score max-score])
+      ; => \"Score: 42/100\"
+
+      (str/format \"No placeholders\" [])
+      ; => \"No placeholders\"
+
+  ## See Also
+  - `str` — simple concatenation via `str`
+  - `str/join` — join a collection with a separator
+  "
+  [template args]
+  (native "str/format" template args))

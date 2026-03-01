@@ -1,0 +1,222 @@
+;; stdlib/test — Unit testing primitives.
+;;
+;; This file is the source of truth for `test` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/test.rs.
+;;
+;; Typical usage pattern:
+;;
+;;   (test/register! "my test" (fn [] (assert! (= 1 1) "1 = 1")))
+;;   (test/run-registered)
+;;
+;; Use `nexl test file.nx` to run a test file and get a pass/fail report.
+
+(defn register!
+  "Register a named test in the thread-local test registry.
+
+  The test is not executed immediately. Call `test/run-registered` (or
+  run the file with `nexl test`) to execute all registered tests.
+
+  ## Parameters
+  - `name` — test name shown in the output as `Str`.
+  - `thunk` — zero-argument function `(Fn [] Any)` containing assertions.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (test/register! \"addition is commutative\"
+        (fn []
+          (assert! (= (+ 1 2) (+ 2 1)) \"1+2 = 2+1\")))
+
+      (test/register! \"str/split round-trips\"
+        (fn []
+          (let [original \"a,b,c\"
+                parts    (str/split original \",\")
+                rejoined (str/join parts \",\")]
+            (assert! (= original rejoined) \"round-trip failed\"))))
+
+  ## See Also
+  - `test/run-registered` — execute all registered tests
+  - `test/clear-registry!` — discard registered tests without running
+  "
+  [name thunk]
+  (native "test/register!" name thunk))
+
+(defn run-registered
+  "Run all tests registered via `test/register!` and print a report.
+
+  Tests are run in registration order. Each test's thunk is called in
+  isolation. A test passes if the thunk returns without error. A test
+  fails if an assertion fails or the thunk panics.
+
+  Prints one line per test: `PASS name` or `FAIL name: message`.
+  Returns `Unit`.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (test/register! \"sanity\" (fn [] (assert! true \"always passes\")))
+      (test/run-registered)
+      ;; PASS sanity
+
+      ;; Full test file pattern:
+      (test/register! \"test-a\" (fn [] ...))
+      (test/register! \"test-b\" (fn [] ...))
+      (test/run-registered)
+
+  ## See Also
+  - `test/register!` — register tests before running
+  - `test/clear-registry!` — reset after running
+  "
+  []
+  (native "test/run-registered"))
+
+(defn clear-registry!
+  "Discard all tests in the thread-local registry without running them.
+
+  Useful between test suites run in the same process, or after using
+  `test/run-registered` when you want a clean slate.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (test/run-registered)
+      (test/clear-registry!)
+      ;; Registry is now empty
+  "
+  []
+  (native "test/clear-registry!"))
+
+(defn is
+  "Assert that `condition` is `true`, failing the test with `msg` if not.
+
+  Equivalent to `assert!` but namespaced under `test/`. Prefer `assert!`
+  inside registered test thunks.
+
+  ## Parameters
+  - `condition` — `Bool` value to test.
+  - `msg` — failure message shown if the assertion fails.
+
+  ## Returns
+  `Unit` on success; raises a test failure on false.
+
+  ## Examples
+
+      (test/is (= result expected) \"result should equal expected\")
+      (test/is (> count 0) \"collection should be non-empty\")
+  "
+  [condition msg]
+  (native "test/is" condition msg))
+
+(defn assert-eq
+  "Assert that `a` and `b` are structurally equal.
+
+  On failure, the message includes both values for easy debugging.
+
+  ## Parameters
+  - `a` — first value.
+  - `b` — second value to compare against.
+
+  ## Returns
+  `Unit` on success; raises a test failure if `a ≠ b`.
+
+  ## Examples
+
+      (test/assert-eq (+ 1 2) 3)
+      (test/assert-eq (str/upper \"hello\") \"HELLO\")
+      (test/assert-eq (filter odd? [1 2 3]) [1 3])
+  "
+  [a b]
+  (native "test/assert-eq" a b))
+
+(defn fail
+  "Immediately fail the current test with a message.
+
+  Use when you need to fail a test unconditionally — for example, when
+  a code path that should never be reached is reached.
+
+  ## Parameters
+  - `msg` — failure message as `Str`.
+
+  ## Returns
+  Never (raises a test failure).
+
+  ## Examples
+
+      (match result
+        (Ok _)  unit
+        (Err e) (test/fail (str \"Unexpected error: \" e)))
+
+      (when (> count max)
+        (test/fail (str/format \"count {} exceeds max {}\" [count max])))
+  "
+  [msg]
+  (native "test/fail" msg))
+
+(defn skip
+  "Mark the current test as skipped with an explanatory message.
+
+  ## Parameters
+  - `msg` — skip reason as `Str`.
+
+  ## Returns
+  A `Skip` ADT value (printed in the test report as `SKIP`).
+
+  ## Examples
+
+      (test/register! \"network test\"
+        (fn []
+          (when (= (env/get \"CI\") (Some \"true\"))
+            (test/skip \"skipped in CI\"))))
+  "
+  [msg]
+  (native "test/skip" msg))
+
+(defn check
+  "Run a property-based test by calling `pred` on each value in `samples`.
+
+  Returns `(Ok Unit)` if all calls return `true`, or `(Err Str)` with
+  the first failing value.
+
+  ## Parameters
+  - `pred` — `(Fn [Any] Bool)` property to test.
+  - `samples` — `(Vec Any)` of sample inputs.
+
+  ## Returns
+  `(Result Unit Str)`
+
+  ## Examples
+
+      (test/check (fn [x] (= (+ x 0) x)) (range 100))
+      ; => (Ok Unit)  — additive identity holds for 0..99
+
+      (test/check (fn [s] (= s (str/trim (str s)))) [\"a\" \" b\" \"c \"])
+  "
+  [pred samples]
+  (native "test/check" pred samples))
+
+(defn run-tests
+  "Run a list of `[name thunk]` pairs and print a report.
+
+  An alternative to `test/register!` + `test/run-registered` when you
+  want to define tests inline without the global registry.
+
+  ## Parameters
+  - `tests` — `(Vec [Str (Fn [] Any)])` — name–thunk pairs.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (test/run-tests
+        [[\"addition\"   (fn [] (assert! (= (+ 1 2) 3) \"1+2=3\"))]
+         [\"subtraction\" (fn [] (assert! (= (- 5 3) 2) \"5-3=2\"))]])
+  "
+  [tests]
+  (native "test/run-tests" tests))

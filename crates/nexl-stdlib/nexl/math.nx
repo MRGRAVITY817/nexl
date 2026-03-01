@@ -1,0 +1,452 @@
+;; stdlib/math — Mathematical functions and constants.
+;;
+;; This file is the source of truth for `math` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/math.rs.
+;;
+;; All trigonometric functions use radians. All functions that return
+;; a floating-point result are annotated with `-> Float`.
+
+(defn abs
+  "Return the absolute value of a number.
+
+  Works for both `Int` and `Float`. Returns the same type as the input.
+
+  ## Parameters
+  - `x` — the number.
+
+  ## Returns
+  `Int` or `Float` (matches input type)
+
+  ## Examples
+
+      (math/abs -5)       ; => 5
+      (math/abs 3)        ; => 3
+      (math/abs -2.7)     ; => 2.7
+      (math/abs 0.0)      ; => 0.0
+
+  ## See Also
+  - `math/clamp` — restrict to a range
+  - `math/min` / `math/max` — compare two values
+  "
+  [x]
+  (native "math/abs" x))
+
+(defn floor
+  "Round a number down to the nearest integer, returning a `Float`.
+
+  ## Parameters
+  - `x` — `Int` or `Float`.
+
+  ## Returns
+  `Float`
+
+  ## Examples
+
+      (math/floor 3.7)   ; => 3.0
+      (math/floor -1.2)  ; => -2.0
+      (math/floor 4.0)   ; => 4.0
+
+  ## See Also
+  - `math/ceil` — round up
+  - `math/round` — round to nearest
+  "
+  [x]
+  (native "math/floor" x))
+
+(defn ceil
+  "Round a number up to the nearest integer, returning a `Float`.
+
+  ## Parameters
+  - `x` — `Int` or `Float`.
+
+  ## Returns
+  `Float`
+
+  ## Examples
+
+      (math/ceil 3.2)    ; => 4.0
+      (math/ceil -1.8)   ; => -1.0
+      (math/ceil 4.0)    ; => 4.0
+
+  ## See Also
+  - `math/floor` — round down
+  - `math/round` — round to nearest
+  "
+  [x]
+  (native "math/ceil" x))
+
+(defn round
+  "Round a number to the nearest integer, returning a `Float`.
+
+  Uses 'round half away from zero': 2.5 → 3.0, -2.5 → -3.0.
+
+  ## Parameters
+  - `x` — `Int` or `Float`.
+
+  ## Returns
+  `Float`
+
+  ## Examples
+
+      (math/round 3.5)   ; => 4.0
+      (math/round 3.4)   ; => 3.0
+      (math/round -2.5)  ; => -3.0
+
+  ## See Also
+  - `math/floor` — always round down
+  - `math/ceil` — always round up
+  "
+  [x]
+  (native "math/round" x))
+
+(defn pow
+  "Raise `base` to the power `exp`, returning a `Float`.
+
+  Both `base` and `exp` may be `Int` or `Float`. The result is always
+  a `Float`. For integer exponentiation where an `Int` result is needed,
+  use a manual loop or `reduce`.
+
+  ## Parameters
+  - `base` — the base number.
+  - `exp` — the exponent.
+
+  ## Returns
+  `Float`
+
+  ## Examples
+
+      (math/pow 2 10)     ; => 1024.0
+      (math/pow 9.0 0.5)  ; => 3.0  (square root)
+      (math/pow 2 -1)     ; => 0.5
+      (math/pow 0 0)      ; => 1.0
+
+  ## See Also
+  - `math/sqrt` — square root (more readable)
+  - `math/exp` — e raised to a power
+  "
+  [base exp]
+  (native "math/pow" base exp))
+
+(defn sqrt
+  "Return the square root of `x` as a `Float`.
+
+  Raises a runtime error if `x` is negative.
+
+  ## Parameters
+  - `x` — non-negative `Int` or `Float`.
+
+  ## Returns
+  `Float`
+
+  ## Examples
+
+      (math/sqrt 4)      ; => 2.0
+      (math/sqrt 2)      ; => 1.4142135623730951
+      (math/sqrt 0)      ; => 0.0
+      (math/sqrt 9.0)    ; => 3.0
+
+  ## See Also
+  - `math/pow` — generalised exponentiation
+  "
+  [x]
+  (native "math/sqrt" x))
+
+(defn log
+  "Return the natural logarithm (base *e*) of `x` as a `Float`.
+
+  ## Parameters
+  - `x` — positive `Int` or `Float`.
+
+  ## Returns
+  `Float`
+
+  ## Examples
+
+      (math/log math/e)   ; => 1.0
+      (math/log 1)        ; => 0.0
+      (math/log 10)       ; => 2.302585...
+
+  ## See Also
+  - `math/exp` — inverse: e^x
+  - `math/e` — the constant e
+  "
+  [x]
+  (native "math/log" x))
+
+(defn exp
+  "Return *e* raised to the power `x` as a `Float`.
+
+  ## Parameters
+  - `x` — `Int` or `Float`.
+
+  ## Returns
+  `Float`
+
+  ## Examples
+
+      (math/exp 0)        ; => 1.0
+      (math/exp 1)        ; => 2.718281...
+      (math/exp -1)       ; => 0.367879...
+
+  ## See Also
+  - `math/log` — inverse: natural log
+  - `math/e` — the constant e
+  "
+  [x]
+  (native "math/exp" x))
+
+(defn sin
+  "Return the sine of `x` radians as a `Float`.
+
+  ## Parameters
+  - `x` — angle in radians (`Int` or `Float`).
+
+  ## Returns
+  `Float` in the range [-1.0, 1.0].
+
+  ## Examples
+
+      (math/sin 0)              ; => 0.0
+      (math/sin (/ math/pi 2))  ; => 1.0
+      (math/sin math/pi)        ; ≈ 1.2246e-16  (floating-point epsilon)
+
+  ## See Also
+  - `math/cos` / `math/tan` — related trig functions
+  - `math/asin` — inverse (arc sine)
+  - `math/pi` — the constant π
+  "
+  [x]
+  (native "math/sin" x))
+
+(defn cos
+  "Return the cosine of `x` radians as a `Float`.
+
+  ## Parameters
+  - `x` — angle in radians.
+
+  ## Returns
+  `Float` in the range [-1.0, 1.0].
+
+  ## Examples
+
+      (math/cos 0)              ; => 1.0
+      (math/cos (/ math/pi 2))  ; ≈ 6.123e-17  (effectively 0)
+      (math/cos math/pi)        ; => -1.0
+
+  ## See Also
+  - `math/sin` / `math/tan` — related trig functions
+  - `math/acos` — inverse (arc cosine)
+  "
+  [x]
+  (native "math/cos" x))
+
+(defn tan
+  "Return the tangent of `x` radians as a `Float`.
+
+  The result is undefined at π/2 + nπ (cos = 0), where the value
+  approaches ±Infinity due to floating-point behaviour.
+
+  ## Parameters
+  - `x` — angle in radians.
+
+  ## Returns
+  `Float`
+
+  ## Examples
+
+      (math/tan 0)              ; => 0.0
+      (math/tan (/ math/pi 4))  ; => 1.0
+
+  ## See Also
+  - `math/sin` / `math/cos` — related trig functions
+  - `math/atan` — inverse (arc tangent)
+  "
+  [x]
+  (native "math/tan" x))
+
+(defn asin
+  "Return the arc sine of `x` in radians as a `Float`.
+
+  `x` must be in [-1, 1]; values outside this range produce `NaN`.
+
+  ## Parameters
+  - `x` — a value in [-1.0, 1.0].
+
+  ## Returns
+  `Float` in the range [-π/2, π/2].
+
+  ## Examples
+
+      (math/asin 0)    ; => 0.0
+      (math/asin 1)    ; => 1.5707963...  (π/2)
+      (math/asin -1)   ; => -1.5707963... (-π/2)
+  "
+  [x]
+  (native "math/asin" x))
+
+(defn acos
+  "Return the arc cosine of `x` in radians as a `Float`.
+
+  ## Parameters
+  - `x` — a value in [-1.0, 1.0].
+
+  ## Returns
+  `Float` in the range [0, π].
+
+  ## Examples
+
+      (math/acos 1)    ; => 0.0
+      (math/acos 0)    ; => 1.5707963...  (π/2)
+      (math/acos -1)   ; => 3.1415926...  (π)
+  "
+  [x]
+  (native "math/acos" x))
+
+(defn atan
+  "Return the arc tangent of `x` in radians as a `Float`.
+
+  ## Parameters
+  - `x` — `Int` or `Float`.
+
+  ## Returns
+  `Float` in the range (-π/2, π/2).
+
+  ## Examples
+
+      (math/atan 0)    ; => 0.0
+      (math/atan 1)    ; => 0.7853981...  (π/4)
+
+  ## See Also
+  - `math/atan2` — two-argument version (avoids quadrant ambiguity)
+  "
+  [x]
+  (native "math/atan" x))
+
+(defn atan2
+  "Return the arc tangent of `y/x` in radians, using the signs to determine the quadrant.
+
+  This is the preferred way to convert Cartesian coordinates to an angle,
+  as it handles all four quadrants correctly unlike `(math/atan (/ y x))`.
+
+  ## Parameters
+  - `y` — the y coordinate.
+  - `x` — the x coordinate.
+
+  ## Returns
+  `Float` in the range (-π, π].
+
+  ## Examples
+
+      (math/atan2 0 1)    ; => 0.0         (pointing right)
+      (math/atan2 1 0)    ; => 1.5707963...  (pointing up, π/2)
+      (math/atan2 0 -1)   ; => 3.1415926...  (pointing left, π)
+      (math/atan2 -1 0)   ; => -1.5707963... (pointing down, -π/2)
+
+  ## See Also
+  - `math/atan` — single-argument version
+  "
+  [y x]
+  (native "math/atan2" y x))
+
+(defn min
+  "Return the smaller of two numbers.
+
+  Works for both `Int` and `Float`. Mixed types follow the usual
+  arithmetic promotion rules.
+
+  ## Parameters
+  - `a` — first number.
+  - `b` — second number.
+
+  ## Returns
+  `Int` or `Float`
+
+  ## Examples
+
+      (math/min 3 7)      ; => 3
+      (math/min -1 0)     ; => -1
+      (math/min 2.5 2.4)  ; => 2.4
+
+  ## See Also
+  - `math/max` — return the larger value
+  - `math/clamp` — restrict to a range
+  "
+  [a b]
+  (native "math/min" a b))
+
+(defn max
+  "Return the larger of two numbers.
+
+  ## Parameters
+  - `a` — first number.
+  - `b` — second number.
+
+  ## Returns
+  `Int` or `Float`
+
+  ## Examples
+
+      (math/max 3 7)      ; => 7
+      (math/max -1 0)     ; => 0
+      (math/max 2.5 2.4)  ; => 2.5
+
+  ## See Also
+  - `math/min` — return the smaller value
+  - `math/clamp` — restrict to a range
+  "
+  [a b]
+  (native "math/max" a b))
+
+(defn clamp
+  "Restrict `x` to the inclusive range [lo, hi].
+
+  Returns `lo` if `x < lo`, `hi` if `x > hi`, or `x` unchanged otherwise.
+
+  ## Parameters
+  - `x` — the value to clamp.
+  - `lo` — lower bound (inclusive).
+  - `hi` — upper bound (inclusive).
+
+  ## Returns
+  `Int` or `Float` (matches input type)
+
+  ## Examples
+
+      (math/clamp 5 0 10)    ; => 5
+      (math/clamp -3 0 10)   ; => 0
+      (math/clamp 15 0 10)   ; => 10
+      (math/clamp 0.5 0 1)   ; => 0.5
+
+  ## See Also
+  - `math/min` / `math/max` — individual bound checks
+  "
+  [x lo hi]
+  (native "math/clamp" x lo hi))
+
+(def pi
+  "The mathematical constant π (pi) ≈ 3.141592653589793.
+
+  ## Examples
+
+      (math/sin math/pi)              ; ≈ 0.0  (floating-point error)
+      (* 2 math/pi)                   ; => 6.283185307179586  (τ)
+      (/ (* 180 angle-rad) math/pi)   ; convert radians to degrees
+
+  ## See Also
+  - `math/e` — Euler's number
+  "
+  (native "math/pi"))
+
+(def e
+  "Euler's number, the base of the natural logarithm, ≈ 2.718281828459045.
+
+  ## Examples
+
+      (math/exp 1)          ; => 2.718281828459045  (= math/e)
+      (math/log math/e)     ; => 1.0
+
+  ## See Also
+  - `math/pi` — the constant π
+  - `math/exp` / `math/log` — exponentiation and logarithm
+  "
+  (native "math/e"))

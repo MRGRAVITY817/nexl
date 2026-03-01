@@ -1,0 +1,192 @@
+;; stdlib/log — Structured JSON logging.
+;;
+;; This file is the source of truth for `log` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/log.rs.
+;;
+;; All log functions emit a single JSON line to stderr:
+;;   {"level":"info","msg":"...","key":"val",...}
+;;
+;; The active log level is controlled by log/set-level (default: info).
+;; Calls at a level below the minimum are silently discarded.
+
+(defn debug
+  "Emit a DEBUG-level log line to stderr.
+
+  The message and optional context fields are encoded as a single JSON
+  object. DEBUG is the lowest priority level and is typically suppressed
+  in production. Enable by calling `(log/set-level \"debug\")`.
+
+  ## Parameters
+  - `msg` — the log message as `Str`.
+  - `ctx` — (optional) map of extra fields to merge into the log line.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (log/debug \"Entering function\")
+      (log/debug \"Query executed\" {:sql sql :rows (count rows)})
+      (log/debug \"State\" {:value x :step n})
+
+  ## See Also
+  - `log/info` — informational messages
+  - `log/set-level` — change the minimum level
+  - `log/with` — attach context to a block of code
+  "
+  [msg]
+  (native "log/debug" msg))
+
+(defn info
+  "Emit an INFO-level log line to stderr.
+
+  INFO is the default minimum level. Use for normal operational events:
+  server started, request received, background job completed, etc.
+
+  ## Parameters
+  - `msg` — the log message as `Str`.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (log/info \"Server started\" {:port 8080})
+      (log/info \"User registered\" {:user-id id :email email})
+      (log/info (str/format \"Processed {} items\" [n]))
+
+  ## See Also
+  - `log/warn` — for recoverable anomalies
+  - `log/with` — run a block with request-scoped context
+  "
+  [msg]
+  (native "log/info" msg))
+
+(defn warn
+  "Emit a WARN-level log line to stderr.
+
+  Use for recoverable anomalies, deprecated-feature usage, or anything
+  that needs attention but does not prevent the system from continuing.
+
+  ## Parameters
+  - `msg` — the log message as `Str`.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (log/warn \"Rate limit approaching\" {:remaining 5 :limit 100})
+      (log/warn \"Config key deprecated\" {:key \"old-key\" :use-instead \"new-key\"})
+
+  ## See Also
+  - `log/error` — for failures that require action
+  - `log/info` — for normal operational events
+  "
+  [msg]
+  (native "log/warn" msg))
+
+(defn error
+  "Emit an ERROR-level log line to stderr.
+
+  Use for failures that have already occurred and may require
+  intervention. Does not exit the process — use `panic` if the
+  failure is unrecoverable.
+
+  ## Parameters
+  - `msg` — the log message as `Str`.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      (log/error \"Database connection failed\" {:host db-host :error e})
+      (log/error \"Payment capture failed\" {:order-id id :reason reason})
+
+      (match result
+        (Ok v)  (process v)
+        (Err e) (do (log/error \"Unexpected error\" {:err e})
+                    (Err e)))
+
+  ## See Also
+  - `log/warn` — for recoverable issues
+  - `log/with` — attach context (request ID, user ID, etc.)
+  "
+  [msg]
+  (native "log/error" msg))
+
+(defn with
+  "Run a thunk with additional fields merged into every log call inside it.
+
+  `ctx` is a map of key–value pairs that are merged into the JSON log
+  line for every `log/debug`, `log/info`, `log/warn`, and `log/error`
+  call that occurs while `thunk` is executing. Contexts nest: inner
+  calls to `log/with` add to the existing context rather than replacing it.
+
+  ## Parameters
+  - `ctx` — map of context fields to attach (e.g. `{:request-id id}`).
+  - `thunk` — zero-argument function `(Fn [] Any)` to execute.
+
+  ## Returns
+  The return value of `thunk`.
+
+  ## Examples
+
+      ;; All logs inside get {:request-id \"abc-123\"} added automatically
+      (log/with {:request-id req-id}
+        (fn []
+          (log/info \"Processing request\")
+          (handle-request req)
+          (log/info \"Request complete\")))
+
+      ;; Nested context (inner adds to outer)
+      (log/with {:service \"payments\"}
+        (fn []
+          (log/with {:order-id order-id}
+            (fn []
+              (log/info \"Charging card\")))))
+      ;; Emits: {\"level\":\"info\",\"msg\":\"Charging card\",\"service\":\"payments\",\"order-id\":42}
+
+  ## See Also
+  - `log/info` / `log/debug` / `log/warn` / `log/error` — the logging functions
+  - `log/set-level` — filter low-priority messages
+  "
+  [ctx thunk]
+  (native "log/with" ctx thunk))
+
+(defn set-level
+  "Set the minimum log level, discarding messages below it.
+
+  Valid levels from lowest to highest priority:
+  `\"debug\"`, `\"info\"`, `\"warn\"`, `\"error\"`.
+
+  Messages at the given level or above are emitted; all others are
+  silently discarded. The default level is `\"info\"`.
+
+  ## Parameters
+  - `level` — one of `\"debug\"`, `\"info\"`, `\"warn\"`, `\"error\"`.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+      ;; Verbose mode
+      (log/set-level \"debug\")
+
+      ;; Production — only warnings and errors
+      (log/set-level \"warn\")
+
+      ;; Read from environment
+      (let [lvl (match (env/get \"LOG_LEVEL\")
+                  (Some l) l
+                  None     \"info\")]
+        (log/set-level lvl))
+
+  ## See Also
+  - `log/debug` — lowest priority level
+  - `log/with` — add context to a scope
+  "
+  [level]
+  (native "log/set-level" level))

@@ -1,0 +1,73 @@
+;; stdlib/time — Clock and timing functions.
+;;
+;; This file is the source of truth for `time` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/time.rs.
+
+(defn now
+  "Return the current wall-clock time as milliseconds since the Unix epoch.
+
+  Returns an `Int`. Precision depends on the OS; typically millisecond
+  resolution on modern systems. For sub-millisecond timing use
+  `time/monotonic`.
+
+  ## Returns
+  `Int` — milliseconds since 1970-01-01 00:00:00 UTC.
+
+  ## Examples
+
+      (def start (time/now))
+      (do-work)
+      (def elapsed (- (time/now) start))
+      (io/println (str \"Elapsed ms: \" elapsed))
+
+      ;; Timestamp in seconds
+      (def ts-seconds (/ (time/now) 1000))
+
+  ## See Also
+  - `time/monotonic` — monotonically increasing nanosecond clock
+  "
+  []
+  (native "time/now"))
+
+(defn monotonic
+  "Return a monotonically increasing nanosecond counter.
+
+  The value is relative to an arbitrary start point (process start or
+  first call). It never goes backwards, even if the system clock is
+  adjusted. Use for measuring elapsed time with high resolution.
+
+  ## Returns
+  `Int` — nanoseconds since an arbitrary epoch.
+
+  ## Examples
+
+      (def t0 (time/monotonic))
+      (compute-something)
+      (def ns (- (time/monotonic) t0))
+      (io/println (str/format \"Took {:.3} ms\" [(/ ns 1000000.0)]))
+
+  ## See Also
+  - `time/now` — wall-clock time in milliseconds
+  "
+  []
+  (native "time/monotonic"))
+
+(defn millis
+  "Identity function that documents its argument as a millisecond count.
+
+  Takes an `Int` and returns it unchanged. Serves as documentation and
+  as a type-signal for tools that understand the `time` module.
+
+  ## Parameters
+  - `ms` — a duration in milliseconds.
+
+  ## Returns
+  `Int`
+
+  ## Examples
+
+      (def timeout (time/millis 5000))   ; 5 seconds
+      (async/sleep timeout)
+  "
+  [ms]
+  (native "time/millis" ms))

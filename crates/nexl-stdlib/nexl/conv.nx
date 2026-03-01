@@ -1,0 +1,89 @@
+;; stdlib/conv — Type conversion functions.
+;;
+;; This file is the source of truth for `conv` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/conv.rs.
+
+(defn ->int
+  "Convert a value to `Int`.
+
+  Accepted input types:
+  - `Int` — returned unchanged.
+  - `Float` — truncated toward zero (not rounded).
+  - `Str` — parsed as a decimal integer; returns `(Err Str)` on failure.
+  - `Bool` — `true` → 1, `false` → 0.
+
+  ## Parameters
+  - `x` — value to convert.
+
+  ## Returns
+  `Int` (or `(Err Str)` for Str input that fails to parse)
+
+  ## Examples
+
+      (conv/->int 3.9)       ; => 3   (truncated, not rounded)
+      (conv/->int 3.1)       ; => 3
+      (conv/->int \"42\")    ; => 42
+      (conv/->int true)      ; => 1
+      (conv/->int false)     ; => 0
+
+  ## See Also
+  - `conv/->float` — convert to Float
+  - `conv/->str` — convert to Str
+  "
+  [x]
+  (native "conv/->int" x))
+
+(defn ->float
+  "Convert a value to `Float`.
+
+  Accepted input types:
+  - `Float` — returned unchanged.
+  - `Int` — converted exactly (may lose precision for very large integers).
+  - `Str` — parsed as a floating-point literal; returns `(Err Str)` on failure.
+
+  ## Parameters
+  - `x` — value to convert.
+
+  ## Returns
+  `Float` (or `(Err Str)` for unparseable Str)
+
+  ## Examples
+
+      (conv/->float 3)          ; => 3.0
+      (conv/->float \"3.14\")   ; => 3.14
+      (conv/->float \"1e10\")   ; => 10000000000.0
+
+  ## See Also
+  - `conv/->int` — convert to Int
+  "
+  [x]
+  (native "conv/->float" x))
+
+(defn ->str
+  "Convert any value to its string representation.
+
+  Produces the same output as the built-in `str` function when called
+  with a single argument. Useful when you need an explicit named
+  function rather than the special form.
+
+  ## Parameters
+  - `x` — any Nexl value.
+
+  ## Returns
+  `Str`
+
+  ## Examples
+
+      (conv/->str 42)           ; => \"42\"
+      (conv/->str 3.14)         ; => \"3.14\"
+      (conv/->str true)         ; => \"true\"
+      (conv/->str [1 2 3])      ; => \"[1 2 3]\"
+      (conv/->str {:a 1})       ; => \"{:a 1}\"
+      (conv/->str unit)         ; => \"unit\"
+
+  ## See Also
+  - `str` — built-in concatenating string conversion
+  - `json/encode` — machine-readable JSON serialisation
+  "
+  [x]
+  (native "conv/->str" x))
