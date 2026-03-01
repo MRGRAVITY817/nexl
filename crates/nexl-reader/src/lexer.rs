@@ -25,6 +25,20 @@ pub enum StringPart {
     Interp(String),
 }
 
+/// The quoting style of a string literal.
+///
+/// Carried in [`TokenKind::Str`] so the reader can apply kind-specific
+/// post-processing (dedenting for triple-quoted, verbatim for raw).
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringKind {
+    /// A regular `"..."` string.
+    Regular,
+    /// A triple-quoted `"""..."""` string; the reader will auto-dedent it.
+    Triple,
+    /// A raw `r"..."` or `r#"..."#` string; no escapes, no interpolation.
+    Raw,
+}
+
 /// The structural kind and value of a token.
 ///
 /// Variants are added as each lexer task is implemented. Non-exhaustive
@@ -44,7 +58,9 @@ pub enum TokenKind {
     /// actual characters inside `Lit` segments. `{{` and `}}` produce literal
     /// `{` / `}` without triggering interpolation. `{expr}` spans become
     /// `Interp` segments containing the raw expression text.
-    Str(Vec<StringPart>),
+    ///
+    /// The [`StringKind`] indicates which surface syntax produced this token.
+    Str(Vec<StringPart>, StringKind),
     /// Character literal, e.g. `\a`, `\newline`, `\u{1F600}`.
     Char(char),
     /// Keyword literal, e.g. `:foo`, `:http/ok`, `::local-alias`.
@@ -199,6 +215,9 @@ impl<'src> Lexer<'src> {
         }
 
         if ch == '"' {
+            if self.peek_ahead(1) == Some('"') && self.peek_ahead(2) == Some('"') {
+                return self.lex_triple_string();
+            }
             return self.lex_string();
         }
 
@@ -211,6 +230,14 @@ impl<'src> Lexer<'src> {
         }
 
         if is_symbol_start(ch) {
+            // `r"..."` / `r#"..."#` raw string literals
+            if ch == 'r' {
+                let n1 = self.peek_ahead(1);
+                let n2 = self.peek_ahead(2);
+                if n1 == Some('"') || (n1 == Some('#') && matches!(n2, Some('"') | Some('#'))) {
+                    return self.lex_raw_string();
+                }
+            }
             return self.lex_symbol();
         }
 
@@ -708,7 +735,208 @@ impl<'src> Lexer<'src> {
         flush_lit(&mut lit, &mut parts);
         let span = self.span_from(start);
         Ok(Token {
-            kind: TokenKind::Str(parts),
+            kind: TokenKind::Str(parts, StringKind::Regular),
+            span,
+        })
+    }
+
+    // --- triple-quoted string lexing ---
+
+    /// Lex a triple-quoted string literal `"""..."""`.
+    ///
+    /// The opening `"""` must not yet have been consumed. Supports the same
+    /// escape sequences and `{expr}` interpolation as regular strings. The
+    /// reader will call `dedent_triple` on the assembled content to strip
+    /// common leading indentation.
+    fn lex_triple_string(&mut self) -> Result<Token, Box<Diagnostic>> {
+        let start = self.pos;
+        self.advance(); // consume first `"`
+        self.advance(); // consume second `"`
+        self.advance(); // consume third `"`
+
+        let mut parts: Vec<StringPart> = Vec::new();
+        let mut lit = String::new();
+
+        loop {
+            // Check for closing `"""`
+            if self.peek() == Some('"')
+                && self.peek_ahead(1) == Some('"')
+                && self.peek_ahead(2) == Some('"')
+            {
+                self.advance(); // consume first `"`
+                self.advance(); // consume second `"`
+                self.advance(); // consume third `"`
+                break;
+            }
+
+            match self.peek() {
+                None => {
+                    return Err(Box::new(self.unterminated_triple_string(start)));
+                }
+                Some('\\') => {
+                    let bs_pos = self.pos;
+                    self.advance(); // consume '\'
+                    match self.peek() {
+                        Some('n') => {
+                            self.advance();
+                            lit.push('\n');
+                        }
+                        Some('t') => {
+                            self.advance();
+                            lit.push('\t');
+                        }
+                        Some('r') => {
+                            self.advance();
+                            lit.push('\r');
+                        }
+                        Some('\\') => {
+                            self.advance();
+                            lit.push('\\');
+                        }
+                        Some('"') => {
+                            self.advance();
+                            lit.push('"');
+                        }
+                        Some('{') => {
+                            self.advance();
+                            lit.push('{');
+                        }
+                        Some(ch) => {
+                            let bad_ch = ch;
+                            self.advance();
+                            return Err(Box::new(self.invalid_escape(bs_pos, bad_ch)));
+                        }
+                        None => {
+                            return Err(Box::new(self.unterminated_triple_string(start)));
+                        }
+                    }
+                }
+                Some('{') => {
+                    if self.peek_ahead(1) == Some('{') {
+                        // `{{` → literal `{`
+                        self.advance();
+                        self.advance();
+                        lit.push('{');
+                    } else {
+                        // `{expr}` → interpolation hole
+                        flush_lit(&mut lit, &mut parts);
+                        self.advance(); // consume '{'
+                        let mut expr = String::new();
+                        loop {
+                            match self.peek() {
+                                None => {
+                                    return Err(Box::new(self.unterminated_triple_string(start)));
+                                }
+                                Some('}') => {
+                                    self.advance(); // consume '}'
+                                    break;
+                                }
+                                Some(ch) => {
+                                    expr.push(ch);
+                                    self.advance();
+                                }
+                            }
+                        }
+                        parts.push(StringPart::Interp(expr));
+                    }
+                }
+                Some('}') => {
+                    if self.peek_ahead(1) == Some('}') {
+                        // `}}` → literal `}`
+                        self.advance();
+                        self.advance();
+                        lit.push('}');
+                    } else {
+                        lit.push('}');
+                        self.advance();
+                    }
+                }
+                Some(ch) => {
+                    lit.push(ch);
+                    self.advance();
+                }
+            }
+        }
+
+        flush_lit(&mut lit, &mut parts);
+        let span = self.span_from(start);
+        Ok(Token {
+            kind: TokenKind::Str(parts, StringKind::Triple),
+            span,
+        })
+    }
+
+    // --- raw string lexing ---
+
+    /// Lex a raw string literal: `r"..."`, `r#"..."#`, `r##"..."##`, etc.
+    ///
+    /// The `r` must not yet have been consumed. Counts leading `#` characters to
+    /// determine the closing delimiter (`"` followed by the same number of `#`s).
+    /// No escape processing and no interpolation — all content becomes a single
+    /// `StringPart::Lit`.
+    fn lex_raw_string(&mut self) -> Result<Token, Box<Diagnostic>> {
+        let start = self.pos;
+        self.advance(); // consume 'r'
+
+        // Count leading '#' characters (0 or more)
+        let mut hash_count: usize = 0;
+        while self.peek() == Some('#') {
+            self.advance();
+            hash_count += 1;
+        }
+
+        // Consume opening `"`
+        if self.peek() != Some('"') {
+            return Err(Box::new(self.error_at(
+                start,
+                "expected '\"' after 'r' in raw string literal",
+                None,
+            )));
+        }
+        self.advance();
+
+        let mut content = String::new();
+
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(Box::new(self.unterminated_raw_string(start)));
+                }
+                Some('"') => {
+                    // Check if followed by exactly `hash_count` '#' characters
+                    let mut closes = true;
+                    for i in 0..hash_count {
+                        if self.peek_ahead(1 + i) != Some('#') {
+                            closes = false;
+                            break;
+                        }
+                    }
+                    if closes {
+                        self.advance(); // consume `"`
+                        for _ in 0..hash_count {
+                            self.advance(); // consume `#`
+                        }
+                        break;
+                    } else {
+                        content.push('"');
+                        self.advance();
+                    }
+                }
+                Some(ch) => {
+                    content.push(ch);
+                    self.advance();
+                }
+            }
+        }
+
+        let parts = if content.is_empty() {
+            vec![]
+        } else {
+            vec![StringPart::Lit(content)]
+        };
+        let span = self.span_from(start);
+        Ok(Token {
+            kind: TokenKind::Str(parts, StringKind::Raw),
             span,
         })
     }
@@ -1035,6 +1263,24 @@ impl<'src> Lexer<'src> {
         d.code = Some(codes::UNCLOSED_STRING.clone());
         d.push_label(Label::new(span, "string starts here"));
         d.set_help("add a closing '\"' to terminate the string");
+        d
+    }
+
+    fn unterminated_triple_string(&self, start: usize) -> Diagnostic {
+        let span = self.span_from(start);
+        let mut d = Diagnostic::new(Severity::Error, "unterminated triple-quoted string literal");
+        d.code = Some(codes::UNCLOSED_STRING.clone());
+        d.push_label(Label::new(span, "string starts here"));
+        d.set_help("add a closing '\"\"\"' to terminate the triple-quoted string");
+        d
+    }
+
+    fn unterminated_raw_string(&self, start: usize) -> Diagnostic {
+        let span = self.span_from(start);
+        let mut d = Diagnostic::new(Severity::Error, "unterminated raw string literal");
+        d.code = Some(codes::UNCLOSED_STRING.clone());
+        d.push_label(Label::new(span, "string starts here"));
+        d.set_help("add the matching closing delimiter to terminate the raw string");
         d
     }
 
@@ -2001,13 +2247,16 @@ mod tests {
     // --- string test 1 ---
     #[test]
     fn lex_plain_string() {
-        assert_eq!(lex_one("\"hello\""), TokenKind::Str(vec![lit("hello")]));
+        assert_eq!(
+            lex_one("\"hello\""),
+            TokenKind::Str(vec![lit("hello")], StringKind::Regular)
+        );
     }
 
     // --- string test 2 ---
     #[test]
     fn lex_empty_string() {
-        assert_eq!(lex_one("\"\""), TokenKind::Str(vec![]));
+        assert_eq!(lex_one("\"\""), TokenKind::Str(vec![], StringKind::Regular));
     }
 
     // --- string test 3 ---
@@ -2016,7 +2265,10 @@ mod tests {
         // {name} is split into an Interp part; surrounding text becomes Lit (spec §2.4)
         assert_eq!(
             lex_one("\"hello {name}!\""),
-            TokenKind::Str(vec![lit("hello "), interp("name"), lit("!")]),
+            TokenKind::Str(
+                vec![lit("hello "), interp("name"), lit("!")],
+                StringKind::Regular
+            ),
         );
     }
 
@@ -2025,7 +2277,10 @@ mod tests {
     fn lex_string_multiple_interpolations() {
         assert_eq!(
             lex_one("\"{a} and {b}\""),
-            TokenKind::Str(vec![interp("a"), lit(" and "), interp("b")]),
+            TokenKind::Str(
+                vec![interp("a"), lit(" and "), interp("b")],
+                StringKind::Regular
+            ),
         );
     }
 
@@ -2045,7 +2300,10 @@ mod tests {
     fn lex_string_adjacent_to_int() {
         let tokens = lex("\"hi\" 42").unwrap();
         assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens[0].kind, TokenKind::Str(vec![lit("hi")]));
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::Str(vec![lit("hi")], StringKind::Regular)
+        );
         assert_eq!(tokens[1].kind, TokenKind::Int(42, None));
     }
 
@@ -2063,7 +2321,10 @@ mod tests {
     fn lex_string_escaped_quote_does_not_end_string() {
         // `"a\"b"` — `\"` is resolved to `"` and must NOT terminate the string.
         // After escape processing the content is the 3-char literal `a"b`.
-        assert_eq!(lex_one("\"a\\\"b\""), TokenKind::Str(vec![lit("a\"b")]));
+        assert_eq!(
+            lex_one("\"a\\\"b\""),
+            TokenKind::Str(vec![lit("a\"b")], StringKind::Regular)
+        );
     }
 
     // --- escape test 1 ---
@@ -2072,7 +2333,7 @@ mod tests {
         // `"line1\nline2"` — spec §2.4: \n resolves to actual newline character
         assert_eq!(
             lex_one("\"line1\\nline2\""),
-            TokenKind::Str(vec![lit("line1\nline2")])
+            TokenKind::Str(vec![lit("line1\nline2")], StringKind::Regular)
         );
     }
 
@@ -2080,21 +2341,30 @@ mod tests {
     #[test]
     fn escape_tab() {
         // `"a\tb"` — spec §2.4: \t resolves to actual tab character
-        assert_eq!(lex_one("\"a\\tb\""), TokenKind::Str(vec![lit("a\tb")]));
+        assert_eq!(
+            lex_one("\"a\\tb\""),
+            TokenKind::Str(vec![lit("a\tb")], StringKind::Regular)
+        );
     }
 
     // --- escape test 3 ---
     #[test]
     fn escape_carriage_return() {
         // `"a\rb"` — spec §2.4: \r resolves to carriage return
-        assert_eq!(lex_one("\"a\\rb\""), TokenKind::Str(vec![lit("a\rb")]));
+        assert_eq!(
+            lex_one("\"a\\rb\""),
+            TokenKind::Str(vec![lit("a\rb")], StringKind::Regular)
+        );
     }
 
     // --- escape test 4 ---
     #[test]
     fn escape_backslash() {
         // `"a\\b"` — spec §2.4: \\ resolves to a single backslash
-        assert_eq!(lex_one("\"a\\\\b\""), TokenKind::Str(vec![lit("a\\b")]));
+        assert_eq!(
+            lex_one("\"a\\\\b\""),
+            TokenKind::Str(vec![lit("a\\b")], StringKind::Regular)
+        );
     }
 
     // --- escape test 5 ---
@@ -2104,14 +2374,20 @@ mod tests {
     #[test]
     fn escape_brace() {
         // `"\{name}"` — \{ is a literal `{`; the span is NOT treated as interpolation
-        assert_eq!(lex_one("\"\\{name}\""), TokenKind::Str(vec![lit("{name}")]),);
+        assert_eq!(
+            lex_one("\"\\{name}\""),
+            TokenKind::Str(vec![lit("{name}")], StringKind::Regular),
+        );
     }
 
     // --- escape test 7 ---
     #[test]
     fn double_brace() {
         // `"{{a}}"` — {{ → literal `{`, }} → literal `}` (spec §2.4 example)
-        assert_eq!(lex_one("\"{{a}}\""), TokenKind::Str(vec![lit("{a}")]));
+        assert_eq!(
+            lex_one("\"{{a}}\""),
+            TokenKind::Str(vec![lit("{a}")], StringKind::Regular)
+        );
     }
 
     // --- escape test 8 ---
@@ -2120,7 +2396,10 @@ mod tests {
         // `"{{x}} {name}"` — literal `{x}` then interpolation `name` (spec §2.4)
         assert_eq!(
             lex_one("\"{{x}} {name}\""),
-            TokenKind::Str(vec![lit("{x} "), interp("name")]),
+            TokenKind::Str(
+                vec![lit("{x} "), interp("name")],
+                StringKind::Regular
+            ),
         );
     }
 
@@ -2229,5 +2508,134 @@ mod tests {
             "expected 'unexpected character' in message, got: {}",
             err.message,
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Triple-quoted string tests (tests 1–6)
+    // -----------------------------------------------------------------------
+
+    // --- triple string test 1 ---
+    #[test]
+    fn test_triple_string_basic() {
+        // `"""hello"""` → Str([Lit("hello")], Triple)
+        assert_eq!(
+            lex_one("\"\"\"hello\"\"\""),
+            TokenKind::Str(vec![lit("hello")], StringKind::Triple)
+        );
+    }
+
+    // --- triple string test 2 ---
+    #[test]
+    fn test_triple_string_multiline() {
+        // Newlines are preserved inside triple-quoted strings (dedent happens in reader)
+        assert_eq!(
+            lex_one("\"\"\"line1\nline2\"\"\""),
+            TokenKind::Str(vec![lit("line1\nline2")], StringKind::Triple)
+        );
+    }
+
+    // --- triple string test 3 ---
+    #[test]
+    fn test_triple_string_inner_quotes() {
+        // A single `"` inside a triple-quoted string is allowed without escaping
+        assert_eq!(
+            lex_one("\"\"\"say \\\"hi\\\"\"\"\""),
+            TokenKind::Str(vec![lit("say \"hi\"")], StringKind::Triple)
+        );
+    }
+
+    // --- triple string test 4 ---
+    #[test]
+    fn test_triple_string_interpolation() {
+        // `{name}` inside triple-quoted string becomes an Interp part
+        assert_eq!(
+            lex_one("\"\"\"{name}\"\"\""),
+            TokenKind::Str(vec![interp("name")], StringKind::Triple)
+        );
+    }
+
+    // --- triple string test 5 ---
+    #[test]
+    fn test_triple_string_escape() {
+        // `\n` inside triple-quoted string resolves to a newline character
+        assert_eq!(
+            lex_one("\"\"\"\\n\"\"\""),
+            TokenKind::Str(vec![lit("\n")], StringKind::Triple)
+        );
+    }
+
+    // --- triple string test 6 ---
+    #[test]
+    fn test_triple_string_unterminated() {
+        // `"""hello` without closing `"""` → UNCLOSED_STRING diagnostic
+        let err = lex("\"\"\"hello").unwrap_err();
+        assert_eq!(err.code, Some(codes::UNCLOSED_STRING.clone()));
+        assert_eq!(err.labels[0].span.start, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Raw string tests (tests 7–12)
+    // -----------------------------------------------------------------------
+
+    // --- raw string test 7 ---
+    #[test]
+    fn test_raw_string_basic() {
+        // `r"hello"` → Str([Lit("hello")], Raw)
+        assert_eq!(
+            lex_one("r\"hello\""),
+            TokenKind::Str(vec![lit("hello")], StringKind::Raw)
+        );
+    }
+
+    // --- raw string test 8 ---
+    #[test]
+    fn test_raw_string_no_escape() {
+        // `r"\n"` → Lit("\\n") — backslash is verbatim, NOT resolved
+        assert_eq!(
+            lex_one("r\"\\n\""),
+            TokenKind::Str(vec![lit("\\n")], StringKind::Raw)
+        );
+    }
+
+    // --- raw string test 9 ---
+    #[test]
+    fn test_raw_string_one_hash() {
+        // Nexl source: r#"has "quotes""#
+        // Inner `"` (in the word "quotes") is safe because the terminator is `"#`
+        // Content: has "quotes"
+        assert_eq!(
+            lex_one("r#\"has \"quotes\"\"#"),
+            TokenKind::Str(vec![lit("has \"quotes\"")], StringKind::Raw)
+        );
+    }
+
+    // --- raw string test 10 ---
+    #[test]
+    fn test_raw_string_two_hashes() {
+        // Nexl source: r##"has "# inside"##
+        // Content includes `"#` which is not the two-hash terminator
+        assert_eq!(
+            lex_one("r##\"has \"# inside\"##"),
+            TokenKind::Str(vec![lit("has \"# inside")], StringKind::Raw)
+        );
+    }
+
+    // --- raw string test 11 ---
+    #[test]
+    fn test_raw_string_no_interpolation() {
+        // `r"{not}"` → entire `{not}` is a literal, NOT an interpolation hole
+        assert_eq!(
+            lex_one("r\"{not}\""),
+            TokenKind::Str(vec![lit("{not}")], StringKind::Raw)
+        );
+    }
+
+    // --- raw string test 12 ---
+    #[test]
+    fn test_raw_string_unterminated() {
+        // `r"hello` without closing `"` → UNCLOSED_STRING diagnostic
+        let err = lex("r\"hello").unwrap_err();
+        assert_eq!(err.code, Some(codes::UNCLOSED_STRING.clone()));
+        assert_eq!(err.labels[0].span.start, 0);
     }
 }

@@ -4,7 +4,7 @@ use nexl_ast::{
 };
 use nexl_errors::{Diagnostic, Label, Severity, codes};
 
-use crate::lexer::{Lexer, StringPart, Token, TokenKind};
+use crate::lexer::{Lexer, StringKind, StringPart, Token, TokenKind};
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -262,7 +262,15 @@ impl<'src> Reader<'src> {
             TokenKind::Bool(b) => Ok(Node::atom(Atom::Bool(b), tok.span)),
             TokenKind::Unit => Ok(Node::atom(Atom::Unit, tok.span)),
             TokenKind::Char(c) => Ok(Node::atom(Atom::Char(c), tok.span)),
-            TokenKind::Str(parts) => Ok(Node::atom(Atom::Str(reassemble_str(&parts)), tok.span)),
+            TokenKind::Str(parts, kind) => {
+                let s = reassemble_str(&parts);
+                let s = if kind == StringKind::Triple {
+                    dedent_triple(s)
+                } else {
+                    s
+                };
+                Ok(Node::atom(Atom::Str(s), tok.span))
+            }
             TokenKind::Keyword { ns, name, .. } => {
                 Ok(Node::atom(Atom::Keyword { ns, name }, tok.span))
             }
@@ -773,6 +781,72 @@ fn reassemble_str(parts: &[StringPart]) -> String {
         }
     }
     out
+}
+
+/// Strip common leading indentation from a triple-quoted string.
+///
+/// Follows Python `inspect.cleandoc` semantics:
+/// 1. Split on `\n`.
+/// 2. If the first line is blank or whitespace-only, drop it.
+/// 3. If the last line is blank or whitespace-only, drop it.
+/// 4. Find the minimum leading-space count across all non-empty lines.
+/// 5. Strip that many spaces from every line.
+/// 6. Re-join with `\n`.
+///
+/// This makes the following idiomatic (zero leading spaces in the result):
+/// ```nexl
+/// (defn foo
+///   """
+///   Summary.
+///
+///   ## Examples
+///   ```nexl
+///   (foo 42)   ; => 43
+///   ```
+///   """
+///   [x] ...)
+/// ```
+pub(crate) fn dedent_triple(s: String) -> String {
+    let mut lines: Vec<&str> = s.split('\n').collect();
+
+    // Drop leading blank line
+    if lines.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.remove(0);
+    }
+
+    // Drop trailing blank line
+    if lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    // Find minimum indentation across non-empty lines
+    let min_indent = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+
+    if min_indent == 0 {
+        return lines.join("\n");
+    }
+
+    // Strip min_indent leading spaces from every line
+    lines
+        .iter()
+        .map(|l| {
+            if l.len() >= min_indent {
+                &l[min_indent..]
+            } else {
+                l.trim_start()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -1818,5 +1892,59 @@ mod tests {
     fn parse_example_08_inference() {
         let src = include_str!("../../../examples/08-inference.nx");
         read(src, fid()).expect("08-inference.nx should parse without errors");
+    }
+
+    // -----------------------------------------------------------------------
+    // dedent_triple tests (tests 13–18)
+    // -----------------------------------------------------------------------
+
+    // --- dedent test 13 ---
+    #[test]
+    fn test_dedent_strips_leading_blank_line() {
+        // The first line is blank → it is dropped
+        let s = "\nhello".to_string();
+        assert_eq!(dedent_triple(s), "hello");
+    }
+
+    // --- dedent test 14 ---
+    #[test]
+    fn test_dedent_strips_trailing_blank_line() {
+        // The last line is blank/whitespace-only → it is dropped
+        let s = "hello\n  ".to_string();
+        assert_eq!(dedent_triple(s), "hello");
+    }
+
+    // --- dedent test 15 ---
+    #[test]
+    fn test_dedent_removes_common_indent() {
+        // Two lines with 2-space indent → 2 spaces stripped from each
+        let s = "\n  Summary.\n\n  Details.\n  ".to_string();
+        assert_eq!(dedent_triple(s), "Summary.\n\nDetails.");
+    }
+
+    // --- dedent test 16 ---
+    #[test]
+    fn test_dedent_preserves_relative_indent() {
+        // Code block with extra indent → outer indent stripped, relative kept
+        let s = "\n  Summary.\n\n  ## Examples\n    (foo 42)\n  ".to_string();
+        assert_eq!(
+            dedent_triple(s),
+            "Summary.\n\n## Examples\n  (foo 42)"
+        );
+    }
+
+    // --- dedent test 17 ---
+    #[test]
+    fn test_dedent_empty_string() {
+        // Empty string → returns empty string without panicking
+        assert_eq!(dedent_triple(String::new()), "");
+    }
+
+    // --- dedent test 18 ---
+    #[test]
+    fn test_dedent_no_indent() {
+        // Content already at column 0 → returned unchanged (only blank lines trimmed)
+        let s = "\nhello\nworld\n".to_string();
+        assert_eq!(dedent_triple(s), "hello\nworld");
     }
 }
