@@ -16,6 +16,51 @@ fn as_postfix_question(items: &[Node]) -> Option<&Node> {
 }
 
 // ---------------------------------------------------------------------------
+// let-else helpers
+// ---------------------------------------------------------------------------
+
+/// Returns `true` if `node` is the `|` pipe symbol used in `let-else` bindings.
+fn is_pipe_node(node: &Node) -> bool {
+    matches!(
+        &node.kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if &**name == "|"
+    )
+}
+
+/// Parse a binding vector into `(pattern, value, Option<fallback>)` triples.
+///
+/// Handles both plain `name expr` and let-else `pattern expr | fallback` forms.
+fn collect_let_binding_groups(nodes: &[Node]) -> Vec<(&Node, &Node, Option<&Node>)> {
+    let mut groups = Vec::new();
+    let mut i = 0;
+    while i < nodes.len() {
+        // Skip optional `mut` keyword.
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &nodes[i].kind
+            && &**name == "mut"
+        {
+            i += 1;
+        }
+        let Some(pat) = nodes.get(i) else { break };
+        i += 1;
+        let Some(val) = nodes.get(i) else { break };
+        i += 1;
+        // Check for `|` separator.
+        let fb = if nodes.get(i).is_some_and(is_pipe_node) {
+            i += 1; // consume `|`
+            let fb_node = nodes.get(i);
+            if fb_node.is_some() {
+                i += 1;
+            }
+            fb_node
+        } else {
+            None
+        };
+        groups.push((pat, val, fb));
+    }
+    groups
+}
+
+// ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
@@ -335,9 +380,14 @@ impl PrettyPrinter {
             let binding_node = &items[1];
             let bind_col = indent + 1 + self.flat_len(&items[0]).min(40) + 1;
 
-            // Try to write binding vector with alignment
             if let NodeKind::Vector(bindings) = &binding_node.kind {
-                if bindings.len() >= 4 && bindings.len() % 2 == 0 && self.config.align_columns {
+                let has_else = bindings.iter().any(is_pipe_node);
+                if has_else {
+                    // let-else bindings: pattern expr | fallback
+                    self.write_let_else_bindings(bindings, out, bind_col);
+                } else if bindings.len() >= 4 && bindings.len() % 2 == 0
+                    && self.config.align_columns
+                {
                     self.write_binding_vector_aligned(bindings, out, bind_col);
                 } else {
                     self.write_node_indented(binding_node, out, body_indent, bind_col);
@@ -356,6 +406,51 @@ impl PrettyPrinter {
             self.write_node_indented(item, out, body_indent, body_indent);
         }
         out.push(')');
+    }
+
+    /// Write a `let-else` binding vector.
+    ///
+    /// Each binding group is `[mut?] pattern expr [| fallback]`. Patterns are
+    /// aligned across all groups; the ` | fallback` is appended inline.
+    fn write_let_else_bindings(&self, bindings: &[Node], out: &mut String, start_col: usize) {
+        let groups = collect_let_binding_groups(bindings);
+
+        // Column-align the patterns across all groups.
+        let max_pat_width = groups
+            .iter()
+            .map(|(pat, _, _)| self.flat_len(pat).min(40))
+            .max()
+            .unwrap_or(0);
+
+        let val_col = start_col + 1 + max_pat_width + 1;
+        let use_alignment = val_col <= self.config.max_line_width / 2;
+
+        out.push('[');
+        for (i, (pat, val, fb)) in groups.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+                push_indent(out, start_col + 1);
+            }
+            let pat_len = self.flat_len(pat).min(40);
+            self.write_node_indented(pat, out, start_col + 1, start_col + 1);
+            if use_alignment {
+                for _ in pat_len..max_pat_width {
+                    out.push(' ');
+                }
+            }
+            out.push(' ');
+            let vc = if use_alignment {
+                val_col
+            } else {
+                start_col + 1 + pat_len + 1
+            };
+            self.write_node_indented(val, out, start_col + 1, vc);
+            if let Some(fb_node) = fb {
+                out.push_str(" | ");
+                self.write_node(fb_node, out);
+            }
+        }
+        out.push(']');
     }
 
     /// Write a binding vector with aligned name/value columns.
@@ -846,7 +941,7 @@ impl PrettyPrinter {
             // Alignment is based solely on key widths: as long as the value
             // column fits within the line width, align all keys regardless of
             // how wide the values are.  Values that overflow break on their own.
-            let use_alignment = pair_indent + max_key_width + 1 <= self.config.max_line_width;
+            let use_alignment = pair_indent + max_key_width < self.config.max_line_width;
 
             for (i, (k, v)) in pairs.iter().enumerate() {
                 if i > 0 {
@@ -905,7 +1000,7 @@ impl PrettyPrinter {
                 .unwrap_or(0);
             // Alignment is based solely on key widths — same rationale as
             // write_map_indented: value overflow is handled per-value.
-            let use_alignment = pair_indent + max_key_width + 1 <= self.config.max_line_width;
+            let use_alignment = pair_indent + max_key_width < self.config.max_line_width;
 
             for (i, (k, v)) in pairs.iter().enumerate() {
                 if i > 0 {

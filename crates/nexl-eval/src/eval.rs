@@ -208,6 +208,19 @@ fn eval_def(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     Ok(EvalReturn::Value(Value::Unit))
 }
 
+/// Returns `true` if `node` is the `|` pipe symbol used in `let-else` bindings.
+fn is_pipe_node(node: &Node) -> bool {
+    matches!(
+        &node.kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if &**name == "|"
+    )
+}
+
+/// Evaluate a `let` or `let-else` form (spec §4.11–§4.12).
+///
+/// Plain binding:    `[name    expr  ...]`
+/// Pattern binding:  `[pattern expr  ...]`          — irrefutable (error on mismatch)
+/// let-else binding: `[pattern expr | fallback ...]` — on mismatch, evaluates fallback
 fn eval_let<'a>(
     items: &[Node],
     env: &Rc<Env>,
@@ -225,33 +238,59 @@ fn eval_let<'a>(
 
     let child_env = Rc::new(Env::child(Rc::clone(env)));
 
-    // Parse bindings with optional `mut` modifier: [mut? name value ...]
+    // Parse bindings: [mut? pattern expr [| fallback] ...]
     let mut i = 0;
     while i < bindings.len() {
-        // Consume optional `mut` modifier (noted but not enforced in M1).
+        // Consume optional `mut` modifier (noted but not enforced).
         if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &bindings[i].kind
             && name == "mut"
         {
             i += 1;
         }
 
-        // Binding name.
-        let name_node = bindings.get(i).ok_or(EvalError::Arity)?;
-        let name = match &name_node.kind {
-            NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
-            _ => return Err(EvalError::InvalidBindingTarget),
+        // Pattern node — a plain symbol becomes Pattern::Var, compound patterns
+        // like (Ok n) or (Some x) are supported via parse_pattern.
+        let pat_node = bindings.get(i).ok_or(EvalError::Arity)?;
+        i += 1;
+
+        // Value expression.
+        let val_node = bindings.get(i).ok_or(EvalError::Arity)?;
+        i += 1;
+
+        // Optional `| fallback` clause (let-else, spec §4.12).
+        let fallback_node = if bindings.get(i).is_some_and(is_pipe_node) {
+            i += 1; // consume `|`
+            let fb = bindings.get(i).ok_or(EvalError::Arity)?;
+            i += 1;
+            Some(fb)
+        } else {
+            None
         };
-        i += 1;
 
-        // Binding value.
-        let value_node = bindings.get(i).ok_or(EvalError::Arity)?;
-        i += 1;
-
-        let value = match eval_with_loop(value_node, &child_env, None)? {
+        // Evaluate the value expression.
+        let value = match eval_with_loop(val_node, &child_env, None)? {
             EvalReturn::Value(v) => v,
             EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
         };
-        child_env.define(name, value);
+
+        // Match the pattern against the value.
+        let pattern = parse_pattern(pat_node)
+            .map_err(|e| EvalError::NativeError(format!("let: {e}")))?;
+
+        let mut binding_pairs: Vec<(Rc<str>, Value)> = Vec::new();
+        if match_pattern(&pattern, &value, &mut binding_pairs) {
+            for (name, val) in binding_pairs {
+                child_env.define(name, val);
+            }
+        } else {
+            // Pattern failed — evaluate fallback (let-else) or error.
+            return match fallback_node {
+                Some(fb) => eval_with_loop(fb, &child_env, loop_state),
+                None => Err(EvalError::NativeError(format!(
+                    "let: pattern did not match value {value}",
+                ))),
+            };
+        }
     }
 
     // Body expressions — propagate loop_state so recur works inside let.

@@ -1436,7 +1436,10 @@ mod tests {
     }
 
     #[test]
-    fn let_errors_on_non_symbol_binding_target() {
+    fn let_errors_when_literal_pattern_mismatches() {
+        // `(let [1 2] 0)` — literal pattern `1` against value `2` fails.
+        // Since let now supports refutable patterns (spec §4.12), this is a
+        // pattern-mismatch error, not InvalidBindingTarget.
         let env = Rc::new(Env::new());
         let expr = list(vec![
             lit(Atom::Symbol {
@@ -1460,7 +1463,10 @@ mod tests {
         ]);
 
         let err = eval(&expr, &env).unwrap_err();
-        assert_eq!(err, EvalError::InvalidBindingTarget);
+        assert!(
+            matches!(&err, EvalError::NativeError(msg) if msg.contains("pattern did not match")),
+            "expected pattern mismatch, got: {err:?}"
+        );
     }
 
     // --- do form tests ---
