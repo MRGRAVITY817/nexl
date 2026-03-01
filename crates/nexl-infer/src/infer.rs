@@ -1609,6 +1609,14 @@ fn is_colon_node(node: &Node) -> bool {
     )
 }
 
+/// Returns `true` if `node` is the `|` symbol used in `let-else` fallback clauses.
+fn is_pipe_node(node: &Node) -> bool {
+    matches!(
+        &node.kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if &**name == "|"
+    )
+}
+
 /// Return the name string if the first item in `items` is an unqualified symbol.
 fn head_sym(items: &[Node]) -> Option<&str> {
     match items.first() {
@@ -1924,10 +1932,11 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         }
     };
 
-    // Parse the binding vector.  Each binding is either:
-    //   name expr           (2 elements — no annotation)
-    //   name : Type expr    (4 elements — with annotation)
-    //   pattern expr        (2 elements — destructuring pattern)
+    // Parse the binding vector.  Each binding is one of:
+    //   name expr                (2 elements — plain binding)
+    //   name : Type expr         (4 elements — annotated binding)
+    //   pattern expr             (2 elements — irrefutable destructuring)
+    //   pattern expr | fallback  (4 elements — let-else, spec §4.12)
     // Bindings of all kinds may be mixed freely.
     let mut current_env = env.clone();
     let mut i = 0;
@@ -1989,7 +1998,7 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
             }
         }
 
-        // Pattern binding (destructuring).
+        // Pattern binding (destructuring), with optional let-else fallback.
         let (expanded_pattern, guard) = expand_defpattern(binding_node, &current_env)?;
         if guard.is_some() {
             return Err(TypeError::new(TypeErrorKind::MalformedForm {
@@ -2009,6 +2018,26 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         }
         let expr_node = &bvec[i];
         i += 1;
+
+        // let-else: detect `| fallback-expr` clause (spec §4.12).
+        let has_fallback = bvec.get(i).is_some_and(is_pipe_node);
+        if has_fallback {
+            i += 1; // consume `|`
+            if i >= bvec.len() {
+                return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                    description: "let-else `|` is missing its fallback expression".to_string(),
+                }));
+            }
+            let fallback_node = &bvec[i];
+            i += 1; // consume fallback
+            // Type-check the fallback so any errors inside it are reported.
+            // Full compatibility with the body type is enforced once Never/union
+            // types are available (spec §4.12 type rule).
+            if let Err(e) = synth(fallback_node, &current_env, state) {
+                state.push_error(e);
+            }
+        }
+
         let ty_result = match (&pattern, &expr_node.kind) {
             (Pattern::Tuple(_), NodeKind::Vector(items)) => {
                 synth_tuple_literal(items, &current_env, state)
@@ -2024,7 +2053,10 @@ fn synth_let(items: &[Node], env: &Env, state: &mut InferState) -> Result<Type, 
         };
         let resolved = state.subst.apply(&ty);
         let pattern_env = check_pattern(&pattern, &resolved, &current_env, state)?;
-        check_exhaustive_let_pattern(&pattern, &resolved, &current_env, expr_node)?;
+        // Exhaustiveness is only required when there is no fallback clause.
+        if !has_fallback {
+            check_exhaustive_let_pattern(&pattern, &resolved, &current_env, expr_node)?;
+        }
         current_env = pattern_env;
     }
 
@@ -7062,6 +7094,7 @@ mod tests {
     // -- Test 34 (let destructuring) --
     #[test]
     fn infer_let_constructor_pattern_non_exhaustive_is_error() {
+        // Plain `(let [(Some v) expr] ...)` without fallback must be an error (spec §4.12).
         let def = parse_one("(deftype Option [a] | None | (Some a))");
         let decl = super::parse_deftype(&def).unwrap();
         let env = register_deftype(&Env::new(), decl);
@@ -7075,6 +7108,50 @@ mod tests {
                     if description.contains("non-exhaustive")
             ),
             "expected non-exhaustive let pattern error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn infer_let_else_some_with_fallback_ok() {
+        // `(let [(Some v) (Some 1) | 0] v)` — refutable pattern with fallback
+        // must NOT produce a non-exhaustive error (spec §4.12).
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(let [(Some v) (Some 1) | 0] v)");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+    }
+
+    #[test]
+    fn infer_let_else_ok_pattern_with_fallback_ok() {
+        // `(let [(Ok n) (Ok 7) | -1] n)` — Ok pattern with panic-style fallback.
+        let def = parse_one("(deftype Result [a b] | (Ok a) | (Err b))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(let [(Ok n) (Ok 7) | -1] n)");
+        let mut state = InferState::new();
+        let ty = synth(&node, &env, &mut state).unwrap();
+        assert_eq!(ty, Type::Int);
+    }
+
+    #[test]
+    fn infer_let_else_missing_fallback_after_pipe_is_error() {
+        // `(let [(Some v) (Some 1) |] v)` — pipe with no fallback is malformed.
+        let def = parse_one("(deftype Option [a] | None | (Some a))");
+        let decl = super::parse_deftype(&def).unwrap();
+        let env = register_deftype(&Env::new(), decl);
+        let node = parse_one("(let [(Some v) (Some 1) |] v)");
+        let mut state = InferState::new();
+        let err = synth(&node, &env, &mut state).unwrap_err();
+        assert!(
+            matches!(
+                err.kind,
+                TypeErrorKind::MalformedForm { ref description }
+                    if description.contains("missing its fallback")
+            ),
+            "expected missing-fallback error, got {err:?}"
         );
     }
 
