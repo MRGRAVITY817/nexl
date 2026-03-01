@@ -25,9 +25,11 @@
 
   ## Examples
 
-      (log/debug \"Entering function\")
-      (log/debug \"Query executed\" {:sql sql :rows (count rows)})
-      (log/debug \"State\" {:value x :step n})
+  ```nexl
+  (log/debug \"Entering function\")
+  (log/debug \"Query executed\" {:sql sql :rows (count rows)})
+  (log/debug \"State\" {:value x :step n})
+  ```
 
   ## See Also
   - `log/info` — informational messages
@@ -51,9 +53,11 @@
 
   ## Examples
 
-      (log/info \"Server started\" {:port 8080})
-      (log/info \"User registered\" {:user-id id :email email})
-      (log/info (str/format \"Processed {} items\" [n]))
+  ```nexl
+  (log/info \"Server started\" {:port 8080})
+  (log/info \"User registered\" {:user-id id :email email})
+  (log/info (str/format \"Processed {} items\" [n]))
+  ```
 
   ## See Also
   - `log/warn` — for recoverable anomalies
@@ -76,8 +80,10 @@
 
   ## Examples
 
-      (log/warn \"Rate limit approaching\" {:remaining 5 :limit 100})
-      (log/warn \"Config key deprecated\" {:key \"old-key\" :use-instead \"new-key\"})
+  ```nexl
+  (log/warn \"Rate limit approaching\" {:remaining 5 :limit 100})
+  (log/warn \"Config key deprecated\" {:key \"old-key\" :use-instead \"new-key\"})
+  ```
 
   ## See Also
   - `log/error` — for failures that require action
@@ -101,13 +107,15 @@
 
   ## Examples
 
-      (log/error \"Database connection failed\" {:host db-host :error e})
-      (log/error \"Payment capture failed\" {:order-id id :reason reason})
+  ```nexl
+  (log/error \"Database connection failed\" {:host db-host :error e})
+  (log/error \"Payment capture failed\" {:order-id id :reason reason})
 
-      (match result
-        (Ok v)  (process v)
-        (Err e) (do (log/error \"Unexpected error\" {:err e})
-                    (Err e)))
+  (match result
+    (Ok v)  (process v)
+    (Err e) (do (log/error \"Unexpected error\" {:err e})
+                (Err e)))
+  ```
 
   ## See Also
   - `log/warn` — for recoverable issues
@@ -133,20 +141,22 @@
 
   ## Examples
 
-      ;; All logs inside get {:request-id \"abc-123\"} added automatically
-      (log/with {:request-id req-id}
-        (fn []
-          (log/info \"Processing request\")
-          (handle-request req)
-          (log/info \"Request complete\")))
+  ```nexl
+  ;; All logs inside get {:request-id \"abc-123\"} added automatically
+  (log/with {:request-id req-id}
+    (fn []
+      (log/info \"Processing request\")
+      (handle-request req)
+      (log/info \"Request complete\")))
 
-      ;; Nested context (inner adds to outer)
-      (log/with {:service \"payments\"}
+  ;; Nested context (inner adds to outer)
+  (log/with {:service \"payments\"}
+    (fn []
+      (log/with {:order-id order-id}
         (fn []
-          (log/with {:order-id order-id}
-            (fn []
-              (log/info \"Charging card\")))))
-      ;; Emits: {\"level\":\"info\",\"msg\":\"Charging card\",\"service\":\"payments\",\"order-id\":42}
+          (log/info \"Charging card\")))))
+  ;; Emits: {\"level\":\"info\",\"msg\":\"Charging card\",\"service\":\"payments\",\"order-id\":42}
+  ```
 
   ## See Also
   - `log/info` / `log/debug` / `log/warn` / `log/error` — the logging functions
@@ -172,17 +182,19 @@
 
   ## Examples
 
-      ;; Verbose mode
-      (log/set-level \"debug\")
+  ```nexl
+  ;; Verbose mode
+  (log/set-level \"debug\")
 
-      ;; Production — only warnings and errors
-      (log/set-level \"warn\")
+  ;; Production — only warnings and errors
+  (log/set-level \"warn\")
 
-      ;; Read from environment
-      (let [lvl (match (env/get \"LOG_LEVEL\")
-                  (Some l) l
-                  None     \"info\")]
-        (log/set-level lvl))
+  ;; Read from environment
+  (let [lvl (match (env/get \"LOG_LEVEL\")
+              (Some l) l
+              None     \"info\")]
+    (log/set-level lvl))
+  ```
 
   ## See Also
   - `log/debug` — lowest priority level

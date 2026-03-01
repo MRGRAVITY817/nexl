@@ -28,13 +28,15 @@
 
   ## Examples
 
-      (def resp (http/get \"https://api.example.com/data\")?)
-      (def body (http/body resp))
-      (def data (json/decode body)?)
+  ```nexl
+  (def resp (http/get \"https://api.example.com/data\")?)
+  (def body (http/body resp))
+  (def data (json/decode body)?)
 
-      (match (http/get url)
-        (Ok r)  (io/println (str \"Status: \" (http/status r)))
-        (Err e) (io/println (str \"Request failed: \" e)))
+  (match (http/get url)
+    (Ok r)  (io/println (str \"Status: \" (http/status r)))
+    (Err e) (io/println (str \"Request failed: \" e)))
+  ```
 
   ## See Also
   - `http/post` — send a request with a body
@@ -58,13 +60,15 @@
 
   ## Examples
 
-      (def payload (json/encode {:name \"Alice\" :score 99}))
-      (def resp (http/post \"https://api.example.com/scores\" payload)?)
-      (io/println (str \"Posted, status: \" (http/status resp)))
+  ```nexl
+  (def payload (json/encode {:name \"Alice\" :score 99}))
+  (def resp (http/post \"https://api.example.com/scores\" payload)?)
+  (io/println (str \"Posted, status: \" (http/status resp)))
 
-      ;; With form data
-      (def form \"username=alice&password=secret\")
-      (http/post \"https://example.com/login\" form)?
+  ;; With form data
+  (def form \"username=alice&password=secret\")
+  (http/post \"https://example.com/login\" form)?
+  ```
 
   ## See Also
   - `http/get` — GET request (no body)
@@ -89,9 +93,11 @@
 
   ## Examples
 
-      (http/response 200 (json/encode result) {:content-type \"application/json\"})
-      (http/response 404 \"Not found\" {})
-      (http/response 302 \"\" {:location \"/login\"})
+  ```nexl
+  (http/response 200 (json/encode result) {:content-type \"application/json\"})
+  (http/response 404 \"Not found\" {})
+  (http/response 302 \"\" {:location \"/login\"})
+  ```
 
   ## See Also
   - `http/serve` — start a server that calls a handler producing responses
@@ -111,13 +117,15 @@
 
   ## Examples
 
-      (def resp (http/get url)?)
-      (when (= (http/status resp) 200)
-        (process (http/body resp)))
+  ```nexl
+  (def resp (http/get url)?)
+  (when (= (http/status resp) 200)
+    (process (http/body resp)))
 
-      (if (< (http/status resp) 400)
-        (handle-success resp)
-        (handle-error resp))
+  (if (< (http/status resp) 400)
+    (handle-success resp)
+    (handle-error resp))
+  ```
 
   ## See Also
   - `http/body` — extract the response body
@@ -137,10 +145,12 @@
 
   ## Examples
 
-      (def resp (http/get url)?)
-      (def data (json/decode (http/body resp))?)
+  ```nexl
+  (def resp (http/get url)?)
+  (def data (json/decode (http/body resp))?)
 
-      (io/println (str \"Body length: \" (count (http/body resp))))
+  (io/println (str \"Body length: \" (count (http/body resp))))
+  ```
 
   ## See Also
   - `http/status` — check status before reading body
@@ -160,10 +170,12 @@
 
   ## Examples
 
-      (def ct (get (http/headers resp) \"content-type\"))
-      (match ct
-        (Some t) (io/println (str \"Content-Type: \" t))
-        None     (io/println \"No content-type header\"))
+  ```nexl
+  (def ct (get (http/headers resp) \"content-type\"))
+  (match ct
+    (Some t) (io/println (str \"Content-Type: \" t))
+    None     (io/println \"No content-type header\"))
+  ```
 
   ## See Also
   - `http/body` — extract the response body
@@ -188,9 +200,11 @@
 
   ## Examples
 
-      (http/serve 8080
-        (fn [req]
-          (http/response 200 \"Hello!\" {})))
+  ```nexl
+  (http/serve 8080
+    (fn [req]
+      (http/response 200 \"Hello!\" {})))
+  ```
 
   ## See Also
   - `http/response` — build a response in the handler

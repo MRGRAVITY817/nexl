@@ -19,11 +19,13 @@
 
   ## Examples
 
-      (io/println \"Hello, world!\")        ; Hello, world!
-      (io/println 42)                       ; 42
-      (io/println [1 2 3])                  ; [1 2 3]
-      (io/println {:name \"Alice\" :age 30}) ; {:name Alice :age 30}
-      (io/println true)                     ; true
+  ```nexl
+  (io/println \"Hello, world!\")        ; Hello, world!
+  (io/println 42)                       ; 42
+  (io/println [1 2 3])                  ; [1 2 3]
+  (io/println {:name \"Alice\" :age 30}) ; {:name Alice :age 30}
+  (io/println true)                     ; true
+  ```
 
   ## See Also
   - `io/print` — same but without the trailing newline
@@ -47,14 +49,16 @@
 
   ## Examples
 
-      (io/print \"Enter your name: \")
-      (def name (io/read-line))
+  ```nexl
+  (io/print \"Enter your name: \")
+  (def name (io/read-line))
 
-      (do
-        (io/print \"Loading\")
-        (io/print \".\")
-        (io/print \".\")
-        (io/println \"done\"))          ; Loading...done
+  (do
+    (io/print \"Loading\")
+    (io/print \".\")
+    (io/print \".\")
+    (io/println \"done\"))          ; Loading...done
+  ```
 
   ## See Also
   - `io/println` — print with trailing newline
@@ -73,12 +77,14 @@
 
   ## Examples
 
-      (def line (io/read-line)?)          ; propagate error with ?
-      (io/println (str \"You typed: \" line))
+  ```nexl
+  (def line (io/read-line)?)          ; propagate error with ?
+  (io/println (str \"You typed: \" line))
 
-      (match (io/read-line)
-        (Ok text) (io/println (str \"Got: \" text))
-        (Err e)   (io/println (str \"EOF or error: \" e)))
+  (match (io/read-line)
+    (Ok text) (io/println (str \"Got: \" text))
+    (Err e)   (io/println (str \"EOF or error: \" e)))
+  ```
 
   ## See Also
   - `io/print` — display a prompt before calling read-line
@@ -102,12 +108,14 @@
 
   ## Examples
 
-      (def src (io/read-file \"config.json\")?)
-      (def cfg (json/decode src)?)
+  ```nexl
+  (def src (io/read-file \"config.json\")?)
+  (def cfg (json/decode src)?)
 
-      (match (io/read-file \"/etc/hosts\")
-        (Ok content) (io/println (str \"Lines: \" (count (str/split content \"\\n\"))))
-        (Err e)      (io/println (str \"Error: \" e)))
+  (match (io/read-file \"/etc/hosts\")
+    (Ok content) (io/println (str \"Lines: \" (count (str/split content \"\\n\"))))
+    (Err e)      (io/println (str \"Error: \" e)))
+  ```
 
   ## See Also
   - `io/write-file` — write text to a file
@@ -131,12 +139,14 @@
 
   ## Examples
 
-      (io/write-file \"output.txt\" \"Hello, world!\")?
+  ```nexl
+  (io/write-file \"output.txt\" \"Hello, world!\")?
 
-      (def report (str/format \"Score: {}\" [score]))
-      (match (io/write-file \"report.txt\" report)
-        (Ok _)  (io/println \"Report saved.\")
-        (Err e) (io/println (str \"Write failed: \" e)))
+  (def report (str/format \"Score: {}\" [score]))
+  (match (io/write-file \"report.txt\" report)
+    (Ok _)  (io/println \"Report saved.\")
+    (Err e) (io/println (str \"Write failed: \" e)))
+  ```
 
   ## See Also
   - `io/read-file` — read a file back
@@ -160,9 +170,11 @@
 
   ## Examples
 
-      (io/path-join \"src\" \"main.nx\")           ; => \"src/main.nx\"
-      (io/path-join \"/home\" \"alice\" \"docs\")   ; => \"/home/alice/docs\"
-      (io/path-join base-dir \"config.json\")     ; dynamic prefix
+  ```nexl
+  (io/path-join \"src\" \"main.nx\")           ; => \"src/main.nx\"
+  (io/path-join \"/home\" \"alice\" \"docs\")   ; => \"/home/alice/docs\"
+  (io/path-join base-dir \"config.json\")     ; dynamic prefix
+  ```
 
   ## See Also
   - `io/read-file` — use the joined path to read
@@ -185,12 +197,14 @@
 
   ## Examples
 
-      (when (io/file-exists? \".env\")
-        (env/load-dotenv \".env\"))
+  ```nexl
+  (when (io/file-exists? \".env\")
+    (env/load-dotenv \".env\"))
 
-      (if (io/file-exists? output-path)
-        (io/println \"Output already exists — skipping.\")
-        (generate! output-path))
+  (if (io/file-exists? output-path)
+    (io/println \"Output already exists — skipping.\")
+    (generate! output-path))
+  ```
 
   ## See Also
   - `io/read-file` — read a file (returns Err if missing)
@@ -214,12 +228,14 @@
 
   ## Examples
 
-      (def entries (io/read-dir \"src\")?)
-      (def nx-files (filter (fn [f] (str/ends-with? f \".nx\")) entries))
+  ```nexl
+  (def entries (io/read-dir \"src\")?)
+  (def nx-files (filter (fn [f] (str/ends-with? f \".nx\")) entries))
 
-      (match (io/read-dir \".\")
-        (Ok names) (each [name names] (io/println name))
-        (Err e)    (io/println (str \"Error: \" e)))
+  (match (io/read-dir \".\")
+    (Ok names) (each [name names] (io/println name))
+    (Err e)    (io/println (str \"Error: \" e)))
+  ```
 
   ## See Also
   - `io/file-exists?` — test a single path
@@ -242,11 +258,13 @@
 
   ## Examples
 
-      (io/delete-file \"temp.txt\")?
+  ```nexl
+  (io/delete-file \"temp.txt\")?
 
-      (match (io/delete-file cache-path)
-        (Ok _)  (io/println \"Cache cleared.\")
-        (Err e) (io/println (str \"Could not delete: \" e)))
+  (match (io/delete-file cache-path)
+    (Ok _)  (io/println \"Cache cleared.\")
+    (Err e) (io/println (str \"Could not delete: \" e)))
+  ```
 
   ## See Also
   - `io/file-exists?` — check first if needed

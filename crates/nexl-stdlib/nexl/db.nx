@@ -24,13 +24,15 @@
 
   ## Examples
 
-      ;; In-memory database (for tests / demos)
-      (def db (db/open \":memory:\")?)
+  ```nexl
+  ;; In-memory database (for tests / demos)
+  (def db (db/open \":memory:\")?)
 
-      ;; Persistent file database
-      (def db (match (db/open \"data/app.db\")
-                (Ok d)  d
-                (Err e) (panic (str \"Cannot open DB: \" e))))
+  ;; Persistent file database
+  (def db (match (db/open \"data/app.db\")
+            (Ok d)  d
+            (Err e) (panic (str \"Cannot open DB: \" e))))
+  ```
 
   ## See Also
   - `db/close` — release the handle
@@ -54,9 +56,11 @@
 
   ## Examples
 
-      (def db (db/open \":memory:\")?)
-      ;; ... use db ...
-      (db/close db)
+  ```nexl
+  (def db (db/open \":memory:\")?)
+  ;; ... use db ...
+  (db/close db)
+  ```
 
   ## See Also
   - `db/open` — open a handle
@@ -81,22 +85,24 @@
 
   ## Examples
 
-      ;; Create table
-      (db/execute db
-        \"CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)\"
-        [])?
+  ```nexl
+  ;; Create table
+  (db/execute db
+    \"CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)\"
+    [])?
 
-      ;; Insert a row
-      (db/execute db
-        \"INSERT INTO users (name) VALUES (?)\"
-        [\"Alice\"])?
+  ;; Insert a row
+  (db/execute db
+    \"INSERT INTO users (name) VALUES (?)\"
+    [\"Alice\"])?
 
-      ;; Update with multiple params
-      (let [rows-updated
-            (db/execute db
-              \"UPDATE users SET name = ? WHERE id = ?\"
-              [\"Bob\" 1])?]
-        (io/println (str \"Updated \" rows-updated \" row(s)\")))
+  ;; Update with multiple params
+  (let [rows-updated
+        (db/execute db
+          \"UPDATE users SET name = ? WHERE id = ?\"
+          [\"Bob\" 1])?]
+    (io/println (str \"Updated \" rows-updated \" row(s)\")))
+  ```
 
   ## See Also
   - `db/query` — run a SELECT and get rows back
@@ -122,18 +128,20 @@
 
   ## Examples
 
-      (def rows (db/query db \"SELECT * FROM users\" [])?)
-      (each [row rows]
-        (io/println (str \"User: \" (:name row))))
+  ```nexl
+  (def rows (db/query db \"SELECT * FROM users\" [])?)
+  (each [row rows]
+    (io/println (str \"User: \" (:name row))))
 
-      ;; Parameterised query
-      (def rows (db/query db
-                  \"SELECT * FROM orders WHERE user_id = ? AND status = ?\"
-                  [user-id \"placed\"])?
+  ;; Parameterised query
+  (def rows (db/query db
+              \"SELECT * FROM orders WHERE user_id = ? AND status = ?\"
+              [user-id \"placed\"])?
 
-      ;; Single row lookup
-      (def rows (db/query db \"SELECT last_insert_rowid() AS id\" [])?)
-      (def new-id (:id (match (first rows) (Some r) r None (panic \"no row\"))))
+  ;; Single row lookup
+  (def rows (db/query db \"SELECT last_insert_rowid() AS id\" [])?)
+  (def new-id (:id (match (first rows) (Some r) r None (panic \"no row\"))))
+  ```
 
   ## See Also
   - `db/execute` — for INSERT / UPDATE / DELETE / DDL

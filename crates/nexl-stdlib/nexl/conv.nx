@@ -20,11 +20,13 @@
 
   ## Examples
 
-      (conv/->int 3.9)       ; => 3   (truncated, not rounded)
-      (conv/->int 3.1)       ; => 3
-      (conv/->int \"42\")    ; => 42
-      (conv/->int true)      ; => 1
-      (conv/->int false)     ; => 0
+  ```nexl
+  (conv/->int 3.9)       ; => 3   (truncated, not rounded)
+  (conv/->int 3.1)       ; => 3
+  (conv/->int \"42\")    ; => 42
+  (conv/->int true)      ; => 1
+  (conv/->int false)     ; => 0
+  ```
 
   ## See Also
   - `conv/->float` — convert to Float
@@ -49,9 +51,11 @@
 
   ## Examples
 
-      (conv/->float 3)          ; => 3.0
-      (conv/->float \"3.14\")   ; => 3.14
-      (conv/->float \"1e10\")   ; => 10000000000.0
+  ```nexl
+  (conv/->float 3)          ; => 3.0
+  (conv/->float \"3.14\")   ; => 3.14
+  (conv/->float \"1e10\")   ; => 10000000000.0
+  ```
 
   ## See Also
   - `conv/->int` — convert to Int
@@ -74,12 +78,14 @@
 
   ## Examples
 
-      (conv/->str 42)           ; => \"42\"
-      (conv/->str 3.14)         ; => \"3.14\"
-      (conv/->str true)         ; => \"true\"
-      (conv/->str [1 2 3])      ; => \"[1 2 3]\"
-      (conv/->str {:a 1})       ; => \"{:a 1}\"
-      (conv/->str unit)         ; => \"unit\"
+  ```nexl
+  (conv/->str 42)           ; => \"42\"
+  (conv/->str 3.14)         ; => \"3.14\"
+  (conv/->str true)         ; => \"true\"
+  (conv/->str [1 2 3])      ; => \"[1 2 3]\"
+  (conv/->str {:a 1})       ; => \"{:a 1}\"
+  (conv/->str unit)         ; => \"unit\"
+  ```
 
   ## See Also
   - `str` — built-in concatenating string conversion

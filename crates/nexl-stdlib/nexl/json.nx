@@ -27,13 +27,15 @@
 
   ## Examples
 
-      (json/encode 42)                  ; => \"42\"
-      (json/encode \"hello\")           ; => \"\\\"hello\\\"\"
-      (json/encode [1 2 3])            ; => \"[1,2,3]\"
-      (json/encode {:name \"Alice\" :age 30})
-      ; => \"{\\\"name\\\":\\\"Alice\\\",\\\"age\\\":30}\"
-      (json/encode true)               ; => \"true\"
-      (json/encode unit)               ; => \"null\"
+  ```nexl
+  (json/encode 42)                  ; => \"42\"
+  (json/encode \"hello\")           ; => \"\\\"hello\\\"\"
+  (json/encode [1 2 3])            ; => \"[1,2,3]\"
+  (json/encode {:name \"Alice\" :age 30})
+  ; => \"{\\\"name\\\":\\\"Alice\\\",\\\"age\\\":30}\"
+  (json/encode true)               ; => \"true\"
+  (json/encode unit)               ; => \"null\"
+  ```
 
   ## See Also
   - `json/pretty` — indented, human-readable output
@@ -64,16 +66,18 @@
 
   ## Examples
 
-      (def val (json/decode \"{\\\"x\\\":1,\\\"y\\\":2}\")?)
-      (get val \"x\")                    ; => (Some 1)
+  ```nexl
+  (def val (json/decode \"{\\\"x\\\":1,\\\"y\\\":2}\")?)
+  (get val \"x\")                    ; => (Some 1)
 
-      (match (json/decode input)
-        (Ok v)  (process v)
-        (Err e) (io/println (str \"Bad JSON: \" e)))
+  (match (json/decode input)
+    (Ok v)  (process v)
+    (Err e) (io/println (str \"Bad JSON: \" e)))
 
-      ;; Round-trip
-      (def original {:items [1 2 3] :done false})
-      (def roundtrip (json/decode (json/encode original))?)
+  ;; Round-trip
+  (def original {:items [1 2 3] :done false})
+  (def roundtrip (json/decode (json/encode original))?)
+  ```
 
   ## See Also
   - `json/encode` — serialise to JSON
@@ -97,17 +101,19 @@
 
   ## Examples
 
-      (io/println (json/pretty {:name \"Alice\" :scores [95 87 100]}))
-      ;; {
-      ;;   \"name\": \"Alice\",
-      ;;   \"scores\": [
-      ;;     95,
-      ;;     87,
-      ;;     100
-      ;;   ]
-      ;; }
+  ```nexl
+  (io/println (json/pretty {:name \"Alice\" :scores [95 87 100]}))
+  ;; {
+  ;;   \"name\": \"Alice\",
+  ;;   \"scores\": [
+  ;;     95,
+  ;;     87,
+  ;;     100
+  ;;   ]
+  ;; }
 
-      (io/write-file \"out.json\" (json/pretty result))?
+  (io/write-file \"out.json\" (json/pretty result))?
+  ```
 
   ## See Also
   - `json/encode` — compact single-line output

@@ -21,8 +21,10 @@
 
   ## Examples
 
-      (def body (net/get \"http://example.com\")?)
-      (io/println (str \"Got \" (count body) \" bytes\"))
+  ```nexl
+  (def body (net/get \"http://example.com\")?)
+  (io/println (str \"Got \" (count body) \" bytes\"))
+  ```
 
   ## See Also
   - `http/get` — higher-level API with status/headers
@@ -42,7 +44,9 @@
 
   ## Examples
 
-      (def resp (net/post url (json/encode payload))?)
+  ```nexl
+  (def resp (net/post url (json/encode payload))?)
+  ```
 
   ## See Also
   - `http/post` — higher-level API with status/headers

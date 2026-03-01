@@ -359,29 +359,599 @@ fn stdlib_docs() -> &'static HashMap<String, String> {
 /// Return documentation for a special form, if known.
 fn special_form_doc(name: &str) -> Option<&'static str> {
     Some(match name {
-        "defn" => "`(defn name \"doc?\" [params] body)` — Define a named function.",
-        "def" => "`(def name expr)` — Bind a value to a name.",
-        "fn" => "`(fn [params] body)` — Create an anonymous function.",
-        "let" => "`(let [name val ...] body)` — Bind local variables.",
-        "if" => "`(if test then else)` — Conditional branch.",
-        "do" => "`(do exprs...)` — Evaluate forms sequentially, return last.",
-        "when" => "`(when test body...)` — Evaluate body when test is true.",
-        "unless" => "`(unless test body...)` — Evaluate body when test is false.",
-        "cond" => "`(cond test1 result1 ...)` — Multi-way conditional.",
-        "match" => "`(match expr pattern1 body1 ...)` — Pattern matching.",
-        "loop" => "`(loop [name val ...] body)` — Loop with rebindable locals.",
-        "recur" => "`(recur args...)` — Tail-recursive jump back to enclosing loop/fn.",
-        "deftype" => "`(deftype Name variants...)` — Define an algebraic data type.",
-        "defeffect" => "`(defeffect Name operations...)` — Define an effect type.",
-        "defprotocol" => "`(defprotocol Name methods...)` — Define a protocol (interface).",
-        "handle" => "`(handle expr handlers...)` — Handle effects from an expression.",
-        "module" => {
-            "`(module name :imports [[mod :as alias] ...] :exports [...])` — Declare module with imports."
-        }
-        "import" => "`(import module-path :as alias)` — Import a module (standalone form).",
-        "try" => "`(try expr (catch pattern body))` — Error handling.",
-        "for" => "`(for [binding clause ...] body)` — List comprehension.",
-        "each" => "`(each [binding iterable] body)` — Iterate for side effects.",
+        "defn" => r#"**`defn`** — Define a named function.
+
+## Syntax
+```nexl
+(defn name [params] body)
+(defn name "docstring" [params] body)
+(defn name "docstring" [params] :requires [guards] body)
+```
+
+## Parameters
+- `name` — function name (symbol)
+- `[params]` — parameter vector; use `[& rest]` for variadic
+- `body` — one or more expressions; last value is returned
+
+## Examples
+```nexl
+(defn square [x] (* x x))
+(square 4)   ; => 16
+
+(defn greet
+  "Return a greeting string."
+  [name]
+  (str "Hello, " name "!"))
+
+(defn safe-div
+  "Divide a by b, guarding against zero."
+  [a b]
+  :requires [(not (= b 0))]
+  (/ a b))
+```
+
+## See Also
+- `fn` — anonymous function literal
+- `def` — bind a non-function value
+"#,
+        "def" => r#"**`def`** — Bind a value to a name in the current scope.
+
+## Syntax
+```nexl
+(def name expr)
+(def name "docstring" expr)
+```
+
+## Parameters
+- `name` — symbol to bind
+- `expr` — value expression (evaluated once)
+
+## Examples
+```nexl
+(def pi 3.14159)
+(def greeting "Hello, world!")
+(def items [1 2 3 4 5])
+
+(def max-retries "Number of HTTP retry attempts." 3)
+```
+
+## See Also
+- `defn` — define a function
+- `let` — bind locals within an expression
+"#,
+        "fn" => r#"**`fn`** — Create an anonymous function.
+
+## Syntax
+```nexl
+(fn [params] body)
+(fn [a & rest] body)
+```
+
+## Parameters
+- `[params]` — parameter vector; `& rest` captures remaining args as a vector
+- `body` — one or more expressions; last is returned
+
+## Examples
+```nexl
+(def double (fn [x] (* x 2)))
+(double 5)   ; => 10
+
+(map (fn [x] (* x x)) [1 2 3 4])   ; => [1 4 9 16]
+
+;; Immediately-invoked
+((fn [x y] (+ x y)) 3 4)   ; => 7
+```
+
+## See Also
+- `defn` — named function definition
+- `partial` — partially apply a function
+"#,
+        "let" => r#"**`let`** — Bind local variables within an expression.
+
+## Syntax
+```nexl
+(let [name1 val1
+      name2 val2
+      ...] body)
+```
+
+## Parameters
+- Bindings are sequential — later bindings can refer to earlier ones.
+- `body` — one or more expressions; last is returned.
+
+## Examples
+```nexl
+(let [x 10
+      y (* x 2)]
+  (+ x y))   ; => 30
+
+(let [msg (str "Hello, " name "!")]
+  (io/println msg)
+  msg)
+```
+
+## See Also
+- `def` — top-level binding
+- `do` — sequential forms without new bindings
+"#,
+        "if" => r#"**`if`** — Conditional branch.
+
+## Syntax
+```nexl
+(if test then else)
+```
+
+## Parameters
+- `test` — must be a `Bool` (no truthy/falsy coercion)
+- `then` — evaluated when test is `true`
+- `else` — evaluated when test is `false`; required
+
+## Examples
+```nexl
+(if (> x 0) "positive" "non-positive")
+
+(if (str/blank? input)
+  (io/println "empty")
+  (io/println input))
+```
+
+## See Also
+- `when` — one-armed conditional (no else branch)
+- `cond` — multi-way conditional
+- `match` — pattern-based dispatch
+"#,
+        "do" => r#"**`do`** — Evaluate a sequence of expressions, returning the last.
+
+## Syntax
+```nexl
+(do expr1 expr2 ... exprN)
+```
+
+## Parameters
+- `expr1 ... exprN-1` — evaluated for side effects; return values discarded
+- `exprN` — return value of the whole `do` block
+
+## Examples
+```nexl
+(do
+  (io/println "step 1")
+  (io/println "step 2")
+  42)   ; => 42
+
+(if condition
+  (do (log/info "branch A")
+      (update-state!))
+  (log/info "branch B"))
+```
+
+## See Also
+- `let` — sequence + new bindings
+- `when` — conditional do-block
+"#,
+        "when" => r#"**`when`** — Evaluate body expressions when test is true.
+
+## Syntax
+```nexl
+(when test body...)
+```
+
+## Parameters
+- `test` — `Bool` condition
+- `body` — one or more expressions; returns last value, or `Unit` when skipped
+
+## Examples
+```nexl
+(when (> count 0)
+  (io/println "items found:")
+  (io/println count))
+
+(when (not valid?)
+  (log/warn "invalid input")
+  (sys/exit 1))
+```
+
+## See Also
+- `unless` — negated form
+- `if` — two-armed conditional with required else
+"#,
+        "unless" => r#"**`unless`** — Evaluate body when test is false.
+
+## Syntax
+```nexl
+(unless test body...)
+```
+
+## Parameters
+- `test` — `Bool` condition; body runs when `false`
+- `body` — one or more expressions; returns last, or `Unit` when skipped
+
+## Examples
+```nexl
+(unless (file-exists? path)
+  (io/println "File not found")
+  (sys/exit 1))
+
+(unless (str/blank? name)
+  (greet name))
+```
+
+## See Also
+- `when` — positive form
+- `if` — two-armed conditional
+"#,
+        "cond" => r#"**`cond`** — Multi-way conditional dispatch.
+
+## Syntax
+```nexl
+(cond
+  test1 result1
+  test2 result2
+  ...
+  :else  default)
+```
+
+## Parameters
+- Pairs of `test` / `result` evaluated in order; first true test wins.
+- `:else` is the conventional catch-all (always true).
+
+## Examples
+```nexl
+(cond
+  (< x 0)  "negative"
+  (= x 0)  "zero"
+  :else     "positive")
+
+(cond
+  (str/starts-with? s "http")  :url
+  (str/starts-with? s "/")     :path
+  :else                        :name)
+```
+
+## See Also
+- `if` — two-armed conditional
+- `match` — pattern-based dispatch
+"#,
+        "match" => r#"**`match`** — Pattern match an expression against a list of patterns.
+
+## Syntax
+```nexl
+(match expr
+  pattern1 result1
+  pattern2 result2
+  ...
+  _        default)
+```
+
+## Patterns
+- `_` — wildcard, matches anything (does not bind)
+- `name` — variable pattern, binds matched value
+- `(Ctor args...)` — ADT constructor pattern
+- `:keyword` or literal — exact value match
+
+## Examples
+```nexl
+(match status
+  (Some v)  (io/println v)
+  _         (io/println "nothing"))
+
+(match order-status
+  (Draft)      "draft"
+  (Placed)     "placed"
+  (Cancelled)  "cancelled"
+  _            "other")
+
+(match (http/get url)
+  (Ok resp)  (http/body resp)
+  (Err msg)  (do (log/error msg) ""))
+```
+
+## See Also
+- `cond` — predicate-based dispatch
+- `if` — simple boolean branch
+"#,
+        "loop" => r#"**`loop`** — Loop with rebindable local variables.
+
+## Syntax
+```nexl
+(loop [name1 init1
+       name2 init2
+       ...] body)
+```
+
+## Parameters
+- Bindings provide initial values for loop variables.
+- `body` — call `recur` with new values to continue, or return a value to exit.
+
+## Examples
+```nexl
+(loop [i 0  acc 0]
+  (if (= i 10)
+    acc
+    (recur (+ i 1) (+ acc i))))   ; => 45
+
+;; Countdown
+(loop [n 5]
+  (when (> n 0)
+    (io/println n)
+    (recur (- n 1))))
+```
+
+## See Also
+- `recur` — tail-recursive jump back to `loop`
+- `each` — iterate over a collection
+"#,
+        "recur" => r#"**`recur`** — Tail-recursive jump to the enclosing `loop` or function.
+
+## Syntax
+```nexl
+(recur new-val1 new-val2 ...)
+```
+
+## Parameters
+- Must be in tail position within a `loop` or `fn`/`defn` body.
+- Argument count must match the number of loop bindings or function parameters.
+
+## Examples
+```nexl
+;; Sum via loop/recur
+(loop [items [1 2 3 4 5]  acc 0]
+  (if (= (count items) 0)
+    acc
+    (recur (rest items) (+ acc (first items)))))   ; => 15
+
+;; Fibonacci
+(defn fib-iter [n a b]
+  (if (= n 0) a
+    (recur (- n 1) b (+ a b))))
+```
+
+## See Also
+- `loop` — creates a recur target with local bindings
+"#,
+        "deftype" => r#"**`deftype`** — Define an algebraic data type (record or sum type).
+
+## Syntax
+```nexl
+;; Record type (single constructor)
+(deftype Name {:field1 Type1  :field2 Type2})
+
+;; Sum type (multiple variants, | separators required)
+(deftype Name | Variant1 | (Variant2 field) | (Variant3 f1 f2))
+```
+
+## Examples
+```nexl
+;; Record
+(deftype Point {:x Float :y Float})
+(def p (Point {:x 1.0 :y 2.0}))
+(:x p)   ; => 1.0
+
+;; Sum type
+(deftype Color | Red | Green | Blue)
+(deftype Shape | (Circle Float) | (Rect Float Float))
+
+;; With match
+(match shape
+  (Circle r)    (* 3.14159 r r)
+  (Rect w h)    (* w h))
+```
+
+## See Also
+- `match` — pattern match on ADT variants
+- `defprotocol` — define an interface
+"#,
+        "defeffect" => r#"**`defeffect`** — Define an algebraic effect type.
+
+## Syntax
+```nexl
+(defeffect Name
+  (operation-name [param-types] return-type)
+  ...)
+```
+
+## Examples
+```nexl
+(defeffect Log
+  (log-line [Str] Unit))
+
+(defeffect State
+  (get-state [] Int)
+  (put-state [Int] Unit))
+```
+
+## See Also
+- `handle` — provide an effect handler
+- `defprotocol` — interface without effect semantics
+"#,
+        "defprotocol" => r#"**`defprotocol`** — Define a protocol (structural interface).
+
+## Syntax
+```nexl
+(defprotocol Name
+  (method-name [self param-types] return-type)
+  ...)
+```
+
+## Examples
+```nexl
+(defprotocol Printable
+  (print-self [self] Unit))
+
+(defprotocol Comparable
+  (compare-to [self other] Int))
+```
+
+## See Also
+- `deftype` — define a concrete type
+- `defeffect` — algebraic effect signature
+"#,
+        "handle" => r#"**`handle`** — Handle algebraic effects raised within an expression.
+
+## Syntax
+```nexl
+(handle expr
+  (EffectName/operation [params] k body)
+  ...)
+```
+
+## Parameters
+- `expr` — expression that may raise effects
+- Each clause names the effect and operation, binds params and the continuation `k`
+- Call `(k value)` to resume; omit to abort
+
+## Examples
+```nexl
+(handle (log-something)
+  (Log/log-line [msg] k
+    (io/println (str "[LOG] " msg))
+    (k Unit)))
+```
+
+## See Also
+- `defeffect` — declare the effect type
+"#,
+        "module" => r#"**`module`** — Declare the current file's module identity, imports, and exports.
+
+## Syntax
+```nexl
+(module name
+  :imports [[mod :as alias] ...]
+  :exports [sym1 sym2 ...]
+  :performs [EffectName ...])
+```
+
+## Parameters
+- `name` — fully-qualified module name (e.g. `market.catalog.domain`)
+- `:imports` — list of `[module-path :as alias]` pairs
+- `:exports` — symbols to expose to other modules
+- `:performs` — effects this module may raise (for effect checking)
+
+## Examples
+```nexl
+(module market.catalog.domain
+  :imports [[nexl.stdlib.db   :as db]
+            [nexl.stdlib.json :as json]]
+  :exports [create-product get-catalog]
+  :performs [Db])
+```
+
+## See Also
+- `import` — standalone import form
+"#,
+        "import" => r#"**`import`** — Import a module (standalone form).
+
+## Syntax
+```nexl
+(import module-path :as alias)
+(import module-path)
+```
+
+## Parameters
+- `module-path` — dotted module path or stdlib name
+- `:as alias` — local alias for the module
+
+## Examples
+```nexl
+(import nexl.stdlib.json :as json)
+(json/encode {:a 1})
+
+(import my.utils.string)
+```
+
+## See Also
+- `module` — full module declaration with exports and effects
+"#,
+        "try" => r#"**`try`** — Evaluate an expression, catching any errors.
+
+## Syntax
+```nexl
+(try expr
+  (catch pattern body))
+```
+
+## Parameters
+- `expr` — expression that may return `(Err ...)` or propagate an error
+- `(catch pattern body)` — pattern matched against the error; body is the recovery expression
+
+## Examples
+```nexl
+(try (db/query conn "SELECT ...")
+  (catch msg
+    (do (log/error msg) [])))
+
+(try (json/decode raw)
+  (catch e
+    (do (log/warn (str "bad JSON: " e))
+        {})))
+```
+
+## See Also
+- `?` — propagate error without catching
+- `match` — pattern match on `Ok`/`Err` directly
+"#,
+        "for" => r#"**`for`** — List comprehension over one or more collections.
+
+## Syntax
+```nexl
+(for [binding source
+      :when pred
+      ...] body)
+```
+
+## Parameters
+- `binding source` — bind each element of `source`
+- `:when pred` — optional filter; skips items where pred is false
+- `body` — expression producing the result element
+
+## Examples
+```nexl
+(for [x [1 2 3 4 5]] (* x x))
+; => [1 4 9 16 25]
+
+(for [x [1 2 3 4 5]
+      :when (= (mod x 2) 0)]
+  (* x x))
+; => [4 16]
+
+(for [x [1 2 3]
+      y [10 20]]
+  (+ x y))
+; => [11 21 12 22 13 23]
+```
+
+## See Also
+- `map` — transform a single collection
+- `filter` — filter without transformation
+- `each` — iterate for side effects
+"#,
+        "each" => r#"**`each`** — Iterate over a collection for side effects.
+
+## Syntax
+```nexl
+(each [binding collection] body...)
+```
+
+## Parameters
+- `binding` — symbol bound to each element
+- `collection` — any `Vec` or `Set`
+- `body` — one or more expressions evaluated for side effects; returns `Unit`
+
+## Examples
+```nexl
+(each [item [1 2 3]]
+  (io/println item))
+; prints 1, 2, 3
+
+(each [user users]
+  (log/info (str "processing " (:name user)))
+  (process-user! user))
+```
+
+## See Also
+- `for` — list comprehension (returns a collection)
+- `map` — transform a collection
+- `loop` — loop with mutable locals
+"#,
         _ => return None,
     })
 }
