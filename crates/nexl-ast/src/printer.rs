@@ -1404,12 +1404,24 @@ fn write_char(c: char, out: &mut String) {
 /// formatting.  The Nexl lexer accepts both forms; the canonical formatted
 /// output uses literal newlines.
 fn write_str(s: &str, out: &mut String) {
+    if s.contains('\n') {
+        // Multi-line strings use triple-quoted form so the formatter
+        // roundtrips them correctly (dedent_triple strips the leading/trailing
+        // blank lines we add here, recovering the original content).
+        out.push_str("\"\"\"");
+        out.push('\n');
+        out.push_str(s);
+        if !s.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("\"\"\"");
+        return;
+    }
     out.push('"');
     for c in s.chars() {
         match c {
             '\\' => out.push_str("\\\\"),
             '"' => out.push_str("\\\""),
-            '\n' => out.push('\n'),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
             c => out.push(c),
@@ -1570,13 +1582,13 @@ mod tests {
     }
 
     // ── 17. print_string_literal_newline ──────────────────────────────────
-    // Newlines in strings are emitted as literal newlines (canonical form),
-    // not as \n escapes.  Both forms are accepted by the lexer; the formatter
-    // normalises to the readable multiline representation.
+    // Multi-line strings are emitted as triple-quoted strings so the formatter
+    // roundtrips them: dedent_triple strips the surrounding blank lines and
+    // recovers the original content.
     #[test]
     fn print_string_literal_newline() {
         let node = atom_node(Atom::Str("a\nb".to_string()));
-        assert_eq!(pp().print(&node), "\"a\nb\"");
+        assert_eq!(pp().print(&node), "\"\"\"\na\nb\n\"\"\"");
     }
 
     // ── 18. print_string_escape_backslash ─────────────────────────────────
