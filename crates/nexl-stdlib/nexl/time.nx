@@ -16,13 +16,13 @@
   ## Examples
 
   ```nexl
-  (def start (time/now))
-  (do-work)
-  (def elapsed (- (time/now) start))
-  (io/println (str \"Elapsed ms: \" elapsed))
+(def start (time/now))
+(do-work)
+(def elapsed (- (time/now) start))
+(io/println (str \"Elapsed ms: \" elapsed))
 
-  ;; Timestamp in seconds
-  (def ts-seconds (/ (time/now) 1000))
+;; Timestamp in seconds
+(def ts-seconds (/ (time/now) 1000))
   ```
 
   ## See Also
@@ -44,10 +44,10 @@
   ## Examples
 
   ```nexl
-  (def t0 (time/monotonic))
-  (compute-something)
-  (def ns (- (time/monotonic) t0))
-  (io/println (str/format \"Took {:.3} ms\" [(/ ns 1000000.0)]))
+(def t0 (time/monotonic))
+(compute-something)
+(def ns (- (time/monotonic) t0))
+(io/println (str/format \"Took {:.3} ms\" [(/ ns 1000000.0)]))
   ```
 
   ## See Also
@@ -71,8 +71,8 @@
   ## Examples
 
   ```nexl
-  (def timeout (time/millis 5000))   ; 5 seconds
-  (async/sleep timeout)
+(def timeout (time/millis 5000))   ; 5 seconds
+(async/sleep timeout)
   ```
   "
   [ms]

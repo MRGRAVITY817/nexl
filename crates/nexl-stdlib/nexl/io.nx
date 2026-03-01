@@ -20,11 +20,11 @@
   ## Examples
 
   ```nexl
-  (io/println \"Hello, world!\")        ; Hello, world!
-  (io/println 42)                       ; 42
-  (io/println [1 2 3])                  ; [1 2 3]
-  (io/println {:name \"Alice\" :age 30}) ; {:name Alice :age 30}
-  (io/println true)                     ; true
+(io/println \"Hello, world!\")        ; Hello, world!
+(io/println 42)                       ; 42
+(io/println [1 2 3])                  ; [1 2 3]
+(io/println {:name \"Alice\" :age 30}) ; {:name Alice :age 30}
+(io/println true)                     ; true
   ```
 
   ## See Also
@@ -50,14 +50,14 @@
   ## Examples
 
   ```nexl
-  (io/print \"Enter your name: \")
-  (def name (io/read-line))
+(io/print \"Enter your name: \")
+(def name (io/read-line))
 
-  (do
-    (io/print \"Loading\")
-    (io/print \".\")
-    (io/print \".\")
-    (io/println \"done\"))          ; Loading...done
+(do
+  (io/print \"Loading\")
+  (io/print \".\")
+  (io/print \".\")
+  (io/println \"done\"))          ; Loading...done
   ```
 
   ## See Also
@@ -78,12 +78,12 @@
   ## Examples
 
   ```nexl
-  (def line (io/read-line)?)          ; propagate error with ?
-  (io/println (str \"You typed: \" line))
+(def line (io/read-line)?)          ; propagate error with ?
+(io/println (str \"You typed: \" line))
 
-  (match (io/read-line)
-    (Ok text) (io/println (str \"Got: \" text))
-    (Err e)   (io/println (str \"EOF or error: \" e)))
+(match (io/read-line)
+  (Ok text) (io/println (str \"Got: \" text))
+  (Err e)   (io/println (str \"EOF or error: \" e)))
   ```
 
   ## See Also
@@ -109,12 +109,12 @@
   ## Examples
 
   ```nexl
-  (def src (io/read-file \"config.json\")?)
-  (def cfg (json/decode src)?)
+(def src (io/read-file \"config.json\")?)
+(def cfg (json/decode src)?)
 
-  (match (io/read-file \"/etc/hosts\")
-    (Ok content) (io/println (str \"Lines: \" (count (str/split content \"\\n\"))))
-    (Err e)      (io/println (str \"Error: \" e)))
+(match (io/read-file \"/etc/hosts\")
+  (Ok content) (io/println (str \"Lines: \" (count (str/split content \"\\n\"))))
+  (Err e)      (io/println (str \"Error: \" e)))
   ```
 
   ## See Also
@@ -140,12 +140,12 @@
   ## Examples
 
   ```nexl
-  (io/write-file \"output.txt\" \"Hello, world!\")?
+(io/write-file \"output.txt\" \"Hello, world!\")?
 
-  (def report (str/format \"Score: {}\" [score]))
-  (match (io/write-file \"report.txt\" report)
-    (Ok _)  (io/println \"Report saved.\")
-    (Err e) (io/println (str \"Write failed: \" e)))
+(def report (str/format \"Score: {}\" [score]))
+(match (io/write-file \"report.txt\" report)
+  (Ok _)  (io/println \"Report saved.\")
+  (Err e) (io/println (str \"Write failed: \" e)))
   ```
 
   ## See Also
@@ -171,9 +171,9 @@
   ## Examples
 
   ```nexl
-  (io/path-join \"src\" \"main.nx\")           ; => \"src/main.nx\"
-  (io/path-join \"/home\" \"alice\" \"docs\")   ; => \"/home/alice/docs\"
-  (io/path-join base-dir \"config.json\")     ; dynamic prefix
+(io/path-join \"src\" \"main.nx\")           ; => \"src/main.nx\"
+(io/path-join \"/home\" \"alice\" \"docs\")   ; => \"/home/alice/docs\"
+(io/path-join base-dir \"config.json\")     ; dynamic prefix
   ```
 
   ## See Also
@@ -198,12 +198,12 @@
   ## Examples
 
   ```nexl
-  (when (io/file-exists? \".env\")
-    (env/load-dotenv \".env\"))
+(when (io/file-exists? \".env\")
+  (env/load-dotenv \".env\"))
 
-  (if (io/file-exists? output-path)
-    (io/println \"Output already exists — skipping.\")
-    (generate! output-path))
+(if (io/file-exists? output-path)
+  (io/println \"Output already exists — skipping.\")
+  (generate! output-path))
   ```
 
   ## See Also
@@ -229,12 +229,12 @@
   ## Examples
 
   ```nexl
-  (def entries (io/read-dir \"src\")?)
-  (def nx-files (filter (fn [f] (str/ends-with? f \".nx\")) entries))
+(def entries (io/read-dir \"src\")?)
+(def nx-files (filter (fn [f] (str/ends-with? f \".nx\")) entries))
 
-  (match (io/read-dir \".\")
-    (Ok names) (each [name names] (io/println name))
-    (Err e)    (io/println (str \"Error: \" e)))
+(match (io/read-dir \".\")
+  (Ok names) (each [name names] (io/println name))
+  (Err e)    (io/println (str \"Error: \" e)))
   ```
 
   ## See Also
@@ -259,11 +259,11 @@
   ## Examples
 
   ```nexl
-  (io/delete-file \"temp.txt\")?
+(io/delete-file \"temp.txt\")?
 
-  (match (io/delete-file cache-path)
-    (Ok _)  (io/println \"Cache cleared.\")
-    (Err e) (io/println (str \"Could not delete: \" e)))
+(match (io/delete-file cache-path)
+  (Ok _)  (io/println \"Cache cleared.\")
+  (Err e) (io/println (str \"Could not delete: \" e)))
   ```
 
   ## See Also

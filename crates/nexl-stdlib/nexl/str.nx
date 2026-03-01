@@ -21,13 +21,13 @@
   ## Examples
 
   ```nexl
-  (str/split \"a,b,c\" \",\")        ; => [\"a\" \"b\" \"c\"]
-  (str/split \"hello\" \"l\")        ; => [\"he\" \"\" \"o\"]
-  (str/split \"abc\" \"x\")          ; => [\"abc\"]
-  (str/split \"\" \",\")             ; => [\"\"]
+(str/split \"a,b,c\" \",\")        ; => [\"a\" \"b\" \"c\"]
+(str/split \"hello\" \"l\")        ; => [\"he\" \"\" \"o\"]
+(str/split \"abc\" \"x\")          ; => [\"abc\"]
+(str/split \"\" \",\")             ; => [\"\"]
 
-  ;; Split CSV line
-  (def cols (str/split line \",\"))
+;; Split CSV line
+(def cols (str/split line \",\"))
   ```
 
   ## See Also
@@ -54,10 +54,10 @@
   ## Examples
 
   ```nexl
-  (str/join [\"a\" \"b\" \"c\"] \",\")    ; => \"a,b,c\"
-  (str/join [\"one\"] \" | \")           ; => \"one\"
-  (str/join [] \"-\")                  ; => \"\"
-  (str/join words \" \")              ; reassemble sentence
+(str/join [\"a\" \"b\" \"c\"] \",\")    ; => \"a,b,c\"
+(str/join [\"one\"] \" | \")           ; => \"one\"
+(str/join [] \"-\")                  ; => \"\"
+(str/join words \" \")              ; reassemble sentence
   ```
 
   ## See Also
@@ -82,10 +82,10 @@
   ## Examples
 
   ```nexl
-  (str/trim \"  hello  \")    ; => \"hello\"
-  (str/trim \"\\t\\nfoo\\n\") ; => \"foo\"
-  (str/trim \"no-change\")    ; => \"no-change\"
-  (str/trim \"\")             ; => \"\"
+(str/trim \"  hello  \")    ; => \"hello\"
+(str/trim \"\\t\\nfoo\\n\") ; => \"foo\"
+(str/trim \"no-change\")    ; => \"no-change\"
+(str/trim \"\")             ; => \"\"
   ```
 
   ## See Also
@@ -108,8 +108,8 @@
   ## Examples
 
   ```nexl
-  (str/trim-start \"  hello  \")  ; => \"hello  \"
-  (str/trim-start \"\\nfoo\")     ; => \"foo\"
+(str/trim-start \"  hello  \")  ; => \"hello  \"
+(str/trim-start \"\\nfoo\")     ; => \"foo\"
   ```
 
   ## See Also
@@ -131,8 +131,8 @@
   ## Examples
 
   ```nexl
-  (str/trim-end \"  hello  \")  ; => \"  hello\"
-  (str/trim-end \"foo\\n\")     ; => \"foo\"
+(str/trim-end \"  hello  \")  ; => \"  hello\"
+(str/trim-end \"foo\\n\")     ; => \"foo\"
   ```
 
   ## See Also
@@ -157,10 +157,10 @@
   ## Examples
 
   ```nexl
-  (str/upper \"hello\")       ; => \"HELLO\"
-  (str/upper \"Hello World\") ; => \"HELLO WORLD\"
-  (str/upper \"café\")        ; => \"CAFÉ\"
-  (str/upper \"abc123\")      ; => \"ABC123\"
+(str/upper \"hello\")       ; => \"HELLO\"
+(str/upper \"Hello World\") ; => \"HELLO WORLD\"
+(str/upper \"café\")        ; => \"CAFÉ\"
+(str/upper \"abc123\")      ; => \"ABC123\"
   ```
 
   ## See Also
@@ -184,9 +184,9 @@
   ## Examples
 
   ```nexl
-  (str/lower \"HELLO\")       ; => \"hello\"
-  (str/lower \"Hello World\") ; => \"hello world\"
-  (str/lower \"CAFÉ\")        ; => \"café\"
+(str/lower \"HELLO\")       ; => \"hello\"
+(str/lower \"Hello World\") ; => \"hello world\"
+(str/lower \"CAFÉ\")        ; => \"café\"
   ```
 
   ## See Also
@@ -208,10 +208,10 @@
   ## Examples
 
   ```nexl
-  (str/starts-with? \"hello\" \"he\")   ; => true
-  (str/starts-with? \"hello\" \"lo\")   ; => false
-  (str/starts-with? \"abc\" \"\")       ; => true  (empty prefix always matches)
-  (str/starts-with? \"\" \"x\")         ; => false
+(str/starts-with? \"hello\" \"he\")   ; => true
+(str/starts-with? \"hello\" \"lo\")   ; => false
+(str/starts-with? \"abc\" \"\")       ; => true  (empty prefix always matches)
+(str/starts-with? \"\" \"x\")         ; => false
   ```
 
   ## See Also
@@ -234,10 +234,10 @@
   ## Examples
 
   ```nexl
-  (str/ends-with? \"hello.nx\" \".nx\")   ; => true
-  (str/ends-with? \"hello\" \"lo\")       ; => true
-  (str/ends-with? \"hello\" \"he\")       ; => false
-  (str/ends-with? \"abc\" \"\")           ; => true
+(str/ends-with? \"hello.nx\" \".nx\")   ; => true
+(str/ends-with? \"hello\" \"lo\")       ; => true
+(str/ends-with? \"hello\" \"he\")       ; => false
+(str/ends-with? \"abc\" \"\")           ; => true
   ```
 
   ## See Also
@@ -260,9 +260,9 @@
   ## Examples
 
   ```nexl
-  (str/contains? \"hello world\" \"world\")  ; => true
-  (str/contains? \"abc\" \"d\")              ; => false
-  (str/contains? \"abc\" \"\")              ; => true
+(str/contains? \"hello world\" \"world\")  ; => true
+(str/contains? \"abc\" \"d\")              ; => false
+(str/contains? \"abc\" \"\")              ; => true
   ```
 
   ## See Also
@@ -290,10 +290,10 @@
   ## Examples
 
   ```nexl
-  (str/replace \"hello world\" \"world\" \"Nexl\")  ; => \"hello Nexl\"
-  (str/replace \"aabbcc\" \"b\" \"X\")             ; => \"aaXXcc\"
-  (str/replace \"abc\" \"d\" \"e\")                ; => \"abc\"  (no match)
-  (str/replace \"   \" \" \" \"-\")               ; => \"---\"
+(str/replace \"hello world\" \"world\" \"Nexl\")  ; => \"hello Nexl\"
+(str/replace \"aabbcc\" \"b\" \"X\")             ; => \"aaXXcc\"
+(str/replace \"abc\" \"d\" \"e\")                ; => \"abc\"  (no match)
+(str/replace \"   \" \" \" \"-\")               ; => \"---\"
   ```
 
   ## See Also
@@ -320,13 +320,13 @@
   ## Examples
 
   ```nexl
-  (str/index-of \"hello\" \"ll\")    ; => (Some 2)
-  (str/index-of \"hello\" \"z\")     ; => None
-  (str/index-of \"abcabc\" \"bc\")   ; => (Some 1)  (first occurrence)
+(str/index-of \"hello\" \"ll\")    ; => (Some 2)
+(str/index-of \"hello\" \"z\")     ; => None
+(str/index-of \"abcabc\" \"bc\")   ; => (Some 1)  (first occurrence)
 
-  (match (str/index-of haystack needle)
-    (Some i) (io/println (str \"Found at \" i))
-    None     (io/println \"Not found\"))
+(match (str/index-of haystack needle)
+  (Some i) (io/println (str \"Found at \" i))
+  None     (io/println \"Not found\"))
   ```
 
   ## See Also
@@ -348,9 +348,9 @@
   ## Examples
 
   ```nexl
-  (str/blank? \"\")        ; => true
-  (str/blank? \"  \\t \")  ; => true
-  (str/blank? \" x \")    ; => false
+(str/blank? \"\")        ; => true
+(str/blank? \"  \\t \")  ; => true
+(str/blank? \" x \")    ; => false
   ```
 
   ## See Also
@@ -376,9 +376,9 @@
   ## Examples
 
   ```nexl
-  (str/chars \"abc\")     ; => [\\a \\b \\c]
-  (str/chars \"hi!\")     ; => [\\h \\i \\!]
-  (count (str/chars \"café\"))  ; => 4  (4 code points)
+(str/chars \"abc\")     ; => [\\a \\b \\c]
+(str/chars \"hi!\")     ; => [\\h \\i \\!]
+(count (str/chars \"café\"))  ; => 4  (4 code points)
   ```
 
   ## See Also
@@ -404,8 +404,8 @@
   ## Examples
 
   ```nexl
-  (str/graphemes \"café\")          ; => [\"c\" \"a\" \"f\" \"é\"]
-  (count (str/graphemes \"👨‍👩‍👧\")) ; => 1  (family emoji = 1 cluster)
+(str/graphemes \"café\")          ; => [\"c\" \"a\" \"f\" \"é\"]
+(count (str/graphemes \"👨‍👩‍👧\")) ; => 1  (family emoji = 1 cluster)
   ```
 
   ## See Also
@@ -431,17 +431,17 @@
   ## Examples
 
   ```nexl
-  (str/format \"Hello, {}!\" [\"Alice\"])
-  ; => \"Hello, Alice!\"
+(str/format \"Hello, {}!\" [\"Alice\"])
+; => \"Hello, Alice!\"
 
-  (str/format \"{} + {} = {}\" [1 2 3])
-  ; => \"1 + 2 = 3\"
+(str/format \"{} + {} = {}\" [1 2 3])
+; => \"1 + 2 = 3\"
 
-  (str/format \"Score: {}/{}\" [score max-score])
-  ; => \"Score: 42/100\"
+(str/format \"Score: {}/{}\" [score max-score])
+; => \"Score: 42/100\"
 
-  (str/format \"No placeholders\" [])
-  ; => \"No placeholders\"
+(str/format \"No placeholders\" [])
+; => \"No placeholders\"
   ```
 
   ## See Also

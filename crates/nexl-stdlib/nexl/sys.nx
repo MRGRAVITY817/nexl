@@ -16,11 +16,11 @@
   ## Examples
 
   ```nexl
-  (def cli-args (sys/args))
-  (when (= (count cli-args) 0)
-    (io/println \"Usage: nexl run tool.nx <input-file>\")
-    (sys/exit 1))
-  (def input-file (match (first cli-args) (Some f) f None \"\"))
+(def cli-args (sys/args))
+(when (= (count cli-args) 0)
+  (io/println \"Usage: nexl run tool.nx <input-file>\")
+  (sys/exit 1))
+(def input-file (match (first cli-args) (Some f) f None \"\"))
   ```
 
   ## See Also
@@ -45,7 +45,7 @@
   ## Examples
 
   ```nexl
-  (sys/getenv \"HOME\")   ; => (Some \"/home/alice\") or None
+(sys/getenv \"HOME\")   ; => (Some \"/home/alice\") or None
   ```
 
   ## See Also
@@ -71,11 +71,11 @@
   ## Examples
 
   ```nexl
-  (when (not valid-input?)
-    (io/println \"Error: invalid arguments.\")
-    (sys/exit 1))
+(when (not valid-input?)
+  (io/println \"Error: invalid arguments.\")
+  (sys/exit 1))
 
-  (sys/exit 0)   ; clean exit
+(sys/exit 0)   ; clean exit
   ```
   "
   [code]

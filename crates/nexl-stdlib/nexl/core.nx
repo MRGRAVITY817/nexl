@@ -18,10 +18,10 @@
   ## Examples
 
   ```nexl
-  (core/identity 42)               ; => 42
-  (core/identity \"hello\")        ; => \"hello\"
-  (map core/identity [1 2 3])      ; => [1 2 3]
-  (filter core/identity [true false true])  ; => [true true]
+(core/identity 42)               ; => 42
+(core/identity \"hello\")        ; => \"hello\"
+(map core/identity [1 2 3])      ; => [1 2 3]
+(filter core/identity [true false true])  ; => [true true]
   ```
 
   ## See Also
@@ -46,14 +46,14 @@
   ## Examples
 
   ```nexl
-  (def inc-and-double (core/comp (fn [x] (* x 2)) (fn [x] (+ x 1))))
-  (inc-and-double 3)   ; => 8   ((3+1)*2)
+(def inc-and-double (core/comp (fn [x] (* x 2)) (fn [x] (+ x 1))))
+(inc-and-double 3)   ; => 8   ((3+1)*2)
 
-  (def trim-upper (core/comp str/upper str/trim))
-  (trim-upper \"  hello  \")  ; => \"HELLO\"
+(def trim-upper (core/comp str/upper str/trim))
+(trim-upper \"  hello  \")  ; => \"HELLO\"
 
-  (map (core/comp str/upper str/trim) [\" a \" \" b \"])
-  ; => [\"A\" \"B\"]
+(map (core/comp str/upper str/trim) [\" a \" \" b \"])
+; => [\"A\" \"B\"]
   ```
 
   ## See Also
@@ -79,15 +79,15 @@
   ## Examples
 
   ```nexl
-  (def add5 (core/partial + 5))
-  (add5 3)     ; => 8
-  (add5 10)    ; => 15
+(def add5 (core/partial + 5))
+(add5 3)     ; => 8
+(add5 10)    ; => 15
 
-  (def greet (core/partial str \"Hello, \"))
-  (greet \"Alice\")   ; => \"Hello, Alice\"
+(def greet (core/partial str \"Hello, \"))
+(greet \"Alice\")   ; => \"Hello, Alice\"
 
-  (map (core/partial * 2) [1 2 3 4])
-  ; => [2 4 6 8]
+(map (core/partial * 2) [1 2 3 4])
+; => [2 4 6 8]
   ```
 
   ## See Also
@@ -109,15 +109,15 @@
   ## Examples
 
   ```nexl
-  (def always-zero (core/constantly 0))
-  (always-zero)         ; => 0
-  (always-zero 1 2 3)   ; => 0
+(def always-zero (core/constantly 0))
+(always-zero)         ; => 0
+(always-zero 1 2 3)   ; => 0
 
-  (map (core/constantly :pending) [1 2 3])
-  ; => [:pending :pending :pending]
+(map (core/constantly :pending) [1 2 3])
+; => [:pending :pending :pending]
 
-  ;; Useful as a default handler
-  (def no-op (core/constantly unit))
+;; Useful as a default handler
+(def no-op (core/constantly unit))
   ```
 
   ## See Also
@@ -141,14 +141,14 @@
   ## Examples
 
   ```nexl
-  (def stats (core/juxt count (fn [v] (reduce + 0 v))))
-  (stats [1 2 3 4 5])    ; => [5 15]  ([count sum])
+(def stats (core/juxt count (fn [v] (reduce + 0 v))))
+(stats [1 2 3 4 5])    ; => [5 15]  ([count sum])
 
-  (map (core/juxt str/upper str/lower) [\"Hello\" \"World\"])
-  ; => [[\"HELLO\" \"hello\"] [\"WORLD\" \"world\"]]
+(map (core/juxt str/upper str/lower) [\"Hello\" \"World\"])
+; => [[\"HELLO\" \"hello\"] [\"WORLD\" \"world\"]]
 
-  (def key-val (core/juxt (fn [m] (:key m)) (fn [m] (:val m))))
-  (key-val {:key \"x\" :val 1})   ; => [\"x\" 1]
+(def key-val (core/juxt (fn [m] (:key m)) (fn [m] (:val m))))
+(key-val {:key \"x\" :val 1})   ; => [\"x\" 1]
   ```
 
   ## See Also
@@ -173,13 +173,13 @@
   ## Examples
 
   ```nexl
-  (core/apply + [1 2 3 4])     ; => 10
-  (core/apply str [\"a\" \"b\" \"c\"])  ; => \"abc\"
-  (core/apply max [3 1 4 1 5])  ; => 5
+(core/apply + [1 2 3 4])     ; => 10
+(core/apply str [\"a\" \"b\" \"c\"])  ; => \"abc\"
+(core/apply max [3 1 4 1 5])  ; => 5
 
-  ;; Build args list dynamically
-  (def args (append base-args extra))
-  (core/apply my-fn args)
+;; Build args list dynamically
+(def args (append base-args extra))
+(core/apply my-fn args)
   ```
 
   ## See Also

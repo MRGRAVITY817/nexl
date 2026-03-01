@@ -29,13 +29,13 @@
   ## Examples
 
   ```nexl
-  (def resp (http/get \"https://api.example.com/data\")?)
-  (def body (http/body resp))
-  (def data (json/decode body)?)
+(def resp (http/get \"https://api.example.com/data\")?)
+(def body (http/body resp))
+(def data (json/decode body)?)
 
-  (match (http/get url)
-    (Ok r)  (io/println (str \"Status: \" (http/status r)))
-    (Err e) (io/println (str \"Request failed: \" e)))
+(match (http/get url)
+  (Ok r)  (io/println (str \"Status: \" (http/status r)))
+  (Err e) (io/println (str \"Request failed: \" e)))
   ```
 
   ## See Also
@@ -61,13 +61,13 @@
   ## Examples
 
   ```nexl
-  (def payload (json/encode {:name \"Alice\" :score 99}))
-  (def resp (http/post \"https://api.example.com/scores\" payload)?)
-  (io/println (str \"Posted, status: \" (http/status resp)))
+(def payload (json/encode {:name \"Alice\" :score 99}))
+(def resp (http/post \"https://api.example.com/scores\" payload)?)
+(io/println (str \"Posted, status: \" (http/status resp)))
 
-  ;; With form data
-  (def form \"username=alice&password=secret\")
-  (http/post \"https://example.com/login\" form)?
+;; With form data
+(def form \"username=alice&password=secret\")
+(http/post \"https://example.com/login\" form)?
   ```
 
   ## See Also
@@ -94,9 +94,9 @@
   ## Examples
 
   ```nexl
-  (http/response 200 (json/encode result) {:content-type \"application/json\"})
-  (http/response 404 \"Not found\" {})
-  (http/response 302 \"\" {:location \"/login\"})
+(http/response 200 (json/encode result) {:content-type \"application/json\"})
+(http/response 404 \"Not found\" {})
+(http/response 302 \"\" {:location \"/login\"})
   ```
 
   ## See Also
@@ -118,13 +118,13 @@
   ## Examples
 
   ```nexl
-  (def resp (http/get url)?)
-  (when (= (http/status resp) 200)
-    (process (http/body resp)))
+(def resp (http/get url)?)
+(when (= (http/status resp) 200)
+  (process (http/body resp)))
 
-  (if (< (http/status resp) 400)
-    (handle-success resp)
-    (handle-error resp))
+(if (< (http/status resp) 400)
+  (handle-success resp)
+  (handle-error resp))
   ```
 
   ## See Also
@@ -146,10 +146,10 @@
   ## Examples
 
   ```nexl
-  (def resp (http/get url)?)
-  (def data (json/decode (http/body resp))?)
+(def resp (http/get url)?)
+(def data (json/decode (http/body resp))?)
 
-  (io/println (str \"Body length: \" (count (http/body resp))))
+(io/println (str \"Body length: \" (count (http/body resp))))
   ```
 
   ## See Also
@@ -171,10 +171,10 @@
   ## Examples
 
   ```nexl
-  (def ct (get (http/headers resp) \"content-type\"))
-  (match ct
-    (Some t) (io/println (str \"Content-Type: \" t))
-    None     (io/println \"No content-type header\"))
+(def ct (get (http/headers resp) \"content-type\"))
+(match ct
+  (Some t) (io/println (str \"Content-Type: \" t))
+  None     (io/println \"No content-type header\"))
   ```
 
   ## See Also
@@ -201,9 +201,9 @@
   ## Examples
 
   ```nexl
-  (http/serve 8080
-    (fn [req]
-      (http/response 200 \"Hello!\" {})))
+(http/serve 8080
+  (fn [req]
+    (http/response 200 \"Hello!\" {})))
   ```
 
   ## See Also

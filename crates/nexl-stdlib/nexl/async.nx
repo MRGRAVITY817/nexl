@@ -24,16 +24,16 @@
   ## Examples
 
   ```nexl
-  (async/sleep 1000)   ; pause for 1 second
-  (async/sleep 250)    ; pause for 250 ms
+(async/sleep 1000)   ; pause for 1 second
+(async/sleep 250)    ; pause for 250 ms
 
-  ;; Polling with back-off
-  (loop [attempt 0]
-    (let [result (check-status)]
-      (if (= result :ready)
-        result
-        (do (async/sleep (* attempt 100))
-            (recur (+ attempt 1))))))
+;; Polling with back-off
+(loop [attempt 0]
+  (let [result (check-status)]
+    (if (= result :ready)
+      result
+      (do (async/sleep (* attempt 100))
+          (recur (+ attempt 1))))))
   ```
 
   ## See Also

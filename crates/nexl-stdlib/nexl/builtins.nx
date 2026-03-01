@@ -17,11 +17,11 @@
   ## Examples
 
   ```nexl
-  (+)          ; => 0
-  (+ 5)        ; => 5
-  (+ 1 2 3)    ; => 6
-  (+ 1.5 2.5)  ; => 4.0
-  (+ 1 2.0)    ; => 3.0  (promoted to Float)
+(+)          ; => 0
+(+ 5)        ; => 5
+(+ 1 2 3)    ; => 6
+(+ 1.5 2.5)  ; => 4.0
+(+ 1 2.0)    ; => 3.0  (promoted to Float)
   ```
 
   ## See Also
@@ -40,10 +40,10 @@
   ## Examples
 
   ```nexl
-  (- 5)        ; => -5
-  (- 10 3)     ; => 7
-  (- 10 3 2)   ; => 5
-  (- 0.5)      ; => -0.5
+(- 5)        ; => -5
+(- 10 3)     ; => 7
+(- 10 3 2)   ; => 5
+(- 0.5)      ; => -0.5
   ```
 
   ## See Also
@@ -60,10 +60,10 @@
   ## Examples
 
   ```nexl
-  (*)           ; => 1
-  (* 3)         ; => 3
-  (* 2 3 4)     ; => 24
-  (* 2.0 3)     ; => 6.0
+(*)           ; => 1
+(* 3)         ; => 3
+(* 2 3 4)     ; => 24
+(* 2.0 3)     ; => 6.0
   ```
 
   ## See Also
@@ -83,10 +83,10 @@
   ## Examples
 
   ```nexl
-  (/ 10 2)       ; => 5
-  (/ 7 2)        ; => 3    (integer division — truncated)
-  (/ 7 2.0)      ; => 3.5  (Float division)
-  (/ 1.0 3)      ; => 0.333...
+(/ 10 2)       ; => 5
+(/ 7 2)        ; => 3    (integer division — truncated)
+(/ 7 2.0)      ; => 3.5  (Float division)
+(/ 1.0 3)      ; => 0.333...
   ```
 
   ## See Also
@@ -112,9 +112,9 @@
   ## Examples
 
   ```nexl
-  (mod 10 3)    ; => 1
-  (mod -7 3)    ; => -1
-  (mod 6 2)     ; => 0
+(mod 10 3)    ; => 1
+(mod -7 3)    ; => -1
+(mod 6 2)     ; => 0
   ```
 
   ## See Also
@@ -135,11 +135,11 @@
   ## Examples
 
   ```nexl
-  (= 1 1)           ; => true
-  (= \"a\" \"a\")   ; => true
-  (= [1 2] [1 2])   ; => true
-  (= {:a 1} {:a 1}) ; => true
-  (= 1 1.0)         ; => false  (different types)
+(= 1 1)           ; => true
+(= \"a\" \"a\")   ; => true
+(= [1 2] [1 2])   ; => true
+(= {:a 1} {:a 1}) ; => true
+(= 1 1.0)         ; => false  (different types)
   ```
 
   ## See Also
@@ -158,10 +158,10 @@
   ## Examples
 
   ```nexl
-  (< 1 2)         ; => true
-  (< 2 1)         ; => false
-  (< \"a\" \"b\") ; => true  (lexicographic)
-  (< 1 1)         ; => false
+(< 1 2)         ; => true
+(< 2 1)         ; => false
+(< \"a\" \"b\") ; => true  (lexicographic)
+(< 1 1)         ; => false
   ```
 
   ## See Also
@@ -177,9 +177,9 @@
   ## Examples
 
   ```nexl
-  (> 2 1)   ; => true
-  (> 1 2)   ; => false
-  (> 1 1)   ; => false
+(> 2 1)   ; => true
+(> 1 2)   ; => false
+(> 1 1)   ; => false
   ```
   "
   [a b]
@@ -191,9 +191,9 @@
   ## Examples
 
   ```nexl
-  (<= 1 2)   ; => true
-  (<= 1 1)   ; => true
-  (<= 2 1)   ; => false
+(<= 1 2)   ; => true
+(<= 1 1)   ; => true
+(<= 2 1)   ; => false
   ```
   "
   [a b]
@@ -205,9 +205,9 @@
   ## Examples
 
   ```nexl
-  (>= 2 1)   ; => true
-  (>= 1 1)   ; => true
-  (>= 1 2)   ; => false
+(>= 2 1)   ; => true
+(>= 1 1)   ; => true
+(>= 1 2)   ; => false
   ```
   "
   [a b]
@@ -230,9 +230,9 @@
   ## Examples
 
   ```nexl
-  (not true)    ; => false
-  (not false)   ; => true
-  (not (= 1 2)) ; => true
+(not true)    ; => false
+(not false)   ; => true
+(not (= 1 2)) ; => true
   ```
 
   ## See Also
@@ -254,9 +254,9 @@
   ## Examples
 
   ```nexl
-  (and true true)         ; => true
-  (and true false)        ; => false  (short-circuits)
-  (and (valid? x) (ok? y)) ; => evaluates (ok? y) only if (valid? x) is true
+(and true true)         ; => true
+(and true false)        ; => false  (short-circuits)
+(and (valid? x) (ok? y)) ; => evaluates (ok? y) only if (valid? x) is true
   ```
   "
   [& args]
@@ -274,9 +274,9 @@
   ## Examples
 
   ```nexl
-  (or false true)    ; => true  (short-circuits)
-  (or false false)   ; => false
-  (or (cached?) (fetch!)) ; => fetches only if not cached
+(or false true)    ; => true  (short-circuits)
+(or false false)   ; => false
+(or (cached?) (fetch!)) ; => fetches only if not cached
   ```
   "
   [& args]
@@ -293,10 +293,10 @@
   ## Examples
 
   ```nexl
-  (str \"Hello, \" \"world!\")   ; => \"Hello, world!\"
-  (str 1 \" + \" 2 \" = \" 3)    ; => \"1 + 2 = 3\"
-  (str)                         ; => \"\"
-  (str [1 2 3])                 ; => \"[1 2 3]\"
+(str \"Hello, \" \"world!\")   ; => \"Hello, world!\"
+(str 1 \" + \" 2 \" = \" 3)    ; => \"1 + 2 = 3\"
+(str)                         ; => \"\"
+(str [1 2 3])                 ; => \"[1 2 3]\"
   ```
 
   ## See Also
@@ -316,11 +316,11 @@
   ## Examples
 
   ```nexl
-  (count [1 2 3])         ; => 3
-  (count {:a 1 :b 2})     ; => 2
-  (count #{:x :y})        ; => 2
-  (count \"hello\")       ; => 5  (5 bytes)
-  (count \"\")            ; => 0
+(count [1 2 3])         ; => 3
+(count {:a 1 :b 2})     ; => 2
+(count #{:x :y})        ; => 2
+(count \"hello\")       ; => 5  (5 bytes)
+(count \"\")            ; => 0
   ```
 
   ## See Also
@@ -340,10 +340,10 @@
   ## Examples
 
   ```nexl
-  (get [10 20 30] 1)          ; => (Some 20)
-  (get [10 20 30] 5)          ; => None
-  (get {:name \"Alice\"} :name) ; => (Some \"Alice\")
-  (get {:a 1} :missing)        ; => None
+(get [10 20 30] 1)          ; => (Some 20)
+(get [10 20 30] 5)          ; => None
+(get {:name \"Alice\"} :name) ; => (Some \"Alice\")
+(get {:a 1} :missing)        ; => None
   ```
 
   ## See Also
@@ -365,9 +365,9 @@
   ## Examples
 
   ```nexl
-  (put [1 2 3] 1 99)               ; => [1 99 3]
-  (put {:name \"Alice\"} :name \"Bob\") ; => {:name \"Bob\"}
-  (put {:a 1} :b 2)                ; => {:a 1 :b 2}
+(put [1 2 3] 1 99)               ; => [1 99 3]
+(put {:name \"Alice\"} :name \"Bob\") ; => {:name \"Bob\"}
+(put {:a 1} :b 2)                ; => {:a 1 :b 2}
   ```
 
   ## See Also
@@ -391,8 +391,8 @@
   ## Examples
 
   ```nexl
-  (append [1 2] 3)     ; => [1 2 3]
-  (append [] \"hi\")   ; => [\"hi\"]
+(append [1 2] 3)     ; => [1 2 3]
+(append [] \"hi\")   ; => [\"hi\"]
   ```
 
   ## See Also
@@ -410,8 +410,8 @@
   ## Examples
 
   ```nexl
-  (first [1 2 3])   ; => (Some 1)
-  (first [])        ; => None
+(first [1 2 3])   ; => (Some 1)
+(first [])        ; => None
   ```
 
   ## See Also
@@ -429,9 +429,9 @@
   ## Examples
 
   ```nexl
-  (rest [1 2 3])   ; => [2 3]
-  (rest [1])       ; => []
-  (rest [])        ; => []
+(rest [1 2 3])   ; => [2 3]
+(rest [1])       ; => []
+(rest [])        ; => []
   ```
 
   ## See Also
@@ -447,8 +447,8 @@
   ## Examples
 
   ```nexl
-  (last [1 2 3])   ; => (Some 3)
-  (last [])        ; => None
+(last [1 2 3])   ; => (Some 3)
+(last [])        ; => None
   ```
 
   ## See Also
@@ -467,9 +467,9 @@
   ## Examples
 
   ```nexl
-  (slice [0 1 2 3 4] 1 4)   ; => [1 2 3]
-  (slice [0 1 2] 0 2)       ; => [0 1]
-  (slice [0 1 2] 1 10)      ; => [1 2]  (end clamped)
+(slice [0 1 2 3 4] 1 4)   ; => [1 2 3]
+(slice [0 1 2] 0 2)       ; => [0 1]
+(slice [0 1 2] 1 10)      ; => [1 2]  (end clamped)
   ```
 
   ## See Also
@@ -487,8 +487,8 @@
   ## Examples
 
   ```nexl
-  (remove {:a 1 :b 2} :a)   ; => {:b 2}
-  (remove {:a 1} :missing)  ; => {:a 1}
+(remove {:a 1 :b 2} :a)   ; => {:b 2}
+(remove {:a 1} :missing)  ; => {:a 1}
   ```
 
   ## See Also
@@ -504,8 +504,8 @@
   ## Examples
 
   ```nexl
-  (keys {:a 1 :b 2 :c 3})   ; => [:a :b :c]
-  (keys {})                  ; => []
+(keys {:a 1 :b 2 :c 3})   ; => [:a :b :c]
+(keys {})                  ; => []
   ```
 
   ## See Also
@@ -521,8 +521,8 @@
   ## Examples
 
   ```nexl
-  (vals {:a 1 :b 2 :c 3})   ; => [1 2 3]
-  (vals {})                  ; => []
+(vals {:a 1 :b 2 :c 3})   ; => [1 2 3]
+(vals {})                  ; => []
   ```
 
   ## See Also
@@ -540,12 +540,12 @@
   ## Examples
 
   ```nexl
-  (entries {:a 1 :b 2})   ; => [[:a 1] [:b 2]]
-  (entries {})             ; => []
+(entries {:a 1 :b 2})   ; => [[:a 1] [:b 2]]
+(entries {})             ; => []
 
-  ;; Iterate over all entries
-  (each [[k v] (entries my-map)]
-    (io/println (str k \" = \" v)))
+;; Iterate over all entries
+(each [[k v] (entries my-map)]
+  (io/println (str k \" = \" v)))
   ```
 
   ## See Also
@@ -565,11 +565,11 @@
   ## Examples
 
   ```nexl
-  (contains? {:a 1 :b 2} :a)   ; => true
-  (contains? {:a 1} :c)        ; => false
-  (contains? #{1 2 3} 2)       ; => true
-  (contains? [10 20 30] 1)     ; => true   (index 1 is valid)
-  (contains? [10 20 30] 5)     ; => false
+(contains? {:a 1 :b 2} :a)   ; => true
+(contains? {:a 1} :c)        ; => false
+(contains? #{1 2 3} 2)       ; => true
+(contains? [10 20 30] 1)     ; => true   (index 1 is valid)
+(contains? [10 20 30] 5)     ; => false
   ```
 
   ## See Also
@@ -586,8 +586,8 @@
   ## Examples
 
   ```nexl
-  (add #{1 2} 3)   ; => #{1 2 3}
-  (add #{1 2} 2)   ; => #{1 2}   (no duplicate)
+(add #{1 2} 3)   ; => #{1 2 3}
+(add #{1 2} 2)   ; => #{1 2}   (no duplicate)
   ```
 
   ## See Also
@@ -605,8 +605,8 @@
   ## Examples
 
   ```nexl
-  (union #{1 2} #{2 3})   ; => #{1 2 3}
-  (union #{} #{1})        ; => #{1}
+(union #{1 2} #{2 3})   ; => #{1 2 3}
+(union #{} #{1})        ; => #{1}
   ```
 
   ## See Also
@@ -623,8 +623,8 @@
   ## Examples
 
   ```nexl
-  (intersection #{1 2 3} #{2 3 4})   ; => #{2 3}
-  (intersection #{1 2} #{3 4})       ; => #{}
+(intersection #{1 2 3} #{2 3 4})   ; => #{2 3}
+(intersection #{1 2} #{3 4})       ; => #{}
   ```
 
   ## See Also
@@ -639,8 +639,8 @@
   ## Examples
 
   ```nexl
-  (difference #{1 2 3} #{2 3})   ; => #{1}
-  (difference #{1 2} #{3 4})     ; => #{1 2}
+(difference #{1 2 3} #{2 3})   ; => #{1}
+(difference #{1 2} #{3 4})     ; => #{1 2}
   ```
 
   ## See Also
@@ -667,9 +667,9 @@
   ## Examples
 
   ```nexl
-  (map (fn [x] (* x 2)) [1 2 3 4])     ; => [2 4 6 8]
-  (map str/upper [\"a\" \"b\" \"c\"])   ; => [\"A\" \"B\" \"C\"]
-  (map (fn [x] (+ x 1)) [])            ; => []
+(map (fn [x] (* x 2)) [1 2 3 4])     ; => [2 4 6 8]
+(map str/upper [\"a\" \"b\" \"c\"])   ; => [\"A\" \"B\" \"C\"]
+(map (fn [x] (+ x 1)) [])            ; => []
   ```
 
   ## See Also
@@ -695,9 +695,9 @@
   ## Examples
 
   ```nexl
-  (filter odd? [1 2 3 4 5])             ; => [1 3 5]
-  (filter (fn [x] (> x 2)) [1 2 3 4])  ; => [3 4]
-  (filter str/blank? [\"\" \"a\" \"  \"]) ; => [\"\" \"  \"]
+(filter odd? [1 2 3 4 5])             ; => [1 3 5]
+(filter (fn [x] (> x 2)) [1 2 3 4])  ; => [3 4]
+(filter str/blank? [\"\" \"a\" \"  \"]) ; => [\"\" \"  \"]
   ```
 
   ## See Also
@@ -724,12 +724,12 @@
   ## Examples
 
   ```nexl
-  (reduce + 0 [1 2 3 4 5])         ; => 15
-  (reduce * 1 [1 2 3 4])           ; => 24
-  (reduce append [] [[1] [2] [3]]) ; => [1 2 3]  (flatten one level)
+(reduce + 0 [1 2 3 4 5])         ; => 15
+(reduce * 1 [1 2 3 4])           ; => 24
+(reduce append [] [[1] [2] [3]]) ; => [1 2 3]  (flatten one level)
 
-  ;; Build a map from entries
-  (reduce (fn [m [k v]] (put m k v)) {} pairs)
+;; Build a map from entries
+(reduce (fn [m [k v]] (put m k v)) {} pairs)
   ```
 
   ## See Also
@@ -748,9 +748,9 @@
   ## Examples
 
   ```nexl
-  (sort [3 1 4 1 5 9])        ; => [1 1 3 4 5 9]
-  (sort [\"banana\" \"apple\"])  ; => [\"apple\" \"banana\"]
-  (sort [])                    ; => []
+(sort [3 1 4 1 5 9])        ; => [1 1 3 4 5 9]
+(sort [\"banana\" \"apple\"])  ; => [\"apple\" \"banana\"]
+(sort [])                    ; => []
   ```
 
   ## See Also
@@ -775,9 +775,9 @@
   ## Examples
 
   ```nexl
-  (sort-by count [\"bb\" \"aaa\" \"c\"])     ; => [\"c\" \"bb\" \"aaa\"]
-  (sort-by :age [{:age 30} {:age 25}])     ; => [{:age 25} {:age 30}]
-  (sort-by (fn [x] (- x)) [3 1 4 1])      ; => [4 3 1 1]  (descending)
+(sort-by count [\"bb\" \"aaa\" \"c\"])     ; => [\"c\" \"bb\" \"aaa\"]
+(sort-by :age [{:age 30} {:age 25}])     ; => [{:age 25} {:age 30}]
+(sort-by (fn [x] (- x)) [3 1 4 1])      ; => [4 3 1 1]  (descending)
   ```
 
   ## See Also
@@ -792,8 +792,8 @@
   ## Examples
 
   ```nexl
-  (reverse [1 2 3])   ; => [3 2 1]
-  (reverse [])        ; => []
+(reverse [1 2 3])   ; => [3 2 1]
+(reverse [])        ; => []
   ```
 
   ## See Also
@@ -812,10 +812,10 @@
   ## Examples
 
   ```nexl
-  (range 5)            ; => [0 1 2 3 4]
-  (range 2 6)          ; => [2 3 4 5]
-  (range 0 10 2)       ; => [0 2 4 6 8]
-  (range 5 0 -1)       ; => [5 4 3 2 1]
+(range 5)            ; => [0 1 2 3 4]
+(range 2 6)          ; => [2 3 4 5]
+(range 0 10 2)       ; => [0 2 4 6 8]
+(range 5 0 -1)       ; => [5 4 3 2 1]
   ```
 
   ## See Also
@@ -833,8 +833,8 @@
   ## Examples
 
   ```nexl
-  (flat-map (fn [x] [x (* x x)]) [1 2 3])   ; => [1 1 2 4 3 9]
-  (flat-map str/chars [\"ab\" \"cd\"])         ; => [\\a \\b \\c \\d]
+(flat-map (fn [x] [x (* x x)]) [1 2 3])   ; => [1 1 2 4 3 9]
+(flat-map str/chars [\"ab\" \"cd\"])         ; => [\\a \\b \\c \\d]
   ```
 
   ## See Also
@@ -852,14 +852,14 @@
   ## Examples
 
   ```nexl
-  (group-by (fn [x] (mod x 2)) [1 2 3 4 5])
-  ; => {1 [1 3 5], 0 [2 4]}
+(group-by (fn [x] (mod x 2)) [1 2 3 4 5])
+; => {1 [1 3 5], 0 [2 4]}
 
-  (group-by :role [{:name \"Alice\" :role \"admin\"}
-                   {:name \"Bob\" :role \"user\"}
-                   {:name \"Eve\" :role \"admin\"}])
-  ; => {\"admin\" [{:name \"Alice\"...} {:name \"Eve\"...}]
-  ;     \"user\"  [{:name \"Bob\"...}]}
+(group-by :role [{:name \"Alice\" :role \"admin\"}
+                 {:name \"Bob\" :role \"user\"}
+                 {:name \"Eve\" :role \"admin\"}])
+; => {\"admin\" [{:name \"Alice\"...} {:name \"Eve\"...}]
+;     \"user\"  [{:name \"Bob\"...}]}
   ```
 
   ## See Also
@@ -876,9 +876,9 @@
   ## Examples
 
   ```nexl
-  (zip [1 2 3] [:a :b :c])   ; => [[1 :a] [2 :b] [3 :c]]
-  (zip [1 2 3] [\"a\"])       ; => [[1 \"a\"]]  (shorter wins)
-  (zip [] [1 2])              ; => []
+(zip [1 2 3] [:a :b :c])   ; => [[1 :a] [2 :b] [3 :c]]
+(zip [1 2 3] [\"a\"])       ; => [[1 \"a\"]]  (shorter wins)
+(zip [] [1 2])              ; => []
   ```
 
   ## See Also
@@ -895,9 +895,9 @@
   ## Examples
 
   ```nexl
-  (take 3 [1 2 3 4 5])   ; => [1 2 3]
-  (take 10 [1 2])        ; => [1 2]
-  (take 0 [1 2])         ; => []
+(take 3 [1 2 3 4 5])   ; => [1 2 3]
+(take 10 [1 2])        ; => [1 2]
+(take 0 [1 2])         ; => []
   ```
 
   ## See Also
@@ -915,9 +915,9 @@
   ## Examples
 
   ```nexl
-  (drop 2 [1 2 3 4])   ; => [3 4]
-  (drop 10 [1 2])      ; => []
-  (drop 0 [1 2])       ; => [1 2]
+(drop 2 [1 2 3 4])   ; => [3 4]
+(drop 10 [1 2])      ; => []
+(drop 0 [1 2])       ; => [1 2]
   ```
 
   ## See Also
@@ -935,9 +935,9 @@
   ## Examples
 
   ```nexl
-  (take-while (fn [x] (< x 4)) [1 2 3 4 5])   ; => [1 2 3]
-  (take-while even? [2 4 1 6])                  ; => [2 4]
-  (take-while (fn [_] false) [1 2])             ; => []
+(take-while (fn [x] (< x 4)) [1 2 3 4 5])   ; => [1 2 3]
+(take-while even? [2 4 1 6])                  ; => [2 4]
+(take-while (fn [_] false) [1 2])             ; => []
   ```
 
   ## See Also
@@ -956,9 +956,9 @@
   ## Examples
 
   ```nexl
-  (drop-while (fn [x] (< x 3)) [1 2 3 4 5])   ; => [3 4 5]
-  (drop-while even? [2 4 1 6])                  ; => [1 6]
-  (drop-while (fn [_] true) [1 2])              ; => []
+(drop-while (fn [x] (< x 3)) [1 2 3 4 5])   ; => [3 4 5]
+(drop-while even? [2 4 1 6])                  ; => [1 6]
+(drop-while (fn [_] true) [1 2])              ; => []
   ```
 
   ## See Also
@@ -975,8 +975,8 @@
   ## Examples
 
   ```nexl
-  (bit-and 0b1100 0b1010)   ; => 8   (0b1000)
-  (bit-and 0xFF 0x0F)       ; => 15  (0x0F)
+(bit-and 0b1100 0b1010)   ; => 8   (0b1000)
+(bit-and 0xFF 0x0F)       ; => 15  (0x0F)
   ```
   "
   [a b]
@@ -988,7 +988,7 @@
   ## Examples
 
   ```nexl
-  (bit-or 0b1100 0b0011)   ; => 15  (0b1111)
+(bit-or 0b1100 0b0011)   ; => 15  (0b1111)
   ```
   "
   [a b]
@@ -1000,8 +1000,8 @@
   ## Examples
 
   ```nexl
-  (bit-xor 0b1100 0b1010)   ; => 6  (0b0110)
-  (bit-xor 42 42)           ; => 0
+(bit-xor 0b1100 0b1010)   ; => 6  (0b0110)
+(bit-xor 42 42)           ; => 0
   ```
   "
   [a b]
@@ -1013,8 +1013,8 @@
   ## Examples
 
   ```nexl
-  (bit-not 0)   ; => -1
-  (bit-not -1)  ; => 0
+(bit-not 0)   ; => -1
+(bit-not -1)  ; => 0
   ```
   "
   [x]
@@ -1026,8 +1026,8 @@
   ## Examples
 
   ```nexl
-  (bit-shift-left 1 4)    ; => 16
-  (bit-shift-left 3 2)    ; => 12
+(bit-shift-left 1 4)    ; => 16
+(bit-shift-left 3 2)    ; => 12
   ```
   "
   [x n]
@@ -1039,8 +1039,8 @@
   ## Examples
 
   ```nexl
-  (bit-shift-right 16 4)   ; => 1
-  (bit-shift-right -8 1)   ; => -4  (sign bit preserved)
+(bit-shift-right 16 4)   ; => 1
+(bit-shift-right -8 1)   ; => -4  (sign bit preserved)
   ```
   "
   [x n]
@@ -1057,12 +1057,12 @@
   ## Examples
 
   ```nexl
-  (Some 42)           ; => (Some 42)
-  (Some \"hello\")    ; => (Some \"hello\")
+(Some 42)           ; => (Some 42)
+(Some \"hello\")    ; => (Some \"hello\")
 
-  (match (get vec idx)
-    (Some v) (process v)
-    None     (use-default))
+(match (get vec idx)
+  (Some v) (process v)
+  None     (use-default))
   ```
   "
   [val]
@@ -1074,12 +1074,12 @@
   ## Examples
 
   ```nexl
-  (Ok 42)           ; => (Ok 42)
-  (Ok {:id 1})      ; => (Ok {:id 1})
+(Ok 42)           ; => (Ok 42)
+(Ok {:id 1})      ; => (Ok {:id 1})
 
-  (match (db/execute db sql params)
-    (Ok rows-affected) (io/println (str \"Rows: \" rows-affected))
-    (Err e)            (panic e))
+(match (db/execute db sql params)
+  (Ok rows-affected) (io/println (str \"Rows: \" rows-affected))
+  (Err e)            (panic e))
   ```
   "
   [val]
@@ -1091,12 +1091,12 @@
   ## Examples
 
   ```nexl
-  (Err \"not found\")     ; => (Err \"not found\")
-  (Err {:code 404})      ; => (Err {:code 404})
+(Err \"not found\")     ; => (Err \"not found\")
+(Err {:code 404})      ; => (Err {:code 404})
 
-  (if valid?
-    (Ok result)
-    (Err \"validation failed\"))
+(if valid?
+  (Ok result)
+  (Err \"validation failed\"))
   ```
   "
   [val]

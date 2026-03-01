@@ -23,16 +23,16 @@
   ## Examples
 
   ```nexl
-  (def token-bytes (random/bytes 32))
-  ;; Convert to a hex string for use as an opaque token
-  (def hex (str/join (map (fn [b] (str/format \"{:02x}\" [b])) token-bytes) \"\"))
+(def token-bytes (random/bytes 32))
+;; Convert to a hex string for use as an opaque token
+(def hex (str/join (map (fn [b] (str/format \"{:02x}\" [b])) token-bytes) \"\"))
 
-  ;; Generate a random salt for password hashing
-  (def salt (random/bytes 16))
+;; Generate a random salt for password hashing
+(def salt (random/bytes 16))
 
-  ;; Simple random integer in [0, N)
-  (def b (first (random/bytes 1)))
-  (def rand-0-99 (mod (match b (Some v) v None 0) 100))
+;; Simple random integer in [0, N)
+(def b (first (random/bytes 1)))
+(def rand-0-99 (mod (match b (Some v) v None 0) 100))
   ```
 
   ## See Also

@@ -20,10 +20,10 @@
   ## Examples
 
   ```nexl
-  (math/abs -5)       ; => 5
-  (math/abs 3)        ; => 3
-  (math/abs -2.7)     ; => 2.7
-  (math/abs 0.0)      ; => 0.0
+(math/abs -5)       ; => 5
+(math/abs 3)        ; => 3
+(math/abs -2.7)     ; => 2.7
+(math/abs 0.0)      ; => 0.0
   ```
 
   ## See Also
@@ -45,9 +45,9 @@
   ## Examples
 
   ```nexl
-  (math/floor 3.7)   ; => 3.0
-  (math/floor -1.2)  ; => -2.0
-  (math/floor 4.0)   ; => 4.0
+(math/floor 3.7)   ; => 3.0
+(math/floor -1.2)  ; => -2.0
+(math/floor 4.0)   ; => 4.0
   ```
 
   ## See Also
@@ -69,9 +69,9 @@
   ## Examples
 
   ```nexl
-  (math/ceil 3.2)    ; => 4.0
-  (math/ceil -1.8)   ; => -1.0
-  (math/ceil 4.0)    ; => 4.0
+(math/ceil 3.2)    ; => 4.0
+(math/ceil -1.8)   ; => -1.0
+(math/ceil 4.0)    ; => 4.0
   ```
 
   ## See Also
@@ -95,9 +95,9 @@
   ## Examples
 
   ```nexl
-  (math/round 3.5)   ; => 4.0
-  (math/round 3.4)   ; => 3.0
-  (math/round -2.5)  ; => -3.0
+(math/round 3.5)   ; => 4.0
+(math/round 3.4)   ; => 3.0
+(math/round -2.5)  ; => -3.0
   ```
 
   ## See Also
@@ -124,10 +124,10 @@
   ## Examples
 
   ```nexl
-  (math/pow 2 10)     ; => 1024.0
-  (math/pow 9.0 0.5)  ; => 3.0  (square root)
-  (math/pow 2 -1)     ; => 0.5
-  (math/pow 0 0)      ; => 1.0
+(math/pow 2 10)     ; => 1024.0
+(math/pow 9.0 0.5)  ; => 3.0  (square root)
+(math/pow 2 -1)     ; => 0.5
+(math/pow 0 0)      ; => 1.0
   ```
 
   ## See Also
@@ -151,10 +151,10 @@
   ## Examples
 
   ```nexl
-  (math/sqrt 4)      ; => 2.0
-  (math/sqrt 2)      ; => 1.4142135623730951
-  (math/sqrt 0)      ; => 0.0
-  (math/sqrt 9.0)    ; => 3.0
+(math/sqrt 4)      ; => 2.0
+(math/sqrt 2)      ; => 1.4142135623730951
+(math/sqrt 0)      ; => 0.0
+(math/sqrt 9.0)    ; => 3.0
   ```
 
   ## See Also
@@ -175,9 +175,9 @@
   ## Examples
 
   ```nexl
-  (math/log math/e)   ; => 1.0
-  (math/log 1)        ; => 0.0
-  (math/log 10)       ; => 2.302585...
+(math/log math/e)   ; => 1.0
+(math/log 1)        ; => 0.0
+(math/log 10)       ; => 2.302585...
   ```
 
   ## See Also
@@ -199,9 +199,9 @@
   ## Examples
 
   ```nexl
-  (math/exp 0)        ; => 1.0
-  (math/exp 1)        ; => 2.718281...
-  (math/exp -1)       ; => 0.367879...
+(math/exp 0)        ; => 1.0
+(math/exp 1)        ; => 2.718281...
+(math/exp -1)       ; => 0.367879...
   ```
 
   ## See Also
@@ -223,9 +223,9 @@
   ## Examples
 
   ```nexl
-  (math/sin 0)              ; => 0.0
-  (math/sin (/ math/pi 2))  ; => 1.0
-  (math/sin math/pi)        ; ≈ 1.2246e-16  (floating-point epsilon)
+(math/sin 0)              ; => 0.0
+(math/sin (/ math/pi 2))  ; => 1.0
+(math/sin math/pi)        ; ≈ 1.2246e-16  (floating-point epsilon)
   ```
 
   ## See Also
@@ -248,9 +248,9 @@
   ## Examples
 
   ```nexl
-  (math/cos 0)              ; => 1.0
-  (math/cos (/ math/pi 2))  ; ≈ 6.123e-17  (effectively 0)
-  (math/cos math/pi)        ; => -1.0
+(math/cos 0)              ; => 1.0
+(math/cos (/ math/pi 2))  ; ≈ 6.123e-17  (effectively 0)
+(math/cos math/pi)        ; => -1.0
   ```
 
   ## See Also
@@ -275,8 +275,8 @@
   ## Examples
 
   ```nexl
-  (math/tan 0)              ; => 0.0
-  (math/tan (/ math/pi 4))  ; => 1.0
+(math/tan 0)              ; => 0.0
+(math/tan (/ math/pi 4))  ; => 1.0
   ```
 
   ## See Also
@@ -300,9 +300,9 @@
   ## Examples
 
   ```nexl
-  (math/asin 0)    ; => 0.0
-  (math/asin 1)    ; => 1.5707963...  (π/2)
-  (math/asin -1)   ; => -1.5707963... (-π/2)
+(math/asin 0)    ; => 0.0
+(math/asin 1)    ; => 1.5707963...  (π/2)
+(math/asin -1)   ; => -1.5707963... (-π/2)
   ```
   "
   [x]
@@ -320,9 +320,9 @@
   ## Examples
 
   ```nexl
-  (math/acos 1)    ; => 0.0
-  (math/acos 0)    ; => 1.5707963...  (π/2)
-  (math/acos -1)   ; => 3.1415926...  (π)
+(math/acos 1)    ; => 0.0
+(math/acos 0)    ; => 1.5707963...  (π/2)
+(math/acos -1)   ; => 3.1415926...  (π)
   ```
   "
   [x]
@@ -340,8 +340,8 @@
   ## Examples
 
   ```nexl
-  (math/atan 0)    ; => 0.0
-  (math/atan 1)    ; => 0.7853981...  (π/4)
+(math/atan 0)    ; => 0.0
+(math/atan 1)    ; => 0.7853981...  (π/4)
   ```
 
   ## See Also
@@ -366,10 +366,10 @@
   ## Examples
 
   ```nexl
-  (math/atan2 0 1)    ; => 0.0         (pointing right)
-  (math/atan2 1 0)    ; => 1.5707963...  (pointing up, π/2)
-  (math/atan2 0 -1)   ; => 3.1415926...  (pointing left, π)
-  (math/atan2 -1 0)   ; => -1.5707963... (pointing down, -π/2)
+(math/atan2 0 1)    ; => 0.0         (pointing right)
+(math/atan2 1 0)    ; => 1.5707963...  (pointing up, π/2)
+(math/atan2 0 -1)   ; => 3.1415926...  (pointing left, π)
+(math/atan2 -1 0)   ; => -1.5707963... (pointing down, -π/2)
   ```
 
   ## See Also
@@ -394,9 +394,9 @@
   ## Examples
 
   ```nexl
-  (math/min 3 7)      ; => 3
-  (math/min -1 0)     ; => -1
-  (math/min 2.5 2.4)  ; => 2.4
+(math/min 3 7)      ; => 3
+(math/min -1 0)     ; => -1
+(math/min 2.5 2.4)  ; => 2.4
   ```
 
   ## See Also
@@ -419,9 +419,9 @@
   ## Examples
 
   ```nexl
-  (math/max 3 7)      ; => 7
-  (math/max -1 0)     ; => 0
-  (math/max 2.5 2.4)  ; => 2.5
+(math/max 3 7)      ; => 7
+(math/max -1 0)     ; => 0
+(math/max 2.5 2.4)  ; => 2.5
   ```
 
   ## See Also
@@ -447,10 +447,10 @@
   ## Examples
 
   ```nexl
-  (math/clamp 5 0 10)    ; => 5
-  (math/clamp -3 0 10)   ; => 0
-  (math/clamp 15 0 10)   ; => 10
-  (math/clamp 0.5 0 1)   ; => 0.5
+(math/clamp 5 0 10)    ; => 5
+(math/clamp -3 0 10)   ; => 0
+(math/clamp 15 0 10)   ; => 10
+(math/clamp 0.5 0 1)   ; => 0.5
   ```
 
   ## See Also
@@ -465,9 +465,9 @@
   ## Examples
 
   ```nexl
-  (math/sin math/pi)              ; ≈ 0.0  (floating-point error)
-  (* 2 math/pi)                   ; => 6.283185307179586  (τ)
-  (/ (* 180 angle-rad) math/pi)   ; convert radians to degrees
+(math/sin math/pi)              ; ≈ 0.0  (floating-point error)
+(* 2 math/pi)                   ; => 6.283185307179586  (τ)
+(/ (* 180 angle-rad) math/pi)   ; convert radians to degrees
   ```
 
   ## See Also
@@ -481,8 +481,8 @@
   ## Examples
 
   ```nexl
-  (math/exp 1)          ; => 2.718281828459045  (= math/e)
-  (math/log math/e)     ; => 1.0
+(math/exp 1)          ; => 2.718281828459045  (= math/e)
+(math/log math/e)     ; => 1.0
   ```
 
   ## See Also
