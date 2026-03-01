@@ -2306,6 +2306,94 @@ fn find_definition_in_file(path: &Path, name: &str) -> Option<(Url, Range)> {
     Some((url, range))
 }
 
+/// Collect all ranges in `nodes` where a symbol with the given full name appears.
+///
+/// `name` must be the fully-qualified string as returned by `symbol_name`:
+/// `"foo"` for unqualified symbols or `"alias/foo"` for qualified ones.
+fn collect_symbol_uses(nodes: &[Node], name: &str, source: &str) -> Vec<Range> {
+    let mut out = Vec::new();
+    for node in nodes {
+        collect_symbol_uses_in_node(node, name, source, &mut out);
+    }
+    out
+}
+
+fn collect_symbol_uses_in_node(node: &Node, name: &str, source: &str, out: &mut Vec<Range>) {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns, name: n }) => {
+            let full = match ns {
+                Some(prefix) => format!("{prefix}/{n}"),
+                None => n.clone(),
+            };
+            if full == name {
+                out.push(span_to_range(source, node.span));
+            }
+        }
+        NodeKind::List(items) | NodeKind::Vector(items) | NodeKind::Set(items) => {
+            for item in items {
+                collect_symbol_uses_in_node(item, name, source, out);
+            }
+        }
+        NodeKind::Map(entries) => {
+            for (k, v) in entries {
+                collect_symbol_uses_in_node(k, name, source, out);
+                collect_symbol_uses_in_node(v, name, source, out);
+            }
+        }
+        NodeKind::Quote(inner)
+        | NodeKind::Deref(inner)
+        | NodeKind::Discard(inner)
+        | NodeKind::Quasiquote(inner)
+        | NodeKind::Unquote(inner)
+        | NodeKind::UnquoteSplice(inner) => {
+            collect_symbol_uses_in_node(inner, name, source, out);
+        }
+        NodeKind::Atom(_) => {}
+    }
+}
+
+/// Read a file, parse it, and collect all use-site `Location`s for `name`.
+fn find_references_in_file(path: &Path, name: &str) -> Vec<Location> {
+    let source = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let nodes = match nexl_reader::read(&source, FileId(0)) {
+        Ok(n) => n,
+        Err(_) => return Vec::new(),
+    };
+    let url = match Url::from_file_path(path) {
+        Ok(u) => u,
+        Err(_) => return Vec::new(),
+    };
+    collect_symbol_uses(&nodes, name, &source)
+        .into_iter()
+        .map(|range| Location { uri: url.clone(), range })
+        .collect()
+}
+
+/// Walk all `.nx` files under `dir`, collecting every reference to `name`,
+/// and skipping `skip_path` (the already-searched current file).
+fn collect_references_across_project(
+    dir: &Path,
+    name: &str,
+    skip_path: &Path,
+    out: &mut Vec<Location>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_references_across_project(&path, name, skip_path, out);
+        } else if path.extension().is_some_and(|ext| ext == "nx") && path != skip_path {
+            out.extend(find_references_in_file(&path, name));
+        }
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -2316,6 +2404,7 @@ impl LanguageServer for Backend {
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
@@ -2457,6 +2546,58 @@ impl LanguageServer for Backend {
                 range,
             }))),
             None => Ok(None),
+        }
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let position = params.text_document_position.position;
+        let source = match self.get_document_text(&uri) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let offset = position_to_offset(&source, position);
+        let nodes = match nexl_reader::read(&source, FileId(0)) {
+            Ok(n) => n,
+            Err(_) => return Ok(None),
+        };
+        let symbol_node = match find_symbol_at_offset(&nodes, offset) {
+            Some(n) => n,
+            None => return Ok(None),
+        };
+        let full_name = match symbol_name(symbol_node) {
+            Some(n) => n,
+            None => return Ok(None),
+        };
+
+        // Collect all occurrences in the current file.
+        let current_uri = uri.clone();
+        let mut locations: Vec<Location> = collect_symbol_uses(&nodes, &full_name, &source)
+            .into_iter()
+            .map(|range| Location { uri: current_uri.clone(), range })
+            .collect();
+
+        // If the caller does not want the declaration, filter it out.
+        if !params.context.include_declaration {
+            let def_range = find_definition_range(&nodes, &full_name, &source);
+            locations.retain(|loc| Some(loc.range) != def_range);
+        }
+
+        // Cross-project search: walk every other .nx file in the source tree.
+        let file_path = uri.to_file_path().ok();
+        if let (Some(fp), Some(ctx)) = (&file_path, file_path.as_deref().and_then(resolve_project_context)) {
+            collect_references_across_project(
+                &ctx.source_root,
+                &full_name,
+                fp,
+                &mut locations,
+            );
+        }
+
+        if locations.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(locations))
         }
     }
 
@@ -3945,5 +4086,123 @@ mod tests {
         for item in &items {
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
         }
+    }
+
+    // ── textDocument/references ───────────────────────────────────────────
+
+    async fn open_doc(backend: &Backend, uri: Url, text: &str) {
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri,
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: text.to_string(),
+                },
+            })
+            .await;
+    }
+
+    fn ref_params(uri: Url, position: Position, include_declaration: bool) -> ReferenceParams {
+        ReferenceParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position,
+            },
+            context: ReferenceContext { include_declaration },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_references_finds_all_uses_same_file() {
+        // Three occurrences of `foo`: definition + 2 calls.
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("refs-all.nx");
+        let source = "(defn foo [] 1)\n(foo)\n(foo)";
+        open_doc(backend, uri.clone(), source).await;
+
+        let def_offset = source.find("foo").unwrap();
+        let position = offset_to_position(source, def_offset);
+        let locs = backend
+            .references(ref_params(uri.clone(), position, true))
+            .await
+            .expect("ok")
+            .expect("some locations");
+
+        assert_eq!(locs.len(), 3, "expected 3 (def + 2 calls), got: {locs:?}");
+        assert!(locs.iter().all(|l| l.uri == uri));
+    }
+
+    #[tokio::test]
+    async fn test_references_exclude_declaration() {
+        // include_declaration=false → only the 2 call sites.
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("refs-excl.nx");
+        let source = "(defn foo [] 1)\n(foo)\n(foo)";
+        open_doc(backend, uri.clone(), source).await;
+
+        let def_offset = source.find("foo").unwrap();
+        let position = offset_to_position(source, def_offset);
+        let locs = backend
+            .references(ref_params(uri.clone(), position, false))
+            .await
+            .expect("ok")
+            .expect("some locations");
+
+        assert_eq!(locs.len(), 2, "expected 2 call sites, got: {locs:?}");
+        let def_range = Range::new(
+            offset_to_position(source, def_offset),
+            offset_to_position(source, def_offset + "foo".len()),
+        );
+        assert!(
+            !locs.iter().any(|l| l.range == def_range),
+            "def site must be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_references_from_call_site() {
+        // Cursor on a call site — result set is the same as from the def site.
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("refs-callsite.nx");
+        let source = "(defn foo [] 1)\n(foo)\n(foo)";
+        open_doc(backend, uri.clone(), source).await;
+
+        // Offset of `foo` inside the last `(foo)`.
+        let call_offset = source.rfind("foo").unwrap();
+        let position = offset_to_position(source, call_offset);
+        let locs = backend
+            .references(ref_params(uri.clone(), position, false))
+            .await
+            .expect("ok")
+            .expect("some locations");
+
+        assert_eq!(locs.len(), 2, "expected 2 call sites, got: {locs:?}");
+    }
+
+    #[tokio::test]
+    async fn test_references_none_when_no_symbol_at_cursor() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("refs-none.nx");
+        let source = "(defn foo [] 1)\n";
+        open_doc(backend, uri.clone(), source).await;
+
+        // Cursor on the trailing newline — no symbol there.
+        let position = offset_to_position(source, source.len() - 1);
+        let result = backend
+            .references(ref_params(uri, position, true))
+            .await
+            .expect("ok");
+
+        assert!(
+            result.is_none(),
+            "should be None when cursor is not on a symbol"
+        );
     }
 }
