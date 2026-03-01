@@ -11,7 +11,8 @@
 ;; Use `nexl test file.nx` to run a test file and get a pass/fail report.
 
 (defn register!
-  "Register a named test in the thread-local test registry.
+  """
+  Register a named test in the thread-local test registry.
 
   The test is not executed immediately. Call `test/run-registered` (or
   run the file with `nexl test`) to execute all registered tests.
@@ -26,27 +27,28 @@
   ## Examples
 
   ```nexl
-(test/register! \"addition is commutative\"
-  (fn []
-    (assert! (= (+ 1 2) (+ 2 1)) \"1+2 = 2+1\")))
+  (test/register! \"addition is commutative\"
+    (fn []
+      (assert! (= (+ 1 2) (+ 2 1)) \"1+2 = 2+1\")))
 
-(test/register! \"str/split round-trips\"
-  (fn []
-    (let [original \"a,b,c\"
-          parts    (str/split original \",\")
-          rejoined (str/join parts \",\")]
-      (assert! (= original rejoined) \"round-trip failed\"))))
+  (test/register! \"str/split round-trips\"
+    (fn []
+      (let [original \"a,b,c\"
+            parts    (str/split original \",\")
+            rejoined (str/join parts \",\")]
+        (assert! (= original rejoined) \"round-trip failed\"))))
   ```
 
   ## See Also
   - `test/run-registered` — execute all registered tests
   - `test/clear-registry!` — discard registered tests without running
-  "
+  """
   [name thunk]
   (native "test/register!" name thunk))
 
 (defn run-registered
-  "Run all tests registered via `test/register!` and print a report.
+  """
+  Run all tests registered via `test/register!` and print a report.
 
   Tests are run in registration order. Each test's thunk is called in
   isolation. A test passes if the thunk returns without error. A test
@@ -61,25 +63,26 @@
   ## Examples
 
   ```nexl
-(test/register! \"sanity\" (fn [] (assert! true \"always passes\")))
-(test/run-registered)
-;; PASS sanity
+  (test/register! \"sanity\" (fn [] (assert! true \"always passes\")))
+  (test/run-registered)
+  ;; PASS sanity
 
-;; Full test file pattern:
-(test/register! \"test-a\" (fn [] ...))
-(test/register! \"test-b\" (fn [] ...))
-(test/run-registered)
+  ;; Full test file pattern:
+  (test/register! \"test-a\" (fn [] ...))
+  (test/register! \"test-b\" (fn [] ...))
+  (test/run-registered)
   ```
 
   ## See Also
   - `test/register!` — register tests before running
   - `test/clear-registry!` — reset after running
-  "
+  """
   []
   (native "test/run-registered"))
 
 (defn clear-registry!
-  "Discard all tests in the thread-local registry without running them.
+  """
+  Discard all tests in the thread-local registry without running them.
 
   Useful between test suites run in the same process, or after using
   `test/run-registered` when you want a clean slate.
@@ -90,16 +93,17 @@
   ## Examples
 
   ```nexl
-(test/run-registered)
-(test/clear-registry!)
-;; Registry is now empty
+  (test/run-registered)
+  (test/clear-registry!)
+  ;; Registry is now empty
   ```
-  "
+  """
   []
   (native "test/clear-registry!"))
 
 (defn is
-  "Assert that `condition` is `true`, failing the test with `msg` if not.
+  """
+  Assert that `condition` is `true`, failing the test with `msg` if not.
 
   Equivalent to `assert!` but namespaced under `test/`. Prefer `assert!`
   inside registered test thunks.
@@ -114,15 +118,16 @@
   ## Examples
 
   ```nexl
-(test/is (= result expected) \"result should equal expected\")
-(test/is (> count 0) \"collection should be non-empty\")
+  (test/is (= result expected) \"result should equal expected\")
+  (test/is (> count 0) \"collection should be non-empty\")
   ```
-  "
+  """
   [condition msg]
   (native "test/is" condition msg))
 
 (defn assert-eq
-  "Assert that `a` and `b` are structurally equal.
+  """
+  Assert that `a` and `b` are structurally equal.
 
   On failure, the message includes both values for easy debugging.
 
@@ -136,16 +141,17 @@
   ## Examples
 
   ```nexl
-(test/assert-eq (+ 1 2) 3)
-(test/assert-eq (str/upper \"hello\") \"HELLO\")
-(test/assert-eq (filter odd? [1 2 3]) [1 3])
+  (test/assert-eq (+ 1 2) 3)
+  (test/assert-eq (str/upper \"hello\") \"HELLO\")
+  (test/assert-eq (filter odd? [1 2 3]) [1 3])
   ```
-  "
+  """
   [a b]
   (native "test/assert-eq" a b))
 
 (defn fail
-  "Immediately fail the current test with a message.
+  """
+  Immediately fail the current test with a message.
 
   Use when you need to fail a test unconditionally — for example, when
   a code path that should never be reached is reached.
@@ -159,19 +165,20 @@
   ## Examples
 
   ```nexl
-(match result
-  (Ok _)  unit
-  (Err e) (test/fail (str \"Unexpected error: \" e)))
+  (match result
+    (Ok _)  unit
+    (Err e) (test/fail (str \"Unexpected error: \" e)))
 
-(when (> count max)
-  (test/fail (str/format \"count {} exceeds max {}\" [count max])))
+  (when (> count max)
+    (test/fail (str/format \"count {} exceeds max {}\" [count max])))
   ```
-  "
+  """
   [msg]
   (native "test/fail" msg))
 
 (defn skip
-  "Mark the current test as skipped with an explanatory message.
+  """
+  Mark the current test as skipped with an explanatory message.
 
   ## Parameters
   - `msg` — skip reason as `Str`.
@@ -182,17 +189,18 @@
   ## Examples
 
   ```nexl
-(test/register! \"network test\"
-  (fn []
-    (when (= (env/get \"CI\") (Some \"true\"))
-      (test/skip \"skipped in CI\"))))
+  (test/register! \"network test\"
+    (fn []
+      (when (= (env/get \"CI\") (Some \"true\"))
+        (test/skip \"skipped in CI\"))))
   ```
-  "
+  """
   [msg]
   (native "test/skip" msg))
 
 (defn check
-  "Run a property-based test by calling `pred` on each value in `samples`.
+  """
+  Run a property-based test by calling `pred` on each value in `samples`.
 
   Returns `(Ok Unit)` if all calls return `true`, or `(Err Str)` with
   the first failing value.
@@ -207,17 +215,18 @@
   ## Examples
 
   ```nexl
-(test/check (fn [x] (= (+ x 0) x)) (range 100))
-; => (Ok Unit)  — additive identity holds for 0..99
+  (test/check (fn [x] (= (+ x 0) x)) (range 100))
+  ; => (Ok Unit)  — additive identity holds for 0..99
 
-(test/check (fn [s] (= s (str/trim (str s)))) [\"a\" \" b\" \"c \"])
+  (test/check (fn [s] (= s (str/trim (str s)))) [\"a\" \" b\" \"c \"])
   ```
-  "
+  """
   [pred samples]
   (native "test/check" pred samples))
 
 (defn run-tests
-  "Run a list of `[name thunk]` pairs and print a report.
+  """
+  Run a list of `[name thunk]` pairs and print a report.
 
   An alternative to `test/register!` + `test/run-registered` when you
   want to define tests inline without the global registry.
@@ -231,10 +240,10 @@
   ## Examples
 
   ```nexl
-(test/run-tests
-  [[\"addition\"   (fn [] (assert! (= (+ 1 2) 3) \"1+2=3\"))]
-   [\"subtraction\" (fn [] (assert! (= (- 5 3) 2) \"5-3=2\"))]])
+  (test/run-tests
+    [[\"addition\"   (fn [] (assert! (= (+ 1 2) 3) \"1+2=3\"))]
+     [\"subtraction\" (fn [] (assert! (= (- 5 3) 2) \"5-3=2\"))]])
   ```
-  "
+  """
   [tests]
   (native "test/run-tests" tests))

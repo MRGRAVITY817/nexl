@@ -8,7 +8,8 @@
 ;; in eval mode with blocking semantics.
 
 (defn sleep
-  "Pause execution for at least `ms` milliseconds.
+  """
+  Pause execution for at least `ms` milliseconds.
 
   In eval mode this is a blocking `thread::sleep`. In a compiled WASM
   component with WASI async support this becomes a non-blocking await.
@@ -24,21 +25,21 @@
   ## Examples
 
   ```nexl
-(async/sleep 1000)   ; pause for 1 second
-(async/sleep 250)    ; pause for 250 ms
+  (async/sleep 1000)   ; pause for 1 second
+  (async/sleep 250)    ; pause for 250 ms
 
-;; Polling with back-off
-(loop [attempt 0]
-  (let [result (check-status)]
-    (if (= result :ready)
-      result
-      (do (async/sleep (* attempt 100))
-          (recur (+ attempt 1))))))
+  ;; Polling with back-off
+  (loop [attempt 0]
+    (let [result (check-status)]
+      (if (= result :ready)
+        result
+        (do (async/sleep (* attempt 100))
+            (recur (+ attempt 1))))))
   ```
 
   ## See Also
   - `time/monotonic` — measure elapsed time
   - `time/millis` — document a value as a millisecond duration
-  "
+  """
   [ms]
   (native "async/sleep" ms))

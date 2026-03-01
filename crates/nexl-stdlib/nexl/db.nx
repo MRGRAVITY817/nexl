@@ -9,7 +9,8 @@
 ;; each `?` placeholder in the SQL string, in order.
 
 (defn open
-  "Open (or create) a SQLite database and return a handle.
+  """
+  Open (or create) a SQLite database and return a handle.
 
   Pass `\":memory:\"` for an in-memory database that disappears when the
   handle is closed. Pass a file path to open or create a persistent
@@ -25,25 +26,26 @@
   ## Examples
 
   ```nexl
-;; In-memory database (for tests / demos)
-(def db (db/open \":memory:\")?)
+  ;; In-memory database (for tests / demos)
+  (def db (db/open \":memory:\")?)
 
-;; Persistent file database
-(def db (match (db/open \"data/app.db\")
-          (Ok d)  d
-          (Err e) (panic (str \"Cannot open DB: \" e))))
+  ;; Persistent file database
+  (def db (match (db/open \"data/app.db\")
+            (Ok d)  d
+            (Err e) (panic (str \"Cannot open DB: \" e))))
   ```
 
   ## See Also
   - `db/close` — release the handle
   - `db/execute` — run DDL / DML
   - `db/query` — run SELECT
-  "
+  """
   [path]
   (native "db/open" path))
 
 (defn close
-  "Close a database handle and release its resources.
+  """
+  Close a database handle and release its resources.
 
   After calling `db/close`, the handle must not be used again.
   Returns `Unit`. Closing an already-closed handle is a no-op.
@@ -57,19 +59,20 @@
   ## Examples
 
   ```nexl
-(def db (db/open \":memory:\")?)
-;; ... use db ...
-(db/close db)
+  (def db (db/open \":memory:\")?)
+  ;; ... use db ...
+  (db/close db)
   ```
 
   ## See Also
   - `db/open` — open a handle
-  "
+  """
   [db]
   (native "db/close" db))
 
 (defn execute
-  "Run a DDL or DML SQL statement (CREATE, INSERT, UPDATE, DELETE).
+  """
+  Run a DDL or DML SQL statement (CREATE, INSERT, UPDATE, DELETE).
 
   The `params` vector maps positionally to `?` placeholders in `sql`.
   Returns `(Ok Int)` where the integer is the number of rows affected
@@ -86,33 +89,34 @@
   ## Examples
 
   ```nexl
-;; Create table
-(db/execute db
-  \"CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)\"
-  [])?
+  ;; Create table
+  (db/execute db
+    \"CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)\"
+    [])?
 
-;; Insert a row
-(db/execute db
-  \"INSERT INTO users (name) VALUES (?)\"
-  [\"Alice\"])?
+  ;; Insert a row
+  (db/execute db
+    \"INSERT INTO users (name) VALUES (?)\"
+    [\"Alice\"])?
 
-;; Update with multiple params
-(let [rows-updated
-      (db/execute db
-        \"UPDATE users SET name = ? WHERE id = ?\"
-        [\"Bob\" 1])?]
-  (io/println (str \"Updated \" rows-updated \" row(s)\")))
+  ;; Update with multiple params
+  (let [rows-updated
+        (db/execute db
+          \"UPDATE users SET name = ? WHERE id = ?\"
+          [\"Bob\" 1])?]
+    (io/println (str \"Updated \" rows-updated \" row(s)\")))
   ```
 
   ## See Also
   - `db/query` — run a SELECT and get rows back
   - `db/open` — get a handle first
-  "
+  """
   [db sql params]
   (native "db/execute" db sql params))
 
 (defn query
-  "Run a SELECT SQL statement and return matching rows.
+  """
+  Run a SELECT SQL statement and return matching rows.
 
   Each row is returned as a `Map` with column names as `Str` keys.
   Returns `(Ok (Vec Map))` — an empty vector if no rows match.
@@ -129,22 +133,22 @@
   ## Examples
 
   ```nexl
-(def rows (db/query db \"SELECT * FROM users\" [])?)
-(each [row rows]
-  (io/println (str \"User: \" (:name row))))
+  (def rows (db/query db \"SELECT * FROM users\" [])?)
+  (each [row rows]
+    (io/println (str \"User: \" (:name row))))
 
-;; Parameterised query
-(def rows (db/query db
-            \"SELECT * FROM orders WHERE user_id = ? AND status = ?\"
-            [user-id \"placed\"])?
+  ;; Parameterised query
+  (def rows (db/query db
+              \"SELECT * FROM orders WHERE user_id = ? AND status = ?\"
+              [user-id \"placed\"])?
 
-;; Single row lookup
-(def rows (db/query db \"SELECT last_insert_rowid() AS id\" [])?)
-(def new-id (:id (match (first rows) (Some r) r None (panic \"no row\"))))
+  ;; Single row lookup
+  (def rows (db/query db \"SELECT last_insert_rowid() AS id\" [])?)
+  (def new-id (:id (match (first rows) (Some r) r None (panic \"no row\"))))
   ```
 
   ## See Also
   - `db/execute` — for INSERT / UPDATE / DELETE / DDL
-  "
+  """
   [db sql params]
   (native "db/query" db sql params))

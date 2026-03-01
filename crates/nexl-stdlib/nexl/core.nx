@@ -4,7 +4,8 @@
 ;; The Rust implementation lives in crates/nexl-stdlib/src/core.rs.
 
 (defn identity
-  "Return its argument unchanged.
+  """
+  Return its argument unchanged.
 
   Useful as a no-op placeholder in higher-order function pipelines where
   a function is required but no transformation is needed.
@@ -18,20 +19,21 @@
   ## Examples
 
   ```nexl
-(core/identity 42)               ; => 42
-(core/identity \"hello\")        ; => \"hello\"
-(map core/identity [1 2 3])      ; => [1 2 3]
-(filter core/identity [true false true])  ; => [true true]
+  (core/identity 42)               ; => 42
+  (core/identity \"hello\")        ; => \"hello\"
+  (map core/identity [1 2 3])      ; => [1 2 3]
+  (filter core/identity [true false true])  ; => [true true]
   ```
 
   ## See Also
   - `core/constantly` — always return the same value regardless of input
-  "
+  """
   [x]
   (native "core/identity" x))
 
 (defn comp
-  "Return a function that applies `g`, then `f` to its result.
+  """
+  Return a function that applies `g`, then `f` to its result.
 
   `(core/comp f g)` returns a function equivalent to `(fn [x] (f (g x)))`.
   For more than two functions, pipe with `->` or nest multiple `comp` calls.
@@ -46,25 +48,26 @@
   ## Examples
 
   ```nexl
-(def inc-and-double (core/comp (fn [x] (* x 2)) (fn [x] (+ x 1))))
-(inc-and-double 3)   ; => 8   ((3+1)*2)
+  (def inc-and-double (core/comp (fn [x] (* x 2)) (fn [x] (+ x 1))))
+  (inc-and-double 3)   ; => 8   ((3+1)*2)
 
-(def trim-upper (core/comp str/upper str/trim))
-(trim-upper \"  hello  \")  ; => \"HELLO\"
+  (def trim-upper (core/comp str/upper str/trim))
+  (trim-upper \"  hello  \")  ; => \"HELLO\"
 
-(map (core/comp str/upper str/trim) [\" a \" \" b \"])
-; => [\"A\" \"B\"]
+  (map (core/comp str/upper str/trim) [\" a \" \" b \"])
+  ; => [\"A\" \"B\"]
   ```
 
   ## See Also
   - `core/partial` — partial application
   - `->` / `->>` — threading macros for sequential transformation
-  "
+  """
   [f g]
   (native "core/comp" f g))
 
 (defn partial
-  "Return a function with the first arguments pre-applied.
+  """
+  Return a function with the first arguments pre-applied.
 
   `(core/partial f a b)` returns a function that, when called with
   additional arguments `x y ...`, calls `(f a b x y ...)`.
@@ -79,26 +82,27 @@
   ## Examples
 
   ```nexl
-(def add5 (core/partial + 5))
-(add5 3)     ; => 8
-(add5 10)    ; => 15
+  (def add5 (core/partial + 5))
+  (add5 3)     ; => 8
+  (add5 10)    ; => 15
 
-(def greet (core/partial str \"Hello, \"))
-(greet \"Alice\")   ; => \"Hello, Alice\"
+  (def greet (core/partial str \"Hello, \"))
+  (greet \"Alice\")   ; => \"Hello, Alice\"
 
-(map (core/partial * 2) [1 2 3 4])
-; => [2 4 6 8]
+  (map (core/partial * 2) [1 2 3 4])
+  ; => [2 4 6 8]
   ```
 
   ## See Also
   - `core/comp` — compose functions
   - `fn` — define a new function inline
-  "
+  """
   [f & args]
   (native "core/partial" f args))
 
 (defn constantly
-  "Return a function that always returns `x`, ignoring its arguments.
+  """
+  Return a function that always returns `x`, ignoring its arguments.
 
   ## Parameters
   - `x` — the value to always return.
@@ -109,25 +113,26 @@
   ## Examples
 
   ```nexl
-(def always-zero (core/constantly 0))
-(always-zero)         ; => 0
-(always-zero 1 2 3)   ; => 0
+  (def always-zero (core/constantly 0))
+  (always-zero)         ; => 0
+  (always-zero 1 2 3)   ; => 0
 
-(map (core/constantly :pending) [1 2 3])
-; => [:pending :pending :pending]
+  (map (core/constantly :pending) [1 2 3])
+  ; => [:pending :pending :pending]
 
-;; Useful as a default handler
-(def no-op (core/constantly unit))
+  ;; Useful as a default handler
+  (def no-op (core/constantly unit))
   ```
 
   ## See Also
   - `core/identity` — return the argument itself
-  "
+  """
   [x]
   (native "core/constantly" x))
 
 (defn juxt
-  "Return a function that applies each of `fs` to its arguments and returns a vector of results.
+  """
+  Return a function that applies each of `fs` to its arguments and returns a vector of results.
 
   `(core/juxt f g h)` returns `(fn [x] [(f x) (g x) (h x)])`. Useful
   for computing multiple derived values from a single input in one pass.
@@ -141,24 +146,25 @@
   ## Examples
 
   ```nexl
-(def stats (core/juxt count (fn [v] (reduce + 0 v))))
-(stats [1 2 3 4 5])    ; => [5 15]  ([count sum])
+  (def stats (core/juxt count (fn [v] (reduce + 0 v))))
+  (stats [1 2 3 4 5])    ; => [5 15]  ([count sum])
 
-(map (core/juxt str/upper str/lower) [\"Hello\" \"World\"])
-; => [[\"HELLO\" \"hello\"] [\"WORLD\" \"world\"]]
+  (map (core/juxt str/upper str/lower) [\"Hello\" \"World\"])
+  ; => [[\"HELLO\" \"hello\"] [\"WORLD\" \"world\"]]
 
-(def key-val (core/juxt (fn [m] (:key m)) (fn [m] (:val m))))
-(key-val {:key \"x\" :val 1})   ; => [\"x\" 1]
+  (def key-val (core/juxt (fn [m] (:key m)) (fn [m] (:val m))))
+  (key-val {:key \"x\" :val 1})   ; => [\"x\" 1]
   ```
 
   ## See Also
   - `core/comp` — compose functions sequentially
-  "
+  """
   [& fs]
   (native "core/juxt" fs))
 
 (defn apply
-  "Call `f` with the elements of `args` as positional arguments.
+  """
+  Call `f` with the elements of `args` as positional arguments.
 
   The last argument must be a `Vec`. This allows passing a dynamically
   constructed argument list to any function.
@@ -173,17 +179,17 @@
   ## Examples
 
   ```nexl
-(core/apply + [1 2 3 4])     ; => 10
-(core/apply str [\"a\" \"b\" \"c\"])  ; => \"abc\"
-(core/apply max [3 1 4 1 5])  ; => 5
+  (core/apply + [1 2 3 4])     ; => 10
+  (core/apply str [\"a\" \"b\" \"c\"])  ; => \"abc\"
+  (core/apply max [3 1 4 1 5])  ; => 5
 
-;; Build args list dynamically
-(def args (append base-args extra))
-(core/apply my-fn args)
+  ;; Build args list dynamically
+  (def args (append base-args extra))
+  (core/apply my-fn args)
   ```
 
   ## See Also
   - `core/partial` — pre-apply known arguments
-  "
+  """
   [f args]
   (native "core/apply" f args))

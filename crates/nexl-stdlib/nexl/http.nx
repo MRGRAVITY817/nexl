@@ -9,7 +9,8 @@
 ;;   :headers Map   — response headers (Str → Str)
 
 (defn get
-  "Perform an HTTP GET request and return the response.
+  """
+  Perform an HTTP GET request and return the response.
 
   Sends a simple HTTP GET to `url`. Does not follow redirects beyond
   what the OS TCP stack provides. TLS is supported on platforms that
@@ -29,24 +30,25 @@
   ## Examples
 
   ```nexl
-(def resp (http/get \"https://api.example.com/data\")?)
-(def body (http/body resp))
-(def data (json/decode body)?)
+  (def resp (http/get \"https://api.example.com/data\")?)
+  (def body (http/body resp))
+  (def data (json/decode body)?)
 
-(match (http/get url)
-  (Ok r)  (io/println (str \"Status: \" (http/status r)))
-  (Err e) (io/println (str \"Request failed: \" e)))
+  (match (http/get url)
+    (Ok r)  (io/println (str \"Status: \" (http/status r)))
+    (Err e) (io/println (str \"Request failed: \" e)))
   ```
 
   ## See Also
   - `http/post` — send a request with a body
   - `http/status` / `http/body` / `http/headers` — extract response fields
-  "
+  """
   [url]
   (native "http/get" url))
 
 (defn post
-  "Perform an HTTP POST request with a string body and return the response.
+  """
+  Perform an HTTP POST request with a string body and return the response.
 
   Sends `body` as the raw request body. Set `Content-Type` in `headers`
   for JSON or form-encoded requests.
@@ -61,24 +63,25 @@
   ## Examples
 
   ```nexl
-(def payload (json/encode {:name \"Alice\" :score 99}))
-(def resp (http/post \"https://api.example.com/scores\" payload)?)
-(io/println (str \"Posted, status: \" (http/status resp)))
+  (def payload (json/encode {:name \"Alice\" :score 99}))
+  (def resp (http/post \"https://api.example.com/scores\" payload)?)
+  (io/println (str \"Posted, status: \" (http/status resp)))
 
-;; With form data
-(def form \"username=alice&password=secret\")
-(http/post \"https://example.com/login\" form)?
+  ;; With form data
+  (def form \"username=alice&password=secret\")
+  (http/post \"https://example.com/login\" form)?
   ```
 
   ## See Also
   - `http/get` — GET request (no body)
   - `json/encode` — build a JSON body
-  "
+  """
   [url body]
   (native "http/post" url body))
 
 (defn response
-  "Construct an HTTP response map.
+  """
+  Construct an HTTP response map.
 
   Used in server handlers to build a structured response. Returns a
   map matching the `Response` shape expected by `http/serve` handlers.
@@ -94,20 +97,21 @@
   ## Examples
 
   ```nexl
-(http/response 200 (json/encode result) {:content-type \"application/json\"})
-(http/response 404 \"Not found\" {})
-(http/response 302 \"\" {:location \"/login\"})
+  (http/response 200 (json/encode result) {:content-type \"application/json\"})
+  (http/response 404 \"Not found\" {})
+  (http/response 302 \"\" {:location \"/login\"})
   ```
 
   ## See Also
   - `http/serve` — start a server that calls a handler producing responses
   - `http/status` / `http/body` / `http/headers` — extract response fields
-  "
+  """
   [status body headers]
   (native "http/response" status body headers))
 
 (defn status
-  "Extract the `:status` field from an HTTP response map.
+  """
+  Extract the `:status` field from an HTTP response map.
 
   ## Parameters
   - `resp` — a `Response` map (as returned by `http/get`, `http/post`, or `http/response`).
@@ -118,24 +122,25 @@
   ## Examples
 
   ```nexl
-(def resp (http/get url)?)
-(when (= (http/status resp) 200)
-  (process (http/body resp)))
+  (def resp (http/get url)?)
+  (when (= (http/status resp) 200)
+    (process (http/body resp)))
 
-(if (< (http/status resp) 400)
-  (handle-success resp)
-  (handle-error resp))
+  (if (< (http/status resp) 400)
+    (handle-success resp)
+    (handle-error resp))
   ```
 
   ## See Also
   - `http/body` — extract the response body
   - `http/headers` — extract response headers
-  "
+  """
   [resp]
   (native "http/status" resp))
 
 (defn body
-  "Extract the `:body` field from an HTTP response map.
+  """
+  Extract the `:body` field from an HTTP response map.
 
   ## Parameters
   - `resp` — a `Response` map.
@@ -146,21 +151,22 @@
   ## Examples
 
   ```nexl
-(def resp (http/get url)?)
-(def data (json/decode (http/body resp))?)
+  (def resp (http/get url)?)
+  (def data (json/decode (http/body resp))?)
 
-(io/println (str \"Body length: \" (count (http/body resp))))
+  (io/println (str \"Body length: \" (count (http/body resp))))
   ```
 
   ## See Also
   - `http/status` — check status before reading body
   - `json/decode` — parse a JSON body
-  "
+  """
   [resp]
   (native "http/body" resp))
 
 (defn headers
-  "Extract the `:headers` field from an HTTP response map.
+  """
+  Extract the `:headers` field from an HTTP response map.
 
   ## Parameters
   - `resp` — a `Response` map.
@@ -171,21 +177,22 @@
   ## Examples
 
   ```nexl
-(def ct (get (http/headers resp) \"content-type\"))
-(match ct
-  (Some t) (io/println (str \"Content-Type: \" t))
-  None     (io/println \"No content-type header\"))
+  (def ct (get (http/headers resp) \"content-type\"))
+  (match ct
+    (Some t) (io/println (str \"Content-Type: \" t))
+    None     (io/println \"No content-type header\"))
   ```
 
   ## See Also
   - `http/body` — extract the response body
   - `http/status` — extract the status code
-  "
+  """
   [resp]
   (native "http/headers" resp))
 
 (defn serve
-  "Start an HTTP server. *Stub in eval mode — requires WASM Component Model.*
+  """
+  Start an HTTP server. *Stub in eval mode — requires WASM Component Model.*
 
   In a compiled WASM component this binds to the `wasi:http/incoming-handler`
   export and calls `handler` for each request. In the eval environment
@@ -201,14 +208,14 @@
   ## Examples
 
   ```nexl
-(http/serve 8080
-  (fn [req]
-    (http/response 200 \"Hello!\" {})))
+  (http/serve 8080
+    (fn [req]
+      (http/response 200 \"Hello!\" {})))
   ```
 
   ## See Also
   - `http/response` — build a response in the handler
   - `http/get` / `http/post` — make outbound requests
-  "
+  """
   [port handler]
   (native "http/serve" port handler))

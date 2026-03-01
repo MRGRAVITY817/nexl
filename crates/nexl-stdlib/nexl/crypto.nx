@@ -4,7 +4,8 @@
 ;; The Rust implementation lives in crates/nexl-stdlib/src/crypto.rs.
 
 (defn hash
-  "Compute a 64-bit integer hash of a string.
+  """
+  Compute a 64-bit integer hash of a string.
 
   Uses a fast, non-cryptographic hashing algorithm (suitable for hash
   tables and fingerprinting, NOT for password storage or MACs). The
@@ -22,23 +23,24 @@
   ## Examples
 
   ```nexl
-(crypto/hash \"hello\")          ; => some deterministic Int
-(= (crypto/hash \"x\") (crypto/hash \"x\"))  ; => true  (deterministic)
-(= (crypto/hash \"a\") (crypto/hash \"b\"))  ; => false  (almost certainly)
+  (crypto/hash \"hello\")          ; => some deterministic Int
+  (= (crypto/hash \"x\") (crypto/hash \"x\"))  ; => true  (deterministic)
+  (= (crypto/hash \"a\") (crypto/hash \"b\"))  ; => false  (almost certainly)
 
-;; Use as a cache key
-(def cache-key (crypto/hash (json/encode request)))
+  ;; Use as a cache key
+  (def cache-key (crypto/hash (json/encode request)))
   ```
 
   ## See Also
   - `random/bytes` — generate random bytes for keys/salts
   - `crypto/constant-time=` — safe string comparison
-  "
+  """
   [s]
   (native "crypto/hash" s))
 
 (defn constant-time=
-  "Compare two strings in constant time, resistant to timing attacks.
+  """
+  Compare two strings in constant time, resistant to timing attacks.
 
   Unlike `=`, this function always takes the same amount of time
   regardless of where the strings differ. Use when comparing secrets
@@ -56,16 +58,16 @@
   ## Examples
 
   ```nexl
-(def expected-token \"abc123\")
-(def provided-token (env/require \"API_TOKEN\")?)
+  (def expected-token \"abc123\")
+  (def provided-token (env/require \"API_TOKEN\")?)
 
-(when (not (crypto/constant-time= expected-token provided-token))
-  (panic \"Unauthorized\"))
+  (when (not (crypto/constant-time= expected-token provided-token))
+    (panic \"Unauthorized\"))
   ```
 
   ## See Also
   - `=` — ordinary equality (not timing-safe)
   - `random/bytes` — generate token material
-  "
+  """
   [a b]
   (native "crypto/constant-time=" a b))
