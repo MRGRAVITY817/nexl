@@ -101,6 +101,7 @@ impl Hash for ValueKey {
             Value::NativeClosure { f, .. } => {
                 (Rc::as_ptr(f) as *const () as usize).hash(state);
             }
+            Value::Handler(h) => (Rc::as_ptr(h) as usize).hash(state),
         }
     }
 }
@@ -260,6 +261,21 @@ pub struct Function {
     pub ensures: Vec<Node>,
 }
 
+/// A named effect handler definition (spec §6.10 `defhandler`).
+///
+/// Stored as a `Value::Handler` in the environment. When installed via
+/// `(handle [HandlerName] body)`, the effect implementations are used to
+/// intercept effect operations within the body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandlerDef {
+    /// Handler name, e.g. `"ConsoleLog"`.
+    pub name: Rc<str>,
+    /// Parameter names for parameterized handlers (empty if non-parameterized).
+    pub params: Vec<Rc<str>>,
+    /// Effect implementations — effect name + operation bodies.
+    pub effects: Vec<meta::HandledEffect>,
+}
+
 /// A runtime value produced by the Nexl tree-walk interpreter.
 ///
 /// This is distinct from the reader's `Atom` type: `Atom` is a *source-level*
@@ -318,6 +334,11 @@ pub enum Value {
         /// The closure implementation.
         f: NativeClosureFn,
     },
+
+    /// A named effect handler definition (spec §6.10 `defhandler`).
+    ///
+    /// Stores the parsed handler structure for later installation via `handle`.
+    Handler(Rc<HandlerDef>),
 }
 
 impl PartialEq for Value {
@@ -370,6 +391,7 @@ impl PartialEq for Value {
             (Value::NativeClosure { f: af, .. }, Value::NativeClosure { f: bf, .. }) => {
                 Rc::ptr_eq(af, bf)
             }
+            (Value::Handler(a), Value::Handler(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -414,6 +436,10 @@ impl std::fmt::Debug for Value {
                 .debug_struct("NativeClosure")
                 .field("name", name)
                 .finish_non_exhaustive(),
+            Value::Handler(h) => f
+                .debug_struct("Handler")
+                .field("name", &h.name)
+                .finish_non_exhaustive(),
         }
     }
 }
@@ -456,6 +482,7 @@ impl Value {
             Value::Function(_) => "Function",
             Value::NativeFunction(_) => "Function",
             Value::NativeClosure { .. } => "Function",
+            Value::Handler(h) => &h.name,
         }
     }
 }
@@ -557,6 +584,13 @@ impl std::fmt::Display for Value {
             }
             Value::NativeFunction(native) => write!(f, "fn {}/native", native.name),
             Value::NativeClosure { name, .. } => write!(f, "fn {name}/closure"),
+            Value::Handler(h) => {
+                if h.params.is_empty() {
+                    write!(f, "handler {}", h.name)
+                } else {
+                    write!(f, "handler {}/{}", h.name, h.params.len())
+                }
+            }
         }
     }
 }

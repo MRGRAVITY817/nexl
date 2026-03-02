@@ -5073,4 +5073,120 @@ mod tests {
             Value::Str(Rc::from("no placeholders"))
         );
     }
+
+    // ── defhandler tests ──
+
+    #[test]
+    fn eval_defhandler_simple() {
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler ConsoleLog
+              Log
+              (info [msg] (println msg)))
+            ConsoleLog
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        // ConsoleLog should resolve to a Handler value
+        assert!(matches!(last, Value::Handler(_)));
+        if let Value::Handler(h) = &last {
+            assert_eq!(&*h.name, "ConsoleLog");
+            assert!(h.params.is_empty());
+            assert_eq!(h.effects.len(), 1);
+            assert_eq!(h.effects[0].name, "Log");
+            assert_eq!(h.effects[0].operations.len(), 1);
+            assert_eq!(h.effects[0].operations[0].name, "info");
+        }
+    }
+
+    #[test]
+    fn eval_defhandler_parameterized() {
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler JsonLog [config]
+              Log
+              (info [msg] msg))
+            JsonLog
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        if let Value::Handler(h) = &last {
+            assert_eq!(&*h.name, "JsonLog");
+            assert_eq!(h.params.len(), 1);
+            assert_eq!(&*h.params[0], "config");
+        } else {
+            panic!("expected Handler, got {last:?}");
+        }
+    }
+
+    #[test]
+    fn eval_defhandler_multi_effect() {
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler ProductionStack
+              Db
+              (query [sql] sql)
+              Log
+              (info [msg] msg))
+            ProductionStack
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        if let Value::Handler(h) = &last {
+            assert_eq!(&*h.name, "ProductionStack");
+            assert_eq!(h.effects.len(), 2);
+            assert_eq!(h.effects[0].name, "Db");
+            assert_eq!(h.effects[1].name, "Log");
+        } else {
+            panic!("expected Handler, got {last:?}");
+        }
+    }
+
+    #[test]
+    fn eval_defhandler_continuation() {
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler TimestampLog
+              Log
+              (info [resume msg] (resume unit)))
+            TimestampLog
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        if let Value::Handler(h) = &last {
+            assert_eq!(&*h.name, "TimestampLog");
+            assert!(h.effects[0].operations[0].has_resume);
+        } else {
+            panic!("expected Handler, got {last:?}");
+        }
+    }
+
+    #[test]
+    fn eval_defhandler_returns_unit() {
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler ConsoleLog
+              Log
+              (info [msg] msg))
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        // defhandler itself returns Unit (like def/defn)
+        assert_eq!(last, Value::Unit);
+    }
 }

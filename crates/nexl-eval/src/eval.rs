@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
-use meta::{Atom, Node, NodeKind, Pattern, TryCatchForm, parse_pattern, parse_try_form};
-use nexl_runtime::{Value, value::Function};
+use meta::{
+    Atom, Node, NodeKind, Pattern, TryCatchForm, parse_defhandler_decl, parse_pattern,
+    parse_try_form,
+};
+use nexl_runtime::{Value, value::Function, value::HandlerDef};
 
 use crate::{Env, EvalError};
 
@@ -127,6 +130,9 @@ fn eval_list<'a>(
         }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "deftype" => {
             eval_deftype(items, env)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "defhandler" => {
+            eval_defhandler(items, env)
         }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "and" => {
             eval_and(items, env, loop_state)
@@ -719,6 +725,30 @@ fn eval_deftype(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
         }
         i += 1;
     }
+
+    Ok(EvalReturn::Value(Value::Unit))
+}
+
+/// Evaluate a `(defhandler Name [params?] Effect (op [args] body) ...)` form.
+///
+/// Parses the handler declaration and binds it in the environment as a
+/// `Value::Handler`. Parameterized handlers store their param names for
+/// later instantiation when called via `(handle [(HandlerName args)] body)`.
+fn eval_defhandler(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    let decl = parse_defhandler_decl(items).map_err(|e| {
+        EvalError::NativeError(format!("defhandler: {}", e.description))
+    })?;
+
+    let handler_def = HandlerDef {
+        name: Rc::from(decl.name.as_str()),
+        params: decl.params.iter().map(|p| Rc::from(p.as_str())).collect(),
+        effects: decl.effects,
+    };
+
+    env.define(
+        decl.name.as_str(),
+        Value::Handler(Rc::new(handler_def)),
+    );
 
     Ok(EvalReturn::Value(Value::Unit))
 }
