@@ -5,8 +5,8 @@
 use std::collections::{HashMap, HashSet};
 
 use nexl_ast::{
-    Atom, FloatSuffix, IntSuffix, ModuleDecl, Node, NodeKind, Pattern, Span, parse_handle_form,
-    parse_pattern,
+    Atom, FloatSuffix, IntSuffix, ModuleDecl, Node, NodeKind, Pattern, Span,
+    parse_defhandler_decl, parse_handle_form, parse_pattern,
 };
 use nexl_types::{
     Constructor, EffectRow, Scheme, Subst, Type, TypeDef, TypeError, TypeErrorKind, TypeVar,
@@ -2755,6 +2755,64 @@ fn infer_impl_method(node: &Node, env: &Env, state: &mut InferState) -> Result<(
     );
 
     synth(&fn_node, env, state).map(|_| ())
+}
+
+/// Infer a `(defhandler Name [params?] Effect (op [args] body) ...)` form.
+///
+/// Type-checks each operation body with parameters bound as fresh type
+/// variables. Binds the handler name as `Unit` in the environment — handlers
+/// are not first-class typed values yet, but their operation bodies are
+/// verified.
+pub fn infer_defhandler(
+    node: &Node,
+    env: &Env,
+    state: &mut InferState,
+) -> Result<Env, TypeError> {
+    let items = match &node.kind {
+        NodeKind::List(items) => items,
+        _ => {
+            return Err(TypeError::new(TypeErrorKind::MalformedForm {
+                description: "defhandler must be a list".to_string(),
+            }));
+        }
+    };
+
+    let decl = parse_defhandler_decl(items).map_err(|e| {
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: e.description,
+        })
+    })?;
+
+    // Extend env with handler params (if parameterized) for op body checking
+    let mut handler_env = env.clone();
+    for param in &decl.params {
+        let param_ty = state.fresh_var();
+        handler_env = handler_env.extend(param.clone(), Scheme::mono(param_ty));
+    }
+
+    // Type-check each operation body with fresh types for each param
+    for handled_effect in &decl.effects {
+        for op in &handled_effect.operations {
+            let mut op_env = handler_env.clone();
+            if op.has_resume {
+                let resume_ty = state.fresh_var();
+                op_env = op_env.extend("resume", Scheme::mono(resume_ty));
+            }
+            for param in &op.params {
+                let param_ty = state.fresh_var();
+                op_env = op_env.extend(param.clone(), Scheme::mono(param_ty));
+            }
+            for expr in &op.body {
+                if let Err(e) = synth(expr, &op_env, state) {
+                    state.push_error(e);
+                }
+            }
+        }
+    }
+
+    // Bind the handler name as Unit in the environment
+    let new_env = env.extend(decl.name.clone(), Scheme::mono(Type::Unit));
+    Ok(new_env)
 }
 
 fn is_impl_protocol_ref(node: &Node) -> bool {
@@ -9731,6 +9789,85 @@ mod integration_tests {
             state.errors.len(),
             InferState::ERROR_LIMIT,
             "should cap at ERROR_LIMIT"
+        );
+    }
+
+    // -- defhandler inference tests --
+
+    #[test]
+    fn defhandler_simple_infers_without_errors() {
+        // (defhandler Logger Log (info [msg] msg))
+        // A simple single-effect handler with one operation; spec §6.10
+        let env = Env::new();
+        let mut state = InferState::new();
+        let node = parse_one("(defhandler Logger Log (info [msg] msg))");
+        let result = super::infer_defhandler(&node, &env, &mut state);
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+    }
+
+    #[test]
+    fn defhandler_binds_handler_name_in_returned_env() {
+        // After infer_defhandler, the handler name is bound in the returned env (spec §6.10)
+        let env = Env::new();
+        let mut state = InferState::new();
+        let node = parse_one("(defhandler Logger Log (info [msg] msg))");
+        let new_env = super::infer_defhandler(&node, &env, &mut state).unwrap();
+        assert!(
+            new_env.lookup("Logger").is_some(),
+            "Logger should be bound in returned env"
+        );
+    }
+
+    #[test]
+    fn defhandler_parameterized_handler_binds_params() {
+        // (defhandler Counter [n] State (get [] n) (put [v] v))
+        // Handler params should be in scope during op body checking (spec §6.10)
+        let env = Env::new();
+        let mut state = InferState::new();
+        let node = parse_one("(defhandler Counter [n] State (get [] n) (put [v] v))");
+        let result = super::infer_defhandler(&node, &env, &mut state);
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+    }
+
+    #[test]
+    fn defhandler_continuation_binds_resume() {
+        // (defhandler Async Await (await [resume k] (k 42)))
+        // 'resume' param should be bound as a fresh type variable (spec §6.10)
+        let env = Env::new();
+        let mut state = InferState::new();
+        let node = parse_one("(defhandler Async Await (await [resume k] (k 42)))");
+        let result = super::infer_defhandler(&node, &env, &mut state);
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
+        );
+    }
+
+    #[test]
+    fn defhandler_multi_effect_checks_all_ops() {
+        // (defhandler Multi Log (info [msg] msg) State (get [] 0))
+        // All ops across all effects should be type-checked (spec §6.10)
+        let env = Env::new();
+        let mut state = InferState::new();
+        let node = parse_one("(defhandler Multi Log (info [msg] msg) State (get [] 0))");
+        let result = super::infer_defhandler(&node, &env, &mut state);
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        assert!(
+            state.errors.is_empty(),
+            "expected no type errors, got: {:?}",
+            state.errors
         );
     }
 }
