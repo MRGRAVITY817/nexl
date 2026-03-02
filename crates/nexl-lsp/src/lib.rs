@@ -92,6 +92,14 @@ fn type_check_diagnostics(nodes: &[Node], source: &str) -> Vec<Diagnostic> {
                 }
                 Err(err) => Err(err),
             }
+        } else if list_head_is(node, "defhandler") {
+            match nexl_infer::infer_defhandler(node, &env, &mut state) {
+                Ok(new_env) => {
+                    env = new_env;
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            }
         } else {
             nexl_infer::synth(node, &env, &mut state).map(|_| ())
         };
@@ -1502,6 +1510,25 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
             continue;
         }
 
+        if let Some(name_node) = defhandler_name_node(node) {
+            let is_target = span_contains(name_node.span, offset);
+            match nexl_infer::infer_defhandler(node, &env, &mut state) {
+                Ok(new_env) => {
+                    env = new_env;
+                    if is_target && let Some(name) = symbol_name(name_node) {
+                        return Some(build_simple_hover(&name, name_node.span, source));
+                    }
+                }
+                Err(err) => {
+                    state.push_error(err);
+                    if is_target && let Some(name) = symbol_name(name_node) {
+                        return Some(build_simple_hover(&name, name_node.span, source));
+                    }
+                }
+            }
+            continue;
+        }
+
         let _ = nexl_infer::synth(node, &env, &mut state);
     }
 
@@ -1885,6 +1912,21 @@ fn def_name_node(node: &Node) -> Option<&Node> {
     }
 }
 
+/// Return the name node (items[1]) of a `(defhandler Name ...)` form.
+fn defhandler_name_node(node: &Node) -> Option<&Node> {
+    if !list_head_is(node, "defhandler") {
+        return None;
+    }
+    let NodeKind::List(items) = &node.kind else {
+        return None;
+    };
+    let name_node = items.get(1)?;
+    match &name_node.kind {
+        NodeKind::Atom(Atom::Symbol { .. }) => Some(name_node),
+        _ => None,
+    }
+}
+
 fn symbol_name(node: &Node) -> Option<String> {
     match &node.kind {
         NodeKind::Atom(Atom::Symbol { ns: None, name }) => Some(name.clone()),
@@ -1951,6 +1993,12 @@ fn find_definition_range(nodes: &[Node], name: &str, source: &str) -> Option<Ran
             }
             _ => {}
         }
+        match defhandler_name_node(node) {
+            Some(name_node) if symbol_name(name_node).as_deref() == Some(name) => {
+                return Some(span_to_range(source, name_node.span));
+            }
+            _ => {}
+        }
     }
     None
 }
@@ -1977,6 +2025,18 @@ fn completion_items(nodes: &[Node]) -> Vec<CompletionItem> {
                     label: name,
                     kind: Some(CompletionItemKind::VARIABLE),
                     detail: Some("def".to_string()),
+                    ..CompletionItem::default()
+                });
+            }
+            _ => {}
+        }
+
+        match defhandler_name_node(node).and_then(symbol_name) {
+            Some(name) if seen.insert(name.clone()) => {
+                items.push(CompletionItem {
+                    label: name,
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some("defhandler".to_string()),
                     ..CompletionItem::default()
                 });
             }
@@ -4204,5 +4264,104 @@ mod tests {
             result.is_none(),
             "should be None when cursor is not on a symbol"
         );
+    }
+
+    // -- defhandler LSP tests --
+
+    #[tokio::test]
+    async fn test_hover_defhandler_name_site() {
+        // Hovering on the handler name in a defhandler definition should return hover info.
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("defhandler-hover.nexl");
+        let source = "(defhandler Logger Log (info [msg] msg))";
+        open_doc(backend, uri.clone(), source).await;
+
+        let name_offset = source.find("Logger").expect("Logger");
+        let position = offset_to_position(source, name_offset);
+        let hover = backend
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+            })
+            .await
+            .expect("hover request")
+            .expect("hover result");
+
+        let value = hover_value(&hover);
+        assert!(value.contains("Logger"), "hover should contain handler name");
+    }
+
+    #[tokio::test]
+    async fn test_goto_definition_defhandler() {
+        // Go-to-definition on a reference to a defhandler should jump to the definition site.
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("defhandler-goto.nexl");
+        let source =
+            "(defhandler Logger Log (info [msg] msg))\n(handle [Logger] (info \"hello\"))";
+        open_doc(backend, uri.clone(), source).await;
+
+        // Cursor on the second occurrence of "Logger" (usage in handle form)
+        let usage_offset = source.rfind("Logger").expect("Logger usage");
+        let position = offset_to_position(source, usage_offset);
+        let response = backend
+            .goto_definition(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            })
+            .await
+            .expect("definition request")
+            .expect("definition result");
+
+        let def_offset = source.find("Logger").expect("Logger def");
+        let expected_start = offset_to_position(source, def_offset);
+        let expected_end = offset_to_position(source, def_offset + "Logger".len());
+        match response {
+            GotoDefinitionResponse::Scalar(loc) => {
+                assert_eq!(loc.uri, uri);
+                assert_eq!(loc.range, Range::new(expected_start, expected_end));
+            }
+            _ => panic!("expected scalar response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_completion_includes_defhandler() {
+        // Completions should include handler names defined via defhandler.
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("defhandler-completion.nexl");
+        let source = "(defhandler Logger Log (info [msg] msg))\n";
+        open_doc(backend, uri.clone(), source).await;
+
+        let position = offset_to_position(source, source.len().saturating_sub(1));
+        let response = backend
+            .completion(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            })
+            .await
+            .expect("completion request")
+            .expect("completion result");
+
+        let items = match response {
+            CompletionResponse::Array(items) => items,
+            CompletionResponse::List(list) => list.items,
+        };
+        let has_logger = items.iter().any(|item| item.label == "Logger");
+        assert!(has_logger, "completions should include 'Logger' from defhandler");
     }
 }

@@ -8,7 +8,7 @@
 - [x] `handle [HandlerName]` — install named handler by reference
 - [x] `handle [(HandlerName args)]` — install parameterized handler
 - [x] `defhandler` type inference in nexl-infer (completeness checking, effect row)
-- [ ] `defhandler` LSP support (hover, go-to-definition)
+- [x] `defhandler` LSP support (hover, go-to-definition)
 - [ ] E2E tests for defhandler (simple, continuation, parameterized, multi-effect, nested)
 
 ## Phase 1: Core (MVP)
