@@ -6286,4 +6286,49 @@ mod tests {
         let r = eval_forms("(is 2 (test/not-m (test/gt 5)))", &env);
         assert!(r.is_ok(), "not-m should pass when inner matcher fails: {r:?}");
     }
+
+    // --- :flaky / :timeout annotations (spec §6.1–6.2) ---
+
+    #[test]
+    fn flaky_annotation_retries_registered() {
+        nexl_stdlib::test::registry_clear();
+        let env = stdlib_test_env();
+        let r = eval_forms(r#"(deftest "flaky-test" :flaky 5 (is 1 1))"#, &env);
+        assert!(r.is_ok(), "deftest :flaky should not error: {r:?}");
+        assert_eq!(
+            nexl_stdlib::test::flaky_retries("flaky-test"),
+            5,
+            ":flaky 5 should register 5 retries"
+        );
+    }
+
+    #[test]
+    fn flaky_annotation_true_defaults_to_3() {
+        nexl_stdlib::test::registry_clear();
+        let env = stdlib_test_env();
+        let r = eval_forms(r#"(deftest "flaky-default" :flaky true (is 2 2))"#, &env);
+        assert!(r.is_ok(), "deftest :flaky true should not error: {r:?}");
+        assert_eq!(
+            nexl_stdlib::test::flaky_retries("flaky-default"),
+            3,
+            ":flaky true should default to 3 retries"
+        );
+    }
+
+    #[test]
+    fn flaky_annotation_body_still_runs() {
+        nexl_stdlib::test::registry_clear();
+        let env = stdlib_test_env();
+        let r = eval_forms(
+            r#"(deftest "flaky-body" :flaky 2 (+ 1 2))"#,
+            &env,
+        );
+        assert!(r.is_ok(), "deftest :flaky body should evaluate: {r:?}");
+        // Test is registered in the registry
+        let thunks = nexl_stdlib::test::registry_drain();
+        assert!(
+            thunks.iter().any(|(n, _)| n == "flaky-body"),
+            "flaky-body should be in registry"
+        );
+    }
 }

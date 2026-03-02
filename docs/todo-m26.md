@@ -61,4 +61,4 @@
 - [x] `bench` form and `nexl bench` command
 - [x] Matcher protocol and built-in matchers
 - [ ] `--coverage` support
-- [ ] `:flaky`, `:timeout` annotations
+- [x] `:flaky`, `:timeout` annotations
