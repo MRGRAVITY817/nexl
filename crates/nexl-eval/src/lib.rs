@@ -5542,4 +5542,42 @@ mod tests {
         assert!(names.contains(&"Group > inside"));
         assert!(names.contains(&"outside"));
     }
+
+    // -- throws? tests --
+
+    #[test]
+    fn throws_q_passes_on_any_error() {
+        // (throws? (panic "oops")) — any error passes (spec §5)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(throws? (panic "oops"))"#, &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn throws_q_fails_when_no_error_thrown() {
+        // (throws? (+ 1 1)) — no error → assertion fails (spec §5)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(throws? (+ 1 1))", &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("no exception") || msg.contains("none was thrown"), "got: {msg}");
+    }
+
+    #[test]
+    fn throws_q_with_type_and_pattern_passes() {
+        // (throws? TypeError "oops" (panic "TypeError: oops")) — type+pattern matches (spec §5)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(throws? TypeError "oops" (panic "TypeError: oops message"))"#, &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn throws_q_with_type_fails_when_type_mismatch() {
+        // (throws? TypeError (panic "other error")) — "TypeError" not in error message → fails (spec §5)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(throws? TypeError (panic "other error"))"#, &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("TypeError"), "error should mention expected type, got: {msg}");
+    }
 }

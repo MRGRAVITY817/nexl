@@ -155,6 +155,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "describe" => {
             eval_describe(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "throws?" => {
+            eval_throws_q(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -882,6 +885,86 @@ fn eval_describe<'a>(
     match error {
         Some(e) => Err(e),
         None => Ok(last),
+    }
+}
+
+/// `(throws? body...)` / `(throws? ErrorType body...)` / `(throws? ErrorType pattern body...)`
+///
+/// Asserts that evaluating the body raises an error (spec §5).
+///
+/// Forms:
+/// - `(throws? body...)` — any error
+/// - `(throws? ErrorType body...)` — error message contains ErrorType name
+/// - `(throws? ErrorType "pattern" body...)` — message contains type name and pattern
+fn eval_throws_q<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() < 2 {
+        return Err(EvalError::Arity);
+    }
+
+    // Determine if items[1] is an ErrorType symbol (uppercase) or part of body
+    let mut body_start = 1usize;
+    let mut error_type: Option<String> = None;
+    let mut message_pattern: Option<String> = None;
+
+    if let NodeKind::Atom(Atom::Symbol { ns: None, name: sym_name }) = &items[1].kind
+        && sym_name.starts_with(|c: char| c.is_uppercase())
+    {
+        error_type = Some(sym_name.clone());
+        body_start = 2;
+
+        // Check for optional message pattern string
+        if let Some(next) = items.get(2)
+            && let NodeKind::Atom(Atom::Str(s)) = &next.kind
+        {
+            message_pattern = Some(s.clone());
+            body_start = 3;
+        }
+    }
+
+    let body_nodes = &items[body_start..];
+    if body_nodes.is_empty() {
+        return Err(EvalError::Arity);
+    }
+
+    // Evaluate each body form; collect the first error
+    let mut error_msg: Option<String> = None;
+    for node in body_nodes {
+        match eval_with_loop(node, env, loop_state) {
+            Err(e) => {
+                error_msg = Some(format!("{e}"));
+                break;
+            }
+            Ok(_) => {}
+        }
+    }
+
+    match error_msg {
+        None => Err(EvalError::NativeError(
+            "throws?: expected an exception but none was thrown".to_string(),
+        )),
+        Some(msg) => {
+            // Check error_type filter
+            if let Some(type_name) = &error_type {
+                if !msg.to_lowercase().contains(&type_name.to_lowercase()) {
+                    return Err(EvalError::NativeError(format!(
+                        "throws?: expected error of type `{type_name}` but got: {msg}"
+                    )));
+                }
+            }
+            // Check message pattern filter
+            if let Some(pattern) = &message_pattern {
+                if !msg.contains(pattern.as_str()) {
+                    return Err(EvalError::NativeError(format!(
+                        "throws?: expected error message to contain {pattern:?} but got: {msg}"
+                    )));
+                }
+            }
+            Ok(EvalReturn::Value(Value::Unit))
+        }
     }
 }
 
