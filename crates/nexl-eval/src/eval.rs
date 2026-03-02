@@ -70,7 +70,18 @@ fn eval_atom(atom: &Atom, env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
             name,
         } => env
             .get_qualified(alias, name)
-            .ok_or_else(|| EvalError::UnboundSymbol(format!("{alias}/{name}")))?,
+            .ok_or_else(|| {
+                // If the module alias doesn't exist at all, it might be an unhandled effect
+                if !env.has_module_alias(alias) {
+                    EvalError::NativeError(format!(
+                        "unhandled effect: `{alias}/{name}` — \
+                         no `{alias}` handler is installed. \
+                         Use `(handle [{alias}Handler] ...)` to provide one."
+                    ))
+                } else {
+                    EvalError::UnboundSymbol(format!("{alias}/{name}"))
+                }
+            })?,
     };
     Ok(EvalReturn::Value(v))
 }

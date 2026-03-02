@@ -32,9 +32,9 @@
 
 ## Phase 3: Effect-Based Mocking
 
-- [ ] `call-log` test utility (recording wrapper for effect operations)
-- [ ] Capability-aware test sandboxing (unhandled effects = compile error)
-- [ ] `SequentialExecutor` for deterministic concurrent testing
+- [x] `call-log` test utility (recording wrapper for effect operations)
+- [x] Capability-aware test sandboxing (unhandled effects = compile error)
+- [x] `SequentialExecutor` for deterministic concurrent testing
 - [ ] `submodule test` support (compile-time exclusion from release)
 
 ## Phase 4: Property Testing

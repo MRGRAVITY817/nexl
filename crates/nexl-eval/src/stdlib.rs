@@ -97,6 +97,9 @@ pub fn standard_env() -> Rc<Env> {
     env.define("reset!", native("reset!", reset_fn));
     env.define("swap!", native("swap!", swap_fn));
 
+    // Pre-defined test utility handlers
+    env.define("SequentialExecutor", sequential_executor_handler());
+
     // Register §11.1 stdlib modules as qualified module aliases
     register_stdlib_modules(&env);
 
@@ -1253,4 +1256,48 @@ fn swap_fn(args: &[Value]) -> Result<Value, String> {
         [other, _] => Err(format!("`swap!` expected Atom as first arg, got {}", other.type_name())),
         _ => Err(format!("`swap!` requires exactly 2 arguments, got {}", args.len())),
     }
+}
+
+/// Build the pre-defined `SequentialExecutor` handler (spec §12.6).
+///
+/// Handles the `Concurrent` effect by running all concurrent operations
+/// synchronously inline, making concurrent code deterministic under test.
+///
+/// ```nexl
+/// (handle [SequentialExecutor]
+///   (fork (fn [] expensive-computation)))
+/// ```
+fn sequential_executor_handler() -> Value {
+    use nexl_runtime::{BuiltHandlerEffect, value::HandlerDef};
+
+    // (fork thunk) → run thunk immediately and return result
+    let fork_fn = Value::NativeClosure {
+        name: Rc::from("fork"),
+        f: Rc::new(|args: &[Value]| match args {
+            [thunk] => nexl_runtime::call_value(thunk, &[]),
+            _ => Err(format!("`fork` expects 1 argument (thunk), got {}", args.len())),
+        }),
+    };
+
+    // (join future) → return the value as-is (already computed by fork)
+    let join_fn = Value::NativeClosure {
+        name: Rc::from("join"),
+        f: Rc::new(|args: &[Value]| match args {
+            [future] => Ok(future.clone()),
+            _ => Err(format!("`join` expects 1 argument (future), got {}", args.len())),
+        }),
+    };
+
+    Value::Handler(Rc::new(HandlerDef {
+        name: Rc::from("SequentialExecutor"),
+        params: vec![],
+        effects: vec![],
+        built_ops: vec![BuiltHandlerEffect {
+            name: "Concurrent".to_string(),
+            ops: vec![
+                ("fork".to_string(), fork_fn),
+                ("join".to_string(), join_fn),
+            ],
+        }],
+    }))
 }

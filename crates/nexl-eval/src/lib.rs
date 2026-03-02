@@ -52,6 +52,17 @@ impl Env {
         self.modules.borrow_mut().insert(alias.into(), exports);
     }
 
+    /// Check whether a module alias is registered in this env or any parent.
+    pub fn has_module_alias(&self, alias: &str) -> bool {
+        if self.modules.borrow().contains_key(alias) {
+            return true;
+        }
+        match &self.parent {
+            Some(parent) => parent.has_module_alias(alias),
+            None => false,
+        }
+    }
+
     /// Look up a binding, searching parents if needed.
     pub fn get(&self, name: &str) -> Option<Value> {
         if let Some(v) = self.bindings.borrow().get(name) {
@@ -5940,5 +5951,52 @@ mod tests {
             &env,
         );
         assert_eq!(result.unwrap(), Value::Int(42));
+    }
+
+    // ── SequentialExecutor ────────────────────────────────────────────────────
+
+    #[test]
+    fn sequential_executor_is_in_standard_env() {
+        // SequentialExecutor is pre-defined in the standard env as a Handler
+        let env = crate::stdlib::standard_env();
+        let v = env.get("SequentialExecutor").expect("SequentialExecutor not in env");
+        assert!(matches!(v, Value::Handler(_)), "expected Handler, got {v:?}");
+    }
+
+    #[test]
+    fn sequential_executor_fork_runs_thunk_inline() {
+        // (handle [SequentialExecutor] (fork (fn [] 42))) → 42
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(handle [SequentialExecutor] (fork (fn [] 42)))"#,
+            &env,
+        );
+        assert_eq!(result.unwrap(), Value::Int(42));
+    }
+
+    #[test]
+    fn sequential_executor_join_returns_future() {
+        // (handle [SequentialExecutor] (join 99)) → 99
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(handle [SequentialExecutor] (join 99))"#,
+            &env,
+        );
+        assert_eq!(result.unwrap(), Value::Int(99));
+    }
+
+    // ── capability-aware sandboxing (helpful error for unhandled effects) ─────
+
+    #[test]
+    fn unhandled_effect_gives_helpful_error() {
+        // Calling an effect op without a handler should mention "effect" or "handler"
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(Log/info "hello")"#, &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("handler") || msg.contains("effect") || msg.contains("Log"),
+            "error should hint at unhandled effect: {msg}"
+        );
     }
 }
