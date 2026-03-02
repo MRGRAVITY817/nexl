@@ -161,6 +161,11 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "is-match" => {
             eval_is_match(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name })
+            if matches!(name.as_str(), "setup" | "teardown" | "setup-all" | "teardown-all") =>
+        {
+            eval_lifecycle_hook(name, items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -882,18 +887,39 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
             "`deftest` requires at least one body expression".to_string(),
         ));
     } else {
-        // Normal thunk: close over a snapshot of the env and body nodes
+        // Normal thunk: close over a snapshot of the env and body nodes, plus lifecycle hooks
         let env_clone = Rc::clone(env);
         let body: Vec<Node> = body_nodes.to_vec();
+        // Snapshot lifecycle hooks at registration time so they're captured in the closure
+        let setup_hooks = nexl_stdlib::test::setup_snapshot();
+        let teardown_hooks = nexl_stdlib::test::teardown_snapshot();
         Value::NativeClosure {
             name: Rc::from(name.as_str()),
             f: Rc::new(move |_args| {
-                let mut last = Value::Unit;
-                for node in &body {
-                    last = crate::eval::eval(node, &env_clone)
-                        .map_err(|e| format!("{e}"))?;
+                // Run all setup hooks (outermost first)
+                for hook in &setup_hooks {
+                    nexl_runtime::call_value(hook, &[]).map_err(|e| format!("setup: {e}"))?;
                 }
-                Ok(last)
+                // Run body; capture error but still run teardown
+                let mut last = Value::Unit;
+                let mut body_err: Option<String> = None;
+                for node in &body {
+                    match crate::eval::eval(node, &env_clone) {
+                        Ok(v) => last = v,
+                        Err(e) => {
+                            body_err = Some(format!("{e}"));
+                            break;
+                        }
+                    }
+                }
+                // Run all teardown hooks (innermost first)
+                for hook in teardown_hooks.iter().rev() {
+                    let _ = nexl_runtime::call_value(hook, &[]);
+                }
+                match body_err {
+                    Some(e) => Err(e),
+                    None => Ok(last),
+                }
             }),
         }
     };
@@ -993,6 +1019,9 @@ fn eval_describe<'a>(
         };
 
     nexl_stdlib::test::describe_push(label);
+    // Track lifecycle hook stack depth so we can pop hooks added within this scope
+    let setup_depth = nexl_stdlib::test::setup_snapshot().len();
+    let teardown_depth = nexl_stdlib::test::teardown_snapshot().len();
 
     let mut last = EvalReturn::Value(Value::Unit);
     let mut error: Option<EvalError> = None;
@@ -1008,6 +1037,15 @@ fn eval_describe<'a>(
     }
 
     nexl_stdlib::test::describe_pop();
+    // Pop any setup/teardown hooks that were registered in this scope
+    let current_setup = nexl_stdlib::test::setup_snapshot().len();
+    let current_teardown = nexl_stdlib::test::teardown_snapshot().len();
+    for _ in setup_depth..current_setup {
+        nexl_stdlib::test::setup_pop();
+    }
+    for _ in teardown_depth..current_teardown {
+        nexl_stdlib::test::teardown_pop();
+    }
 
     match error {
         Some(e) => Err(e),
@@ -1093,6 +1131,39 @@ fn eval_throws_q<'a>(
             Ok(EvalReturn::Value(Value::Unit))
         }
     }
+}
+
+/// `(setup thunk)` / `(teardown thunk)` / `(setup-all thunk)` / `(teardown-all thunk)` — lifecycle hooks.
+///
+/// Registers the thunk as a lifecycle hook for the current describe scope (spec §7.4).
+/// - `setup`: thunk runs before each test in the scope
+/// - `teardown`: thunk runs after each test in the scope
+/// - `setup-all`: thunk runs once before all tests in the scope
+/// - `teardown-all`: thunk runs once after all tests in the scope
+fn eval_lifecycle_hook<'a>(
+    hook_name: &str,
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() < 2 {
+        return Err(EvalError::NativeError(format!(
+            "`{hook_name}` requires a thunk argument"
+        )));
+    }
+    let thunk_node = &items[1];
+    let thunk = match eval_with_loop(thunk_node, env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        r @ EvalReturn::Recur(_) => return Ok(r),
+    };
+    match hook_name {
+        "setup" => nexl_stdlib::test::setup_push(thunk),
+        "teardown" => nexl_stdlib::test::teardown_push(thunk),
+        "setup-all" => nexl_stdlib::test::setup_all_push(thunk),
+        "teardown-all" => nexl_stdlib::test::teardown_all_push(thunk),
+        _ => unreachable!("unexpected lifecycle hook name: {hook_name}"),
+    }
+    Ok(EvalReturn::Value(Value::Unit))
 }
 
 /// `(is-match pattern expr [:when guard] body...)` — pattern-matching assertion (spec §7.2).

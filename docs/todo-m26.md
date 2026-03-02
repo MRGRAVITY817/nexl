@@ -28,7 +28,7 @@
 - [x] `:let` clause on `describe`
 - [x] `:tags` support with CLI `--tags` filtering
 - [x] String/collection diff output in error messages
-- [ ] `setup`/`teardown`/`setup-all`/`teardown-all` lifecycle hooks
+- [x] `setup`/`teardown`/`setup-all`/`teardown-all` lifecycle hooks
 
 ## Phase 3: Effect-Based Mocking
 

@@ -605,6 +605,13 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String]) -> R
         tests.retain(|(name, _thunk): &(String, _)| name.contains(f));
     }
 
+    // Run setup-all hooks once before all tests
+    for hook in test_mod::setup_all_drain() {
+        nexl_runtime::call_value(&hook, &[]).map_err(|e| format!("setup-all error: {e}"))?;
+    }
+    // Collect teardown-all hooks to run after all tests
+    let teardown_all_hooks = test_mod::teardown_all_drain();
+
     let total = tests.len();
     let file_name = input_path.display().to_string();
     println!("running {total} tests in {file_name}");
@@ -653,6 +660,11 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String]) -> R
     } else {
         String::new()
     };
+    // Run teardown-all hooks once after all tests
+    for hook in teardown_all_hooks {
+        let _ = nexl_runtime::call_value(&hook, &[]);
+    }
+
     if failed == 0 {
         println!("test result: ok. {passed} passed; 0 failed{skip_note}");
         Ok(true)
@@ -2170,6 +2182,50 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "both old and new style tests should pass");
+    }
+
+    #[test]
+    fn setup_runs_before_each_test() {
+        let source = r#"
+(describe "hooks"
+  (setup (fn [] (def x 1)))
+  (deftest "t1" (is (= 1 1)))
+  (deftest "t2" (is (= 2 2))))
+"#;
+        let path = write_temp_file(source, "test_setup");
+        let result = command_test(path.clone(), None, &[]);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "setup tests should pass");
+    }
+
+    #[test]
+    fn teardown_runs_after_each_test() {
+        let source = r#"
+(describe "td"
+  (teardown (fn [] (def y 1)))
+  (deftest "t1" (is (= 1 1))))
+"#;
+        let path = write_temp_file(source, "test_teardown");
+        let result = command_test(path.clone(), None, &[]);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "teardown test should succeed: {result:?}");
+        assert!(result.unwrap(), "teardown test should pass");
+    }
+
+    #[test]
+    fn setup_all_and_teardown_all_run_once() {
+        let source = r#"
+(setup-all (fn [] (def n 0)))
+(teardown-all (fn [] (def n 0)))
+(deftest "t1" (is (= 1 1)))
+(deftest "t2" (is (= 2 2)))
+"#;
+        let path = write_temp_file(source, "test_setup_all");
+        let result = command_test(path.clone(), None, &[]);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "setup-all/teardown-all test should succeed: {result:?}");
+        assert!(result.unwrap(), "tests should pass");
     }
 
     #[test]

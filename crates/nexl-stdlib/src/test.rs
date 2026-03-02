@@ -32,6 +32,15 @@ thread_local! {
     static FOCUS_SET: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
     /// Map of test name → tag list for tests with `:tags` metadata.
     static TAGS_REGISTRY: RefCell<HashMap<String, Vec<String>>> = RefCell::new(HashMap::new());
+    /// Stack of per-test setup thunks (one per active describe scope).
+    /// Each element is a thunk registered by `setup` in that scope.
+    static SETUP_STACK: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    /// Stack of per-test teardown thunks.
+    static TEARDOWN_STACK: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    /// One-time setup-all thunk, called before all tests in the current describe.
+    static SETUP_ALL_REGISTRY: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    /// One-time teardown-all thunk, called after all tests in the current describe.
+    static TEARDOWN_ALL_REGISTRY: RefCell<Vec<Value>> = RefCell::new(Vec::new());
 }
 
 /// Add a test to the thread-local registry.
@@ -47,6 +56,10 @@ pub fn registry_drain() -> Vec<TestEntry> {
 /// Clear the registry without running.
 pub fn registry_clear() {
     TEST_REGISTRY.with(|r| r.borrow_mut().clear());
+    SETUP_STACK.with(|s| s.borrow_mut().clear());
+    TEARDOWN_STACK.with(|s| s.borrow_mut().clear());
+    SETUP_ALL_REGISTRY.with(|s| s.borrow_mut().clear());
+    TEARDOWN_ALL_REGISTRY.with(|s| s.borrow_mut().clear());
 }
 
 /// Return how many tests are registered.
@@ -77,6 +90,56 @@ pub fn focus_any() -> bool {
 /// Take all focused test names and clear the focus set.
 pub fn focus_drain() -> HashSet<String> {
     FOCUS_SET.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+/// Push a per-test setup thunk (called before each deftest body in the current scope).
+pub fn setup_push(thunk: Value) {
+    SETUP_STACK.with(|s| s.borrow_mut().push(thunk));
+}
+
+/// Pop the most-recently-pushed setup thunk (called when the describe scope exits).
+pub fn setup_pop() {
+    SETUP_STACK.with(|s| s.borrow_mut().pop());
+}
+
+/// Return a snapshot of the current setup stack (outermost → innermost).
+pub fn setup_snapshot() -> Vec<Value> {
+    SETUP_STACK.with(|s| s.borrow().clone())
+}
+
+/// Push a per-test teardown thunk (called after each deftest body in the current scope).
+pub fn teardown_push(thunk: Value) {
+    TEARDOWN_STACK.with(|s| s.borrow_mut().push(thunk));
+}
+
+/// Pop the most-recently-pushed teardown thunk.
+pub fn teardown_pop() {
+    TEARDOWN_STACK.with(|s| s.borrow_mut().pop());
+}
+
+/// Return a snapshot of the current teardown stack (outermost → innermost).
+pub fn teardown_snapshot() -> Vec<Value> {
+    TEARDOWN_STACK.with(|s| s.borrow().clone())
+}
+
+/// Register a one-time setup-all thunk (runs once before all tests in a describe).
+pub fn setup_all_push(thunk: Value) {
+    SETUP_ALL_REGISTRY.with(|s| s.borrow_mut().push(thunk));
+}
+
+/// Take and return all setup-all thunks, clearing the registry.
+pub fn setup_all_drain() -> Vec<Value> {
+    SETUP_ALL_REGISTRY.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+/// Register a one-time teardown-all thunk (runs once after all tests in a describe).
+pub fn teardown_all_push(thunk: Value) {
+    TEARDOWN_ALL_REGISTRY.with(|s| s.borrow_mut().push(thunk));
+}
+
+/// Take and return all teardown-all thunks, clearing the registry.
+pub fn teardown_all_drain() -> Vec<Value> {
+    TEARDOWN_ALL_REGISTRY.with(|s| std::mem::take(&mut *s.borrow_mut()))
 }
 
 /// Register tags for a test name (`:tags` metadata on `deftest`).
