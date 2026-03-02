@@ -5,7 +5,7 @@ mod infer;
 
 pub use env::Env;
 pub use infer::{
-    DeftypeDecl, InferState, check, check_module_performs, infer_def, infer_defn,
+    DeftypeDecl, InferState, check, check_module_performs, infer_def, infer_defhandler, infer_defn,
     infer_defpattern, infer_impl, parse_deftype, register_deftype, synth,
     validate_module_performs,
 };

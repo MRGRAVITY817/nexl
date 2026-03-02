@@ -588,10 +588,23 @@ fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, Strin
 
     let mut passed: usize = 0;
     let mut failed: usize = 0;
+    let mut skipped: usize = 0;
     let mut failures: Vec<String> = Vec::new();
 
     for (name, thunk) in tests {
         match nexl_runtime::call_value(&thunk, &[]) {
+            Ok(nexl_runtime::Value::Adt { ctor, fields, .. }) if ctor.as_ref() == "Skip" => {
+                skipped += 1;
+                let reason = fields
+                    .first()
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_default();
+                if reason.is_empty() {
+                    println!("  SKIP  {name}");
+                } else {
+                    println!("  SKIP  {name} ({reason})");
+                }
+            }
             Ok(_) => {
                 passed += 1;
                 println!("  PASS  {name}");
@@ -605,16 +618,23 @@ fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, Strin
     }
 
     println!();
-    if failed == 0 {
-        println!("test result: ok. {passed} passed; 0 failed");
-        Ok(true)
-    } else {
+    if !failures.is_empty() {
         println!("failures:");
         for f in &failures {
             println!("{f}");
         }
         println!();
-        println!("test result: FAILED. {passed} passed; {failed} failed");
+    }
+    let skip_note = if skipped > 0 {
+        format!("; {skipped} skipped")
+    } else {
+        String::new()
+    };
+    if failed == 0 {
+        println!("test result: ok. {passed} passed; 0 failed{skip_note}");
+        Ok(true)
+    } else {
+        println!("test result: FAILED. {passed} passed; {failed} failed{skip_note}");
         Ok(false)
     }
 }
