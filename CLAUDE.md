@@ -85,18 +85,18 @@ See `docs/current-milestone.md` for active work and the corresponding `docs/todo
 Read `milestones.md` for the Stage 0 plan, `docs/stage-2-milestones.md` for Stage 2.
 
 ## Spec Reference
-The full language spec is in `nexl-spec.md` (symlinked from the design repo).
+The full language spec is in `nexl-spec.md` (now a real file in this repo).
 Do NOT read the entire spec. Instead:
-- For syntax/tokens → §2 Lexical Grammar (lines 51–164)
-- For data model → §3 (lines 166–306)
-- For core forms → §4 (lines 308–1148)
-- For type system → §5 (lines 1150–1518)
-- For effects → §6 (lines 1520–1800)
-- For macros → §7 (lines 1802–1941)
-- For modules → §8 (lines 1943–2031)
-- For error handling → §9 (lines 2033–2145)
-- For compilation model → §12 (lines 2833–2926)
-- For formal grammar → Appendix D (lines 3809–end)
+- For syntax/tokens → §2 Lexical Grammar (lines 55–186)
+- For data model → §3 (lines 187–335)
+- For core forms → §4 (lines 336–1188)
+- For type system → §5 (lines 1189–1796)
+- For effects → §6 (lines 1797–2272) — includes §6.10 `defhandler`
+- For macros → §7 (lines 2274–2597)
+- For modules → §8 (lines 2598–2861)
+- For error handling → §9 (lines 2862–3013)
+- For compilation model → §12 (lines 3158–3253)
+- For formal grammar → Appendix D (lines 4160–end)
 
 ## Design Decisions
 ADRs are in `decisions/` (symlinked from design repo). Key ones:
