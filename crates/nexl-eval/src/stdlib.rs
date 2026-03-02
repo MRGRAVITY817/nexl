@@ -91,6 +91,12 @@ pub fn standard_env() -> Rc<Env> {
         native("bit-shift-right", bit_shift_right),
     );
 
+    // Mutable reference cells (atoms)
+    env.define("atom", native("atom", atom_fn));
+    env.define("deref", native("deref", deref_fn));
+    env.define("reset!", native("reset!", reset_fn));
+    env.define("swap!", native("swap!", swap_fn));
+
     // Register §11.1 stdlib modules as qualified module aliases
     register_stdlib_modules(&env);
 
@@ -1197,4 +1203,54 @@ fn bit_shift_right(args: &[Value]) -> Result<Value, String> {
 
 fn type_mismatch(op: &str, expected: &str, got: &Value) -> String {
     format!("`{op}` expected {expected}, got {}", got.type_name())
+}
+
+// ---------------------------------------------------------------------------
+// Atom functions (mutable reference cells)
+// ---------------------------------------------------------------------------
+
+use std::cell::RefCell;
+
+/// `(atom val)` — create a mutable reference cell holding `val`.
+fn atom_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [val] => Ok(Value::Atom(Rc::new(RefCell::new(val.clone())))),
+        _ => Err(format!("`atom` requires exactly 1 argument, got {}", args.len())),
+    }
+}
+
+/// `(deref atom)` — return the current value held by the atom.
+fn deref_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Atom(cell)] => Ok(cell.borrow().clone()),
+        [other] => Err(format!("`deref` expected Atom, got {}", other.type_name())),
+        _ => Err(format!("`deref` requires exactly 1 argument, got {}", args.len())),
+    }
+}
+
+/// `(reset! atom new-val)` — replace the atom's value, returning the new value.
+fn reset_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Atom(cell), new_val] => {
+            *cell.borrow_mut() = new_val.clone();
+            Ok(new_val.clone())
+        }
+        [other, _] => Err(format!("`reset!` expected Atom as first arg, got {}", other.type_name())),
+        _ => Err(format!("`reset!` requires exactly 2 arguments, got {}", args.len())),
+    }
+}
+
+/// `(swap! atom f)` — apply `f` to current atom value, store and return result.
+fn swap_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Atom(cell), f] => {
+            let current = cell.borrow().clone();
+            let new_val = nexl_runtime::call_value(f, &[current])
+                .map_err(|e| format!("`swap!` function error: {e}"))?;
+            *cell.borrow_mut() = new_val.clone();
+            Ok(new_val)
+        }
+        [other, _] => Err(format!("`swap!` expected Atom as first arg, got {}", other.type_name())),
+        _ => Err(format!("`swap!` requires exactly 2 arguments, got {}", args.len())),
+    }
 }

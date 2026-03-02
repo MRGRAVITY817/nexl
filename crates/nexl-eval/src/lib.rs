@@ -5636,6 +5636,53 @@ mod tests {
         assert!(msg.contains("TypeError"), "error should mention expected type, got: {msg}");
     }
 
+    // ── atom / deref / swap! / reset! ────────────────────────────────────────
+
+    #[test]
+    fn atom_creates_mutable_ref() {
+        // (atom 42) → atom, (deref a) → 42
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(let [a (atom 42)] (deref a))", &env);
+        assert_eq!(result.unwrap(), Value::Int(42));
+    }
+
+    #[test]
+    fn reset_changes_value() {
+        // (reset! a 99) then (deref a) → 99
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(let [a (atom 0)] (reset! a 99) (deref a))", &env);
+        assert_eq!(result.unwrap(), Value::Int(99));
+    }
+
+    #[test]
+    fn swap_applies_function() {
+        // (swap! a inc) increments the atom value
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(let [a (atom 5)] (swap! a (fn [x] (+ x 1))) (deref a))",
+            &env,
+        );
+        assert_eq!(result.unwrap(), Value::Int(6));
+    }
+
+    #[test]
+    fn atom_shared_state_across_closures() {
+        // Two closures sharing an atom see the same mutations
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"
+            (let [a (atom 0)
+                  inc! (fn [] (swap! a (fn [x] (+ x 1))))
+                  get  (fn [] (deref a))]
+              (inc!)
+              (inc!)
+              (get))
+            "#,
+            &env,
+        );
+        assert_eq!(result.unwrap(), Value::Int(2));
+    }
+
     // ── diff output in is errors ─────────────────────────────────────────────
 
     #[test]

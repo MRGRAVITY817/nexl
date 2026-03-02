@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use meta::Node;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 type ModuleExports = Rc<HashMap<Rc<str>, Value>>;
@@ -102,6 +103,7 @@ impl Hash for ValueKey {
                 (Rc::as_ptr(f) as *const () as usize).hash(state);
             }
             Value::Handler(h) => (Rc::as_ptr(h) as usize).hash(state),
+            Value::Atom(cell) => (Rc::as_ptr(cell) as usize).hash(state),
         }
     }
 }
@@ -339,6 +341,12 @@ pub enum Value {
     ///
     /// Stores the parsed handler structure for later installation via `handle`.
     Handler(Rc<HandlerDef>),
+
+    /// A mutable reference cell (Clojure-style atom).
+    ///
+    /// `(atom val)` creates an atom. `(deref a)` reads it.
+    /// `(reset! a v)` replaces the value. `(swap! a f)` applies f to current value.
+    Atom(Rc<RefCell<Value>>),
 }
 
 impl PartialEq for Value {
@@ -392,6 +400,7 @@ impl PartialEq for Value {
                 Rc::ptr_eq(af, bf)
             }
             (Value::Handler(a), Value::Handler(b)) => Rc::ptr_eq(a, b),
+            (Value::Atom(a), Value::Atom(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -440,6 +449,10 @@ impl std::fmt::Debug for Value {
                 .debug_struct("Handler")
                 .field("name", &h.name)
                 .finish_non_exhaustive(),
+            Value::Atom(cell) => f
+                .debug_struct("Atom")
+                .field("value", &*cell.borrow())
+                .finish(),
         }
     }
 }
@@ -483,6 +496,7 @@ impl Value {
             Value::NativeFunction(_) => "Function",
             Value::NativeClosure { .. } => "Function",
             Value::Handler(h) => &h.name,
+            Value::Atom(_) => "Atom",
         }
     }
 }
@@ -591,6 +605,7 @@ impl std::fmt::Display for Value {
                     write!(f, "handler {}/{}", h.name, h.params.len())
                 }
             }
+            Value::Atom(cell) => write!(f, "#<atom: {}>", cell.borrow()),
         }
     }
 }
