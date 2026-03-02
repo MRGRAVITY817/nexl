@@ -39,9 +39,9 @@
 
 ## Phase 4: Property Testing
 
-- [ ] Generator primitives and combinators
-- [ ] `check` form inside `deftest`
-- [ ] Integrated shrinking (generators carry shrink trees)
+- [x] Generator primitives and combinators
+- [x] `check` form inside `deftest`
+- [x] Integrated shrinking (generators carry shrink trees)
 - [ ] `Arbitrary` protocol with auto-derive for ADTs/records
 - [ ] Failure persistence (`.test-seeds`)
 
@@ -50,7 +50,7 @@
 - [ ] `snap!` inline snapshots with source rewriting
 - [ ] `snap-file!` file-based snapshots
 - [ ] `--accept` and `--review` CLI commands
-- [ ] Contract-driven testing (`:examples` auto-execution)
+- [x] Contract-driven testing (`:examples` auto-execution)
 - [ ] Doctest `>>>` parsing from docstrings
 
 ## Phase 6: Polish & Performance

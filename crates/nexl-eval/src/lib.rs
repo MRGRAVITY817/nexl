@@ -6160,4 +6160,84 @@ mod tests {
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("after 1 tests"), "should fail on first trial: {msg}");
     }
+
+    // --- contract-driven testing (:examples auto-execution) (spec §5, §4.2.1) ---
+
+    fn stdlib_test_env() -> Rc<Env> {
+        // Use standard_env so test/register! and test/run-registered are available
+        crate::stdlib::standard_env()
+    }
+
+    /// Extract an integer from a `Value::Map` by keyword name.
+    fn map_int(v: &Value, key: &str) -> i64 {
+        let kw = Value::Keyword { ns: None, name: Rc::from(key) };
+        match v {
+            Value::Map(m) => match m.get(&kw) {
+                Some(Value::Int(n)) => *n,
+                other => panic!("::{key} not found or not int, got {other:?}"),
+            },
+            _ => panic!("expected Map, got {v}"),
+        }
+    }
+
+    #[test]
+    fn contract_examples_run_in_test_mode() {
+        nexl_stdlib::test::set_test_mode(true);
+        nexl_stdlib::test::registry_clear();
+        let env = stdlib_test_env();
+        eval_forms(
+            "(defn add [a b] :examples [{:in [1 2] :out 3}] (+ a b))",
+            &env,
+        )
+        .unwrap();
+        let report = eval_forms("(test/run-registered)", &env).unwrap();
+        nexl_stdlib::test::set_test_mode(false);
+        assert_eq!(map_int(&report, "passed"), 1, "expected 1 example to pass");
+    }
+
+    #[test]
+    fn contract_examples_not_run_outside_test_mode() {
+        nexl_stdlib::test::set_test_mode(false);
+        nexl_stdlib::test::registry_clear();
+        let env = stdlib_test_env();
+        eval_forms(
+            "(defn add [a b] :examples [{:in [1 2] :out 3}] (+ a b))",
+            &env,
+        )
+        .unwrap();
+        let report = eval_forms("(test/run-registered)", &env).unwrap();
+        assert_eq!(map_int(&report, "passed"), 0, "no examples should be registered");
+        assert_eq!(map_int(&report, "failed"), 0, "no examples should be registered");
+    }
+
+    #[test]
+    fn contract_examples_failing_case_registered_as_failure() {
+        nexl_stdlib::test::set_test_mode(true);
+        nexl_stdlib::test::registry_clear();
+        let env = stdlib_test_env();
+        // Example has wrong :out (1+2=3, not 99)
+        eval_forms(
+            "(defn add [a b] :examples [{:in [1 2] :out 99}] (+ a b))",
+            &env,
+        )
+        .unwrap();
+        let report = eval_forms("(test/run-registered)", &env).unwrap();
+        nexl_stdlib::test::set_test_mode(false);
+        assert_eq!(map_int(&report, "failed"), 1, "expected 1 example to fail");
+    }
+
+    #[test]
+    fn contract_examples_multiple_cases() {
+        nexl_stdlib::test::set_test_mode(true);
+        nexl_stdlib::test::registry_clear();
+        let env = stdlib_test_env();
+        eval_forms(
+            "(defn double [x] :examples [{:in [0] :out 0} {:in [3] :out 6} {:in [-1] :out -2}] (* x 2))",
+            &env,
+        )
+        .unwrap();
+        let report = eval_forms("(test/run-registered)", &env).unwrap();
+        nexl_stdlib::test::set_test_mode(false);
+        assert_eq!(map_int(&report, "passed"), 3, "expected 3 examples to pass");
+    }
 }

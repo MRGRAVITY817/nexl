@@ -1734,6 +1734,75 @@ fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     Ok(EvalReturn::Value(Value::Function(Rc::new(func))))
 }
 
+/// Register `:examples` from a `defn` as test cases in the test registry (spec §4.2.1).
+///
+/// Called only in test mode. Each `{:in [...] :out v}` map produces a named test thunk.
+fn register_contract_examples(
+    fn_name: &str,
+    fn_val: &Value,
+    examples: &[Node],
+    env: &Rc<Env>,
+) -> Result<(), EvalError> {
+    for (idx, example_node) in examples.iter().enumerate() {
+        let NodeKind::Map(pairs) = &example_node.kind else { continue };
+
+        let mut in_node: Option<&Node> = None;
+        let mut out_node: Option<&Node> = None;
+        for (k, v) in pairs {
+            match &k.kind {
+                NodeKind::Atom(Atom::Keyword { ns: None, name }) if &**name == "in" => {
+                    in_node = Some(v);
+                }
+                NodeKind::Atom(Atom::Keyword { ns: None, name }) if &**name == "out" => {
+                    out_node = Some(v);
+                }
+                _ => {}
+            }
+        }
+        let (in_node, out_node) = match (in_node, out_node) {
+            (Some(i), Some(o)) => (i, o),
+            _ => continue,
+        };
+
+        // Evaluate :in args
+        let args: Vec<Value> = match &in_node.kind {
+            NodeKind::Vector(arg_nodes) => arg_nodes
+                .iter()
+                .map(|n| {
+                    eval_with_loop(n, env, None).and_then(|r| match r {
+                        EvalReturn::Value(v) => Ok(v),
+                        EvalReturn::Recur(_) => Err(EvalError::Arity),
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+            _ => continue,
+        };
+
+        // Evaluate :out expected
+        let expected = match eval_with_loop(out_node, env, None)? {
+            EvalReturn::Value(v) => v,
+            EvalReturn::Recur(_) => continue,
+        };
+
+        let test_name = format!("{fn_name} example {}", idx + 1);
+        let fn_clone = fn_val.clone();
+        let name_clone = test_name.clone();
+        let thunk = Value::NativeClosure {
+            name: Rc::from(test_name.as_str()),
+            f: Rc::new(move |_| {
+                let actual = nexl_runtime::call_value(&fn_clone, &args)?;
+                if actual == expected {
+                    Ok(Value::Unit)
+                } else {
+                    Err(format!("{name_clone}: expected {expected}, got {actual}"))
+                }
+            }),
+        };
+        nexl_stdlib::test::registry_push(test_name, thunk);
+    }
+    Ok(())
+}
+
 fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     if items.len() < 4 {
         return Err(EvalError::Arity);
@@ -1758,6 +1827,7 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     // Scan for contract clauses (:requires, :ensures, :examples) before body expressions.
     let mut requires_nodes: Vec<Node> = vec![];
     let mut ensures_nodes: Vec<Node> = vec![];
+    let mut examples_nodes: Vec<Node> = vec![];
     let mut actual_body_start = body_start;
 
     let mut scan = body_start;
@@ -1784,7 +1854,10 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
             NodeKind::Atom(Atom::Keyword { ns: None, name })
                 if name == "examples" || name == "example" =>
             {
-                // :examples are for documentation/testing tools, not dev-mode eval.
+                // Capture example nodes for contract-driven testing; skip at dev-mode eval time.
+                if let NodeKind::Vector(ex) = &items[scan + 1].kind {
+                    examples_nodes = ex.clone();
+                }
                 scan += 2;
                 actual_body_start = scan;
             }
@@ -1828,6 +1901,11 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         EvalReturn::Value(other) => other,
         EvalReturn::Recur(vals) => return Ok(EvalReturn::Recur(vals)),
     };
+
+    // In test mode, register :examples before moving fn/name into env (spec §4.2.1).
+    if nexl_stdlib::test::is_test_mode() && !examples_nodes.is_empty() {
+        register_contract_examples(&name, &fn_value_named, &examples_nodes, env)?;
+    }
 
     env.define(name, fn_value_named);
     Ok(EvalReturn::Value(Value::Unit))
