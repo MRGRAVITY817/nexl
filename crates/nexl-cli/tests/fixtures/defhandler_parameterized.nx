@@ -1,0 +1,8 @@
+; Parameterized defhandler: handler carries configuration at install time
+(defhandler Counter [n]
+  State
+  (get [] n)
+  (put [v] v))
+
+(io/println (handle [(Counter 42)] (get)))
+(io/println (handle [(Counter 99)] (get)))

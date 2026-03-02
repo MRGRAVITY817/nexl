@@ -9,7 +9,7 @@
 - [x] `handle [(HandlerName args)]` — install parameterized handler
 - [x] `defhandler` type inference in nexl-infer (completeness checking, effect row)
 - [x] `defhandler` LSP support (hover, go-to-definition)
-- [ ] E2E tests for defhandler (simple, continuation, parameterized, multi-effect, nested)
+- [x] E2E tests for defhandler (simple, continuation, parameterized, multi-effect, nested)
 
 ## Phase 1: Core (MVP)
 

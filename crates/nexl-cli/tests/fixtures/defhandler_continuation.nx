@@ -1,0 +1,9 @@
+; Continuation-style defhandler: resume passes control back to the caller
+(defhandler Logger
+  Log (info [resume msg]
+    (io/println msg)
+    (resume unit)))
+
+(handle [Logger]
+  (info "first")
+  (info "second"))

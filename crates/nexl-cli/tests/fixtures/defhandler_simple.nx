@@ -1,0 +1,6 @@
+; Simple defhandler: define a named handler and install it via handle [Name]
+(defhandler Logger
+  Log (info [msg] (io/println msg)))
+
+(handle [Logger]
+  (info "hello from handler"))

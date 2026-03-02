@@ -1,0 +1,10 @@
+; Nested defhandlers: inner handler takes precedence over outer
+(defhandler Outer
+  Log (info [msg] (io/println "outer")))
+
+(defhandler Inner
+  Log (info [msg] (io/println "inner")))
+
+(handle [Outer]
+  (handle [Inner]
+    (info "test")))

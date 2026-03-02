@@ -1,0 +1,8 @@
+; Multi-effect defhandler: one handler covers multiple effect sections
+(defhandler Stack
+  Log (info [msg] (io/println msg))
+  State (get [] 0))
+
+(handle [Stack]
+  (info "hello")
+  (io/println (get)))
