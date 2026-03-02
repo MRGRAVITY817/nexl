@@ -137,6 +137,15 @@ enum Command {
         /// Only run tests that have all of these tags (comma-separated, e.g. "db,fast").
         #[arg(long = "tags")]
         tags: Option<String>,
+        /// Output format: "text" (default) or "json" (JSON Lines).
+        #[arg(long = "format", default_value = "text")]
+        format: String,
+    },
+    /// Run benchmarks in a Nexl file.
+    Bench {
+        /// File containing bench forms.
+        #[arg(value_name = "FILE")]
+        input: PathBuf,
     },
     /// Check for updates and print upgrade instructions.
     Upgrade,
@@ -285,14 +294,23 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Test { input, filter, tags } => {
+        Command::Test { input, filter, tags, format } => {
             let tag_list: Vec<String> = tags
                 .as_deref()
                 .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
                 .unwrap_or_default();
-            match command_test(input, filter.as_deref(), &tag_list) {
+            match command_test(input, filter.as_deref(), &tag_list, &format) {
                 Ok(true) => {}
                 Ok(false) => process::exit(1),
+                Err(message) => {
+                    print_error(&message);
+                    process::exit(1);
+                }
+            }
+        }
+        Command::Bench { input } => {
+            match command_bench(input) {
+                Ok(()) => {}
                 Err(message) => {
                     print_error(&message);
                     process::exit(1);
@@ -565,7 +583,7 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
 ///
 /// Returns `Ok(true)` if all tests pass, `Ok(false)` if any fail,
 /// or `Err` if the file fails to evaluate.
-fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String]) -> Result<bool, String> {
+fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String], format: &str) -> Result<bool, String> {
     use nexl_stdlib::test as test_mod;
 
     // Clear any tests from a previous run.
@@ -616,7 +634,11 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String]) -> R
 
     let total = tests.len();
     let file_name = input_path.display().to_string();
-    println!("running {total} tests in {file_name}");
+    let use_json = format == "json";
+
+    if !use_json {
+        println!("running {total} tests in {file_name}");
+    }
 
     let mut passed: usize = 0;
     let mut failed: usize = 0;
@@ -627,11 +649,14 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String]) -> R
         match nexl_runtime::call_value(&thunk, &[]) {
             Ok(nexl_runtime::Value::Adt { ctor, fields, .. }) if ctor.as_ref() == "Skip" => {
                 skipped += 1;
-                let reason = fields
-                    .first()
-                    .map(|v| format!("{v}"))
-                    .unwrap_or_default();
-                if reason.is_empty() {
+                let reason = fields.first().map(|v| format!("{v}")).unwrap_or_default();
+                if use_json {
+                    println!(
+                        "{{\"type\":\"test\",\"name\":{},\"status\":\"skip\",\"message\":{}}}",
+                        json_string(&name),
+                        json_string(&reason)
+                    );
+                } else if reason.is_empty() {
                     println!("  SKIP  {name}");
                 } else {
                     println!("  SKIP  {name} ({reason})");
@@ -639,41 +664,124 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String]) -> R
             }
             Ok(_) => {
                 passed += 1;
-                println!("  PASS  {name}");
+                if use_json {
+                    println!(
+                        "{{\"type\":\"test\",\"name\":{},\"status\":\"pass\"}}",
+                        json_string(&name)
+                    );
+                } else {
+                    println!("  PASS  {name}");
+                }
             }
             Err(msg) => {
                 failed += 1;
-                println!("  FAIL  {name}");
-                failures.push(format!("  {name}: {msg}"));
+                if use_json {
+                    println!(
+                        "{{\"type\":\"test\",\"name\":{},\"status\":\"fail\",\"message\":{}}}",
+                        json_string(&name),
+                        json_string(&msg)
+                    );
+                } else {
+                    println!("  FAIL  {name}");
+                    failures.push(format!("  {name}: {msg}"));
+                }
             }
         }
     }
 
-    println!();
-    if !failures.is_empty() {
-        println!("failures:");
-        for f in &failures {
-            println!("{f}");
-        }
-        println!();
-    }
-    let skip_note = if skipped > 0 {
-        format!("; {skipped} skipped")
-    } else {
-        String::new()
-    };
     // Run teardown-all hooks once after all tests
     for hook in teardown_all_hooks {
         let _ = nexl_runtime::call_value(&hook, &[]);
     }
 
-    if failed == 0 {
-        println!("test result: ok. {passed} passed; 0 failed{skip_note}");
-        Ok(true)
+    if use_json {
+        println!(
+            "{{\"type\":\"summary\",\"passed\":{passed},\"failed\":{failed},\"skipped\":{skipped},\"total\":{total}}}"
+        );
     } else {
-        println!("test result: FAILED. {passed} passed; {failed} failed{skip_note}");
-        Ok(false)
+        println!();
+        if !failures.is_empty() {
+            println!("failures:");
+            for f in &failures {
+                println!("{f}");
+            }
+            println!();
+        }
+        let skip_note = if skipped > 0 { format!("; {skipped} skipped") } else { String::new() };
+        if failed == 0 {
+            println!("test result: ok. {passed} passed; 0 failed{skip_note}");
+        } else {
+            println!("test result: FAILED. {passed} passed; {failed} failed{skip_note}");
+        }
     }
+
+    Ok(failed == 0)
+}
+
+/// Escape a string for JSON output (basic escaping: `"`, `\`, and control chars).
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {}
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// `nexl bench <file>` — run benchmarks registered via `(bench ...)` forms.
+fn command_bench(input_path: PathBuf) -> Result<(), String> {
+    use nexl_stdlib::test as test_mod;
+    test_mod::bench_registry_clear();
+    test_mod::set_bench_mode(true);
+
+    let source = std::fs::read_to_string(&input_path)
+        .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
+        .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
+    let env = nexl_eval::stdlib::standard_env();
+    for node in &nodes {
+        nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
+    }
+
+    test_mod::set_bench_mode(false);
+    let benches = test_mod::bench_registry_drain();
+    if benches.is_empty() {
+        println!("no benchmarks found in {}", input_path.display());
+        return Ok(());
+    }
+
+    println!("running {} benchmarks", benches.len());
+    for (name, thunk, warmup, iterations) in benches {
+        // Warmup
+        for _ in 0..warmup {
+            let _ = nexl_runtime::call_value(&thunk, &[]);
+        }
+        // Timed run
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            let _ = nexl_runtime::call_value(&thunk, &[]);
+        }
+        let elapsed = start.elapsed();
+        let per_iter_ns = elapsed.as_nanos() / iterations as u128;
+        let (value, unit) = if per_iter_ns < 1_000 {
+            (per_iter_ns, "ns")
+        } else if per_iter_ns < 1_000_000 {
+            (per_iter_ns / 1_000, "us")
+        } else {
+            (per_iter_ns / 1_000_000, "ms")
+        };
+        println!("  {name:<40} {value}{unit}/iter  ({iterations} iterations, {warmup} warmup)");
+    }
+    Ok(())
 }
 
 /// `nexl upgrade` — print current version and upgrade instructions.
@@ -2084,7 +2192,7 @@ mod tests {
     fn parse_test_with_input() {
         let cli = Cli::try_parse_from(["nexl", "test", "tests.nx"]).expect("parse");
         match cli.command {
-            Command::Test { input, filter, tags } => {
+            Command::Test { input, filter, tags, .. } => {
                 assert_eq!(input, PathBuf::from("tests.nx"));
                 assert_eq!(filter, None);
                 assert_eq!(tags, None);
@@ -2118,7 +2226,7 @@ mod tests {
 (deftest "tagged-db" :tags [:db] (is (= 2 2)))
 "#;
         let path = write_temp_file(source, "test_tags");
-        let result = command_test(path.clone(), None, &["db".to_string()]);
+        let result = command_test(path.clone(), None, &["db".to_string()], "text");
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "tagged test should pass");
@@ -2128,7 +2236,7 @@ mod tests {
     fn test_command_runs_empty_file() {
         let source = "(def x 1)";
         let path = write_temp_file(source, "test_cmd_empty");
-        let result = command_test(path.clone(), None, &[]);
+        let result = command_test(path.clone(), None, &[], "text");
         let _ = std::fs::remove_file(&path);
         // Should succeed with 0 tests
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
@@ -2141,7 +2249,7 @@ mod tests {
 (test/register! "pass-test" (fn [] (test/is true)))
 "#;
         let path = write_temp_file(source, "test_cmd_reg");
-        let result = command_test(path.clone(), None, &[]);
+        let result = command_test(path.clone(), None, &[], "text");
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "passing test should return true");
@@ -2154,7 +2262,7 @@ mod tests {
 (deftest "skip-me" :skip "not ready" (is false))
 "#;
         let path = write_temp_file(source, "test_skip");
-        let result = command_test(path.clone(), None, &[]);
+        let result = command_test(path.clone(), None, &[], "text");
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "skipped test should not count as failure");
@@ -2167,7 +2275,7 @@ mod tests {
 (deftest "focused" :focus (is (= 1 1)))
 "#;
         let path = write_temp_file(source, "test_focus");
-        let result = command_test(path.clone(), None, &[]);
+        let result = command_test(path.clone(), None, &[], "text");
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "only focused test should run (and pass)");
@@ -2180,7 +2288,7 @@ mod tests {
 (deftest "new-style" (is (= 2 2)))
 "#;
         let path = write_temp_file(source, "test_compat");
-        let result = command_test(path.clone(), None, &[]);
+        let result = command_test(path.clone(), None, &[], "text");
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "both old and new style tests should pass");
@@ -2195,7 +2303,7 @@ mod tests {
   (deftest "t2" (is (= 2 2))))
 "#;
         let path = write_temp_file(source, "test_setup");
-        let result = command_test(path.clone(), None, &[]);
+        let result = command_test(path.clone(), None, &[], "text");
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "setup tests should pass");
@@ -2209,7 +2317,7 @@ mod tests {
   (deftest "t1" (is (= 1 1))))
 "#;
         let path = write_temp_file(source, "test_teardown");
-        let result = command_test(path.clone(), None, &[]);
+        let result = command_test(path.clone(), None, &[], "text");
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "teardown test should succeed: {result:?}");
         assert!(result.unwrap(), "teardown test should pass");
@@ -2224,7 +2332,7 @@ mod tests {
 (deftest "t2" (is (= 2 2)))
 "#;
         let path = write_temp_file(source, "test_setup_all");
-        let result = command_test(path.clone(), None, &[]);
+        let result = command_test(path.clone(), None, &[], "text");
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "setup-all/teardown-all test should succeed: {result:?}");
         assert!(result.unwrap(), "tests should pass");
@@ -2638,5 +2746,69 @@ mod tests {
         assert!(manifest.package.version == "0.1.0");
         assert!(manifest.package.source_dir == "src");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- --format json output ---
+
+    #[test]
+    fn test_format_json_passing() {
+        let source = r#"(test/register! "pass-test" (fn [] (test/is true)))"#;
+        let path = write_temp_file(source, "json_pass");
+        let result = command_test(path.clone(), None, &[], "json");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test json should succeed: {result:?}");
+        assert!(result.unwrap(), "passing test should return true");
+    }
+
+    #[test]
+    fn test_format_json_failing() {
+        let source = r#"(test/register! "fail-test" (fn [] (test/is false)))"#;
+        let path = write_temp_file(source, "json_fail");
+        let result = command_test(path.clone(), None, &[], "json");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test json should not error: {result:?}");
+        assert!(!result.unwrap(), "failing test should return false");
+    }
+
+    #[test]
+    fn json_string_escapes_quotes() {
+        assert_eq!(json_string(r#"hello "world""#), r#""hello \"world\"""#);
+    }
+
+    #[test]
+    fn json_string_escapes_backslash() {
+        assert_eq!(json_string(r"a\b"), r#""a\\b""#);
+    }
+
+    // --- bench form ---
+
+    #[test]
+    fn bench_form_no_op_outside_bench_mode() {
+        let source = "(bench \"perf\" (+ 1 2))";
+        let path = write_temp_file(source, "bench_noop");
+        let result = nexl_eval::eval::eval(
+            &nexl_reader::read(source, meta::FileId::SYNTHETIC).unwrap().into_iter().next().unwrap(),
+            &nexl_eval::stdlib::standard_env(),
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "bench should be no-op outside bench mode: {result:?}");
+    }
+
+    #[test]
+    fn bench_command_runs_benchmarks() {
+        let source = r#"(bench "add" (+ 1 2))"#;
+        let path = write_temp_file(source, "bench_run");
+        let result = command_bench(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_bench should succeed: {result:?}");
+    }
+
+    #[test]
+    fn bench_command_empty_file() {
+        let source = "(def x 1)";
+        let path = write_temp_file(source, "bench_empty");
+        let result = command_bench(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_bench with no benchmarks should succeed: {result:?}");
     }
 }

@@ -45,6 +45,13 @@ thread_local! {
     /// Set to `true` by `nexl test` before evaluating files; `false` by `nexl run`.
     /// Controls whether `(submodule test ...)` bodies are evaluated (spec §8).
     static IS_TEST_MODE: RefCell<bool> = const { RefCell::new(false) };
+    /// Whether the evaluator is running in bench mode.
+    /// Set to `true` by `nexl bench` before evaluating files.
+    /// Controls whether `(bench ...)` forms register into the bench registry.
+    static IS_BENCH_MODE: RefCell<bool> = const { RefCell::new(false) };
+    /// Bench registry: (name, thunk, warmup, iterations).
+    static BENCH_REGISTRY: RefCell<Vec<(String, Value, usize, usize)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 /// Enable test mode: `(submodule test ...)` bodies will be evaluated.
@@ -55,6 +62,31 @@ pub fn set_test_mode(enabled: bool) {
 /// Check whether test mode is active.
 pub fn is_test_mode() -> bool {
     IS_TEST_MODE.with(|m| *m.borrow())
+}
+
+/// Enable bench mode: `(bench ...)` forms will register into the bench registry.
+pub fn set_bench_mode(enabled: bool) {
+    IS_BENCH_MODE.with(|m| *m.borrow_mut() = enabled);
+}
+
+/// Check whether bench mode is active.
+pub fn is_bench_mode() -> bool {
+    IS_BENCH_MODE.with(|m| *m.borrow())
+}
+
+/// Register a benchmark entry.
+pub fn bench_registry_push(name: String, thunk: Value, warmup: usize, iterations: usize) {
+    BENCH_REGISTRY.with(|r| r.borrow_mut().push((name, thunk, warmup, iterations)));
+}
+
+/// Drain and return all registered benchmarks.
+pub fn bench_registry_drain() -> Vec<(String, Value, usize, usize)> {
+    BENCH_REGISTRY.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Clear the bench registry.
+pub fn bench_registry_clear() {
+    BENCH_REGISTRY.with(|r| r.borrow_mut().clear());
 }
 
 /// Add a test to the thread-local registry.

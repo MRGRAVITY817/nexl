@@ -186,6 +186,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "check" => {
             eval_check(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "bench" => {
+            eval_bench(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -3113,4 +3116,85 @@ fn shrink_check<'a>(
         }
     }
     None
+}
+
+/// `(bench "name" body)` or `(bench "name" {:iterations N :warmup N} body...)` — benchmark form.
+///
+/// In bench mode (set by `nexl bench`): registers the body as a benchmark thunk.
+/// Outside bench mode: evaluates the body and returns Unit (no-op for benchmarking).
+fn eval_bench<'a>(
+    items: &'a [Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() < 3 {
+        return Err(EvalError::NativeError(
+            "`bench` requires at least 2 arguments: name and body".to_string(),
+        ));
+    }
+
+    // Parse name (2nd item, index 1)
+    let name = match &items[1].kind {
+        NodeKind::Atom(Atom::Str(s)) => s.clone(),
+        other => {
+            return Err(EvalError::NativeError(format!(
+                "`bench` name must be a string, got {other:?}"
+            )))
+        }
+    };
+
+    // Parse optional config map and determine body start
+    let (warmup, iterations, body_start) = match &items[2].kind {
+        NodeKind::Map(pairs) => {
+            let mut warmup = 10usize;
+            let mut iterations = 100usize;
+            for (k, v) in pairs {
+                let key = match &k.kind {
+                    NodeKind::Atom(Atom::Keyword { name, .. }) => name.as_str(),
+                    _ => continue,
+                };
+                let val = match eval_with_loop(v, env, loop_state)? {
+                    EvalReturn::Value(Value::Int(n)) => n as usize,
+                    _ => continue,
+                };
+                match key {
+                    "warmup" => warmup = val,
+                    "iterations" => iterations = val,
+                    _ => {}
+                }
+            }
+            (warmup, iterations, 3)
+        }
+        _ => (10, 100, 2),
+    };
+
+    let body_nodes = &items[body_start..];
+    if body_nodes.is_empty() {
+        return Err(EvalError::NativeError("`bench` requires a body".to_string()));
+    }
+
+    if nexl_stdlib::test::is_bench_mode() {
+        // Register as benchmark thunk
+        let body_nodes = body_nodes.to_vec();
+        let env_clone = Rc::clone(env);
+        let thunk = Value::NativeClosure {
+            name: Rc::from(name.as_str()),
+            f: Rc::new(move |_| {
+                for node in &body_nodes {
+                    eval(node, &env_clone).map_err(|e| format!("{e}"))?;
+                }
+                Ok(Value::Unit)
+            }),
+        };
+        nexl_stdlib::test::bench_registry_push(name, thunk, warmup, iterations);
+        Ok(EvalReturn::Value(Value::Unit))
+    } else {
+        // No-op: evaluate body and discard result
+        let mut last = EvalReturn::Value(Value::Unit);
+        for node in body_nodes {
+            last = eval_with_loop(node, env, loop_state)?;
+        }
+        let _ = last;
+        Ok(EvalReturn::Value(Value::Unit))
+    }
 }
