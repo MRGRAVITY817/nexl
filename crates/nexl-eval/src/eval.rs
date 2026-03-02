@@ -743,6 +743,7 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
     // Parse optional metadata flags
     let mut idx = 2usize;
     let mut skip_reason: Option<String> = None;
+    let mut is_focused = false;
 
     while idx < items.len() {
         if let NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) = &items[idx].kind {
@@ -763,6 +764,7 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
                     skip_reason = Some(reason);
                 }
                 "focus" => {
+                    is_focused = true;
                     idx += 1;
                 }
                 "tags" | "timeout" | "flaky" => {
@@ -817,6 +819,11 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
 
     // Prepend the current describe path to the test name (spec §7.1)
     let full_name = format!("{}{name}", nexl_stdlib::test::describe_prefix());
+
+    // If :focus, register this test name so the CLI can run only focused tests
+    if is_focused {
+        nexl_stdlib::test::focus_push(full_name.clone());
+    }
 
     // Call test/register!("full-name", thunk)
     nexl_runtime::call_value(

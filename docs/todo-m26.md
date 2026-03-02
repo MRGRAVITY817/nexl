@@ -17,9 +17,9 @@
 - [x] `deftest` macro — registration + test runner discovery
 - [x] `describe` macro — nesting, scoped naming
 - [x] `throws?` assertion
-- [ ] Updated `nexl test` CLI — discovery, filtering (`--filter`), output formatting
-- [ ] `:skip` and `:focus` support on `deftest`
-- [ ] Backward compat: keep old `test/` API working alongside new API
+- [x] Updated `nexl test` CLI — discovery, filtering (`--filter`), output formatting
+- [x] `:skip` and `:focus` support on `deftest`
+- [x] Backward compat: keep old `test/` API working alongside new API
 
 ## Phase 2: Data, Patterns & Lifecycle
 

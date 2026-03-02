@@ -563,6 +563,7 @@ fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, Strin
 
     // Clear any tests from a previous run.
     test_mod::registry_clear();
+    test_mod::focus_drain();
 
     // Evaluate the source file. This will call (test/register! ...) for each test.
     let source = std::fs::read_to_string(&input_path)
@@ -578,7 +579,11 @@ fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, Strin
 
     // Drain the registry and optionally filter by name.
     let mut tests = test_mod::registry_drain();
-    if let Some(f) = filter {
+    // Focus mode: when any test has :focus, run only focused tests.
+    let focused = test_mod::focus_drain();
+    if !focused.is_empty() {
+        tests.retain(|(name, _)| focused.contains(name));
+    } else if let Some(f) = filter {
         tests.retain(|(name, _thunk): &(String, _)| name.contains(f));
     }
 
@@ -2085,6 +2090,45 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "passing test should return true");
+    }
+
+    #[test]
+    fn deftest_skip_counts_as_skipped_not_failed() {
+        let source = r#"
+(deftest "always-passes" (is (= 1 1)))
+(deftest "skip-me" :skip "not ready" (is false))
+"#;
+        let path = write_temp_file(source, "test_skip");
+        let result = command_test(path.clone(), None);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "skipped test should not count as failure");
+    }
+
+    #[test]
+    fn deftest_focus_runs_only_focused_tests() {
+        let source = r#"
+(deftest "regular" (is false))
+(deftest "focused" :focus (is (= 1 1)))
+"#;
+        let path = write_temp_file(source, "test_focus");
+        let result = command_test(path.clone(), None);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "only focused test should run (and pass)");
+    }
+
+    #[test]
+    fn backward_compat_register_and_deftest_share_registry() {
+        let source = r#"
+(test/register! "old-style" (fn [] (is (= 1 1))))
+(deftest "new-style" (is (= 2 2)))
+"#;
+        let path = write_temp_file(source, "test_compat");
+        let result = command_test(path.clone(), None);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "both old and new style tests should pass");
     }
 
     #[test]

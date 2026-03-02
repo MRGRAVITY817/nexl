@@ -11,6 +11,7 @@
 //! - `test/run-tests tests` — run a Vec of `[name thunk]` pairs, return report
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use nexl_runtime::Value;
@@ -26,6 +27,9 @@ thread_local! {
     static TEST_REGISTRY: RefCell<Vec<TestEntry>> = const { RefCell::new(Vec::new()) };
     /// Stack of describe labels for scoped test naming (spec §7.1).
     static DESCRIBE_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Set of focused test names (tests with `:focus` flag).
+    /// When non-empty, only focused tests are run by the CLI (spec §6.2).
+    static FOCUS_SET: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 /// Add a test to the thread-local registry.
@@ -56,6 +60,21 @@ pub fn describe_push(label: String) {
 /// Pop the most recent describe label from the stack.
 pub fn describe_pop() {
     DESCRIBE_STACK.with(|s| s.borrow_mut().pop());
+}
+
+/// Register a test name as focused (`:focus` flag on `deftest`).
+pub fn focus_push(name: String) {
+    FOCUS_SET.with(|s| s.borrow_mut().insert(name));
+}
+
+/// Return true if any focused tests have been registered.
+pub fn focus_any() -> bool {
+    FOCUS_SET.with(|s| !s.borrow().is_empty())
+}
+
+/// Take all focused test names and clear the focus set.
+pub fn focus_drain() -> HashSet<String> {
+    FOCUS_SET.with(|s| std::mem::take(&mut *s.borrow_mut()))
 }
 
 /// Return the current describe path as a prefix string, e.g. "Outer > Inner > ".
@@ -461,6 +480,31 @@ mod tests {
         register_fn(&[Value::Str(Rc::from("x")), thunk]).unwrap();
         clear_registry_fn(&[]).unwrap();
         assert_eq!(registry_len(), 0);
+    }
+
+    // ── Test: focus ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn focus_push_tracks_focused_name() {
+        focus_drain(); // clear any leftover state
+        focus_push("my-test".to_string());
+        assert!(focus_any(), "focus_any should be true after push");
+        let set = focus_drain();
+        assert!(set.contains("my-test"), "drain should contain the pushed name");
+    }
+
+    #[test]
+    fn focus_any_false_when_empty() {
+        focus_drain(); // ensure empty
+        assert!(!focus_any(), "focus_any should be false when no focused tests");
+    }
+
+    #[test]
+    fn focus_drain_clears_set() {
+        focus_drain();
+        focus_push("x".to_string());
+        focus_drain();
+        assert!(!focus_any(), "focus_any should be false after drain");
     }
 
     // ── Test: check ──────────────────────────────────────────────────────────
