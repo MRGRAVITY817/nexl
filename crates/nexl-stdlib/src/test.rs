@@ -24,6 +24,8 @@ type TestEntry = (String, Value);
 
 thread_local! {
     static TEST_REGISTRY: RefCell<Vec<TestEntry>> = const { RefCell::new(Vec::new()) };
+    /// Stack of describe labels for scoped test naming (spec §7.1).
+    static DESCRIBE_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Add a test to the thread-local registry.
@@ -44,6 +46,29 @@ pub fn registry_clear() {
 /// Return how many tests are registered.
 pub fn registry_len() -> usize {
     TEST_REGISTRY.with(|r| r.borrow().len())
+}
+
+/// Push a describe label onto the describe stack (spec §7.1).
+pub fn describe_push(label: String) {
+    DESCRIBE_STACK.with(|s| s.borrow_mut().push(label));
+}
+
+/// Pop the most recent describe label from the stack.
+pub fn describe_pop() {
+    DESCRIBE_STACK.with(|s| s.borrow_mut().pop());
+}
+
+/// Return the current describe path as a prefix string, e.g. "Outer > Inner > ".
+/// Returns empty string when the stack is empty.
+pub fn describe_prefix() -> String {
+    DESCRIBE_STACK.with(|s| {
+        let stack = s.borrow();
+        if stack.is_empty() {
+            String::new()
+        } else {
+            stack.join(" > ") + " > "
+        }
+    })
 }
 
 // ─── Stdlib entries ───────────────────────────────────────────────────────────

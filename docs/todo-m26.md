@@ -15,7 +15,7 @@
 
 - [x] `is` macro — power-assert expansion for `=`, `not=`, predicates, `<`/`>`
 - [x] `deftest` macro — registration + test runner discovery
-- [ ] `describe` macro — nesting, scoped naming
+- [x] `describe` macro — nesting, scoped naming
 - [ ] `throws?` assertion
 - [ ] Updated `nexl test` CLI — discovery, filtering (`--filter`), output formatting
 - [ ] `:skip` and `:focus` support on `deftest`

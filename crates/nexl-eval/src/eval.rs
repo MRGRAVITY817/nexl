@@ -152,6 +152,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "deftest" => {
             eval_deftest(items, env)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "describe" => {
+            eval_describe(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -809,11 +812,77 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
         }
     };
 
-    // Call test/register!("name", thunk)
-    nexl_runtime::call_value(&register_fn, &[Value::Str(Rc::from(name.as_str())), thunk])
-        .map_err(EvalError::NativeError)?;
+    // Prepend the current describe path to the test name (spec §7.1)
+    let full_name = format!("{}{name}", nexl_stdlib::test::describe_prefix());
+
+    // Call test/register!("full-name", thunk)
+    nexl_runtime::call_value(
+        &register_fn,
+        &[Value::Str(Rc::from(full_name.as_str())), thunk],
+    )
+    .map_err(EvalError::NativeError)?;
 
     Ok(EvalReturn::Value(Value::Unit))
+}
+
+/// `(describe "label" body...)` — group tests under a scoped name prefix (spec §7.1).
+///
+/// Pushes `label` onto the describe stack before evaluating `body`, then pops it.
+/// Tests registered inside body via `deftest` will have their names prefixed with
+/// the full describe path, e.g. `"Calculator > addition > test name"`.
+fn eval_describe<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    // items[0] = "describe", items[1] = label, items[2..] = body
+    let label_node = items.get(1).ok_or(EvalError::Arity)?;
+    let label = match &label_node.kind {
+        NodeKind::Atom(Atom::Str(s)) => s.clone(),
+        _ => {
+            return Err(EvalError::NativeError(
+                "`describe` first argument must be a string label".to_string(),
+            ));
+        }
+    };
+
+    let body_nodes = &items[2..];
+    if body_nodes.is_empty() {
+        return Err(EvalError::Arity);
+    }
+
+    // Skip over `:let` clause if present (spec §7.2 — not fully implemented in Phase 1)
+    let body_start = if let Some(NodeKind::Atom(Atom::Keyword { ns: None, name: kw })) =
+        body_nodes.first().map(|n| &n.kind)
+        && kw == "let"
+    {
+        // Skip :let and its binding vector
+        2
+    } else {
+        0
+    };
+
+    nexl_stdlib::test::describe_push(label);
+
+    let mut last = EvalReturn::Value(Value::Unit);
+    let mut error: Option<EvalError> = None;
+
+    for node in &body_nodes[body_start..] {
+        match eval_with_loop(node, env, loop_state) {
+            Ok(v) => last = v,
+            Err(e) => {
+                error = Some(e);
+                break;
+            }
+        }
+    }
+
+    nexl_stdlib::test::describe_pop();
+
+    match error {
+        Some(e) => Err(e),
+        None => Ok(last),
+    }
 }
 
 /// `(deftype TypeName [params...] | Ctor1 | (Ctor2 arg) ...)`

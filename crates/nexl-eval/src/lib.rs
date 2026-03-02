@@ -5493,4 +5493,53 @@ mod tests {
             other => panic!("expected Skip ADT, got: {other:?}"),
         }
     }
+
+    // -- describe macro tests --
+
+    #[test]
+    fn describe_prefixes_test_names() {
+        // (describe "Group" (deftest "test" ...)) → name is "Group > test" (spec §7.1)
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        eval_forms(r#"(describe "Group" (deftest "test" (is true)))"#, &env)
+            .expect("describe should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].0, "Group > test");
+    }
+
+    #[test]
+    fn describe_nested_prefixes() {
+        // (describe "A" (describe "B" (deftest "c" ...))) → "A > B > c" (spec §7.1)
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        eval_forms(
+            r#"(describe "A" (describe "B" (deftest "c" (is true))))"#,
+            &env,
+        )
+        .expect("describe should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].0, "A > B > c");
+    }
+
+    #[test]
+    fn describe_restores_stack_on_completion() {
+        // After describe, deftest outside should not have the prefix
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        eval_forms(
+            r#"
+            (describe "Group" (deftest "inside" (is true)))
+            (deftest "outside" (is true))
+            "#,
+            &env,
+        )
+        .expect("should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        assert_eq!(tests.len(), 2);
+        let names: Vec<&str> = tests.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"Group > inside"));
+        assert!(names.contains(&"outside"));
+    }
 }
