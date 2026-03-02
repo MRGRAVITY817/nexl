@@ -5636,6 +5636,62 @@ mod tests {
         assert!(msg.contains("TypeError"), "error should mention expected type, got: {msg}");
     }
 
+    // ── diff output in is errors ─────────────────────────────────────────────
+
+    #[test]
+    fn is_string_diff_shows_position() {
+        // (is (= "abc" "axc")) failure should show where strings diverge
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(is (= "abc" "axc"))"#, &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        // Should mention the position or show the differing chars
+        assert!(
+            msg.contains("abc") && msg.contains("axc"),
+            "error should show both strings: {msg}"
+        );
+        assert!(
+            msg.contains("diff") || msg.contains("pos") || msg.contains("char") || msg.contains("1:"),
+            "error should contain diff info: {msg}"
+        );
+    }
+
+    #[test]
+    fn is_vec_diff_shows_element() {
+        // (is (= [1 2 3] [1 2 4])) failure should show which element differs
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is (= [1 2 3] [1 2 4]))", &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        // Should mention the element index or show the differing values
+        assert!(
+            msg.contains("[1 2 3]") || msg.contains("[1, 2, 3]"),
+            "error should show first vec: {msg}"
+        );
+        assert!(
+            msg.contains("index") || msg.contains("[2]") || msg.contains("element") || msg.contains("3") && msg.contains("4"),
+            "error should show diff info: {msg}"
+        );
+    }
+
+    #[test]
+    fn is_map_diff_shows_key() {
+        // (is (= {:a 1} {:a 2})) failure should show which key differs
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is (= {:a 1} {:a 2}))", &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        // Should mention the differing key or value
+        assert!(
+            msg.contains(":a") || msg.contains("a"),
+            "error should reference key :a: {msg}"
+        );
+        assert!(
+            msg.contains("diff") || msg.contains("key") || msg.contains("1") && msg.contains("2"),
+            "error should show diff info: {msg}"
+        );
+    }
+
     // ── each: table-driven tests (spec §7.3) ────────────────────────────────
 
     #[test]

@@ -612,6 +612,60 @@ fn eval_cond<'a>(
 /// `(is expr)` or `(is expr "message")` — power-assert assertion.
 ///
 /// Evaluates `expr`. On success (Bool true), returns Unit. On failure, produces
+/// Generate a diff hint for two values when they differ.
+///
+/// Returns an extra annotation string (prefixed with `\n`) for string, Vec, and Map comparisons,
+/// showing where the values diverge to aid debugging.
+fn diff_hint(lhs: &Value, rhs: &Value) -> String {
+    match (lhs, rhs) {
+        (Value::Str(a), Value::Str(b)) => {
+            // Find first differing character position
+            let a_chars: Vec<char> = a.chars().collect();
+            let b_chars: Vec<char> = b.chars().collect();
+            let pos = a_chars.iter().zip(b_chars.iter()).position(|(x, y)| x != y)
+                .unwrap_or_else(|| a_chars.len().min(b_chars.len()));
+            if a.len() != b.len() || pos < a_chars.len() {
+                format!("\n  diff: strings differ at char {pos}")
+            } else {
+                String::new()
+            }
+        }
+        (Value::Vec(a), Value::Vec(b)) => {
+            if a.len() != b.len() {
+                format!("\n  diff: vec lengths differ ({} vs {})", a.len(), b.len())
+            } else {
+                let pos = a.iter().zip(b.iter()).position(|(x, y)| x != y);
+                match pos {
+                    Some(i) => format!("\n  diff: element at index {i} differs ({} vs {})", a[i], b[i]),
+                    None => String::new(),
+                }
+            }
+        }
+        (Value::Map(a), Value::Map(b)) => {
+            // Find keys present in one but not the other, or with different values
+            let mut diffs: Vec<String> = Vec::new();
+            for (k, av) in a.iter() {
+                match b.get(k) {
+                    None => diffs.push(format!("  key {} only in left", k)),
+                    Some(bv) if av != bv => diffs.push(format!("  key {}: {} vs {}", k, av, bv)),
+                    _ => {}
+                }
+            }
+            for (k, _) in b.iter() {
+                if a.get(k).is_none() {
+                    diffs.push(format!("  key {} only in right", k));
+                }
+            }
+            if diffs.is_empty() {
+                String::new()
+            } else {
+                format!("\n  diff:\n{}", diffs.join("\n"))
+            }
+        }
+        _ => String::new(),
+    }
+}
+
 /// a rich error message by analyzing the expression's AST.
 ///
 /// Recognized forms:
@@ -677,8 +731,9 @@ fn eval_is<'a>(
                         return Ok(EvalReturn::Value(Value::Unit));
                     }
 
+                    let diff_info = diff_hint(&lhs, &rhs);
                     return Err(EvalError::NativeError(format!(
-                        "{prefix}\n  {lhs_text}: {lhs}\n  {rhs_text}: {rhs}"
+                        "{prefix}\n  {lhs_text}: {lhs}\n  {rhs_text}: {rhs}{diff_info}"
                     )));
                 }
                 // 1-arg predicate: (pred val)

@@ -27,7 +27,7 @@
 - [x] `each` — table-driven tests (data-driven)
 - [x] `:let` clause on `describe`
 - [x] `:tags` support with CLI `--tags` filtering
-- [ ] String/collection diff output in error messages
+- [x] String/collection diff output in error messages
 - [ ] `setup`/`teardown`/`setup-all`/`teardown-all` lifecycle hooks
 
 ## Phase 3: Effect-Based Mocking
