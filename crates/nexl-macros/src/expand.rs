@@ -57,6 +57,7 @@ enum BuiltinMacro {
     ThreadLast,
     And,
     Or,
+    Is,
 }
 
 struct Expander {
@@ -82,6 +83,7 @@ impl Expander {
         );
         macros.insert("and".to_string(), MacroKind::Builtin(BuiltinMacro::And));
         macros.insert("or".to_string(), MacroKind::Builtin(BuiltinMacro::Or));
+        macros.insert("is".to_string(), MacroKind::Builtin(BuiltinMacro::Is));
         Self { macros }
     }
 
@@ -613,6 +615,7 @@ fn expand_builtin_macro(def: BuiltinMacro, call: &Node) -> Result<Node, MacroErr
         BuiltinMacro::ThreadLast => expand_thread(&args, ThreadPosition::Last)?,
         BuiltinMacro::And => expand_and(&args, &mut gensym),
         BuiltinMacro::Or => expand_or(&args, &mut gensym),
+        BuiltinMacro::Is => expand_is(&args, &mut gensym)?,
     };
     let result = SyntaxObj::new(node, ScopeSet::new());
     let flipped = result.flip_scope_deep(intro_scope);
@@ -1121,6 +1124,173 @@ fn expand_or(args: &[SyntaxObj], gensym: &mut Gensym) -> Node {
             list_node(vec![symbol_node("let"), binding, if_expr])
         }
     }
+}
+
+/// Expand `(is expr)` or `(is expr "message")` into a power-assert expression.
+///
+/// The macro analyzes the expression's AST at expansion time and generates code
+/// that captures sub-expression values and reports them on failure.
+///
+/// Recognized forms:
+/// - `(= a b)` → captures both sides, reports `left: <a>  right: <b>`
+/// - `(not= a b)` → reports "expected not-equal" with both values
+/// - `(< a b)`, `(> a b)`, `(<= a b)`, `(>= a b)` → reports both values with operator
+/// - `(pred? x)` or `(pred x)` — 1-arg predicate → reports predicate name and value
+/// - Any other form → reports expression text and the boolean result
+fn expand_is(args: &[SyntaxObj], gensym: &mut Gensym) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Err(MacroError::Message(
+            "`is` requires at least one argument".to_string(),
+        ));
+    }
+
+    let expr = &args[0].node;
+    // Optional explicit message (second arg)
+    let extra_msg: Option<String> = args.get(1).and_then(|a| {
+        if let NodeKind::Atom(Atom::Str(s)) = &a.node.kind {
+            Some(s.clone())
+        } else {
+            None
+        }
+    });
+
+    let expr_text = format!("{expr}");
+
+    let failure_prefix = match &extra_msg {
+        Some(msg) => format!("FAIL: {msg}\n  (is {expr_text})"),
+        None => format!("assertion failed: (is {expr_text})"),
+    };
+
+    // Check if expr is a known binary comparison form
+    if let NodeKind::List(items) = &expr.kind {
+        if let Some(head_name) = items.first().and_then(|n| symbol_only_name(n)) {
+            match head_name.as_str() {
+                "=" | "not=" | "<" | ">" | "<=" | ">=" if items.len() == 3 => {
+                    let lhs = items[1].clone();
+                    let rhs = items[2].clone();
+                    let lhs_text = format!("{lhs}");
+                    let rhs_text = format!("{rhs}");
+                    let lhs_var = gensym.fresh("is_lhs");
+                    let rhs_var = gensym.fresh("is_rhs");
+
+                    // (let [__lhs a __rhs b]
+                    //   (if (op __lhs __rhs)
+                    //     unit
+                    //     (test/fail (str/format "..." __lhs __rhs))))
+                    let op_sym = symbol_node(&head_name);
+                    let cond = list_node(vec![
+                        op_sym,
+                        symbol_node(&lhs_var),
+                        symbol_node(&rhs_var),
+                    ]);
+
+                    let fail_fmt = format!(
+                        "{failure_prefix}\n  {lhs_text}: {{}}\n  {rhs_text}: {{}}",
+                    );
+                    let fail_call = test_fail_call(
+                        str_format_call(&fail_fmt, vec![
+                            symbol_node(&lhs_var),
+                            symbol_node(&rhs_var),
+                        ]),
+                    );
+
+                    let if_node = list_node(vec![
+                        symbol_node("if"),
+                        cond,
+                        unit_node(),
+                        fail_call,
+                    ]);
+                    let bindings = vector_node(vec![
+                        symbol_node(&lhs_var),
+                        lhs,
+                        symbol_node(&rhs_var),
+                        rhs,
+                    ]);
+                    return Ok(list_node(vec![symbol_node("let"), bindings, if_node]));
+                }
+                // 1-arg predicate: (pred expr)
+                _ if items.len() == 2 => {
+                    let val = items[1].clone();
+                    let val_text = format!("{val}");
+                    let val_var = gensym.fresh("is_val");
+
+                    let cond = list_node(vec![
+                        symbol_node(&head_name),
+                        symbol_node(&val_var),
+                    ]);
+
+                    let fail_fmt =
+                        format!("{failure_prefix}\n  {val_text}: {{}}  (expected {head_name} to be true)");
+                    let fail_call = test_fail_call(str_format_call(
+                        &fail_fmt,
+                        vec![symbol_node(&val_var)],
+                    ));
+
+                    let if_node = list_node(vec![
+                        symbol_node("if"),
+                        cond,
+                        unit_node(),
+                        fail_call,
+                    ]);
+                    let bindings = vector_node(vec![symbol_node(&val_var), val]);
+                    return Ok(list_node(vec![symbol_node("let"), bindings, if_node]));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Generic fallback: (if expr unit (test/fail "assertion failed: <expr>"))
+    let fail_call = test_fail_call(str_node(&failure_prefix));
+    Ok(list_node(vec![
+        symbol_node("if"),
+        expr.clone(),
+        unit_node(),
+        fail_call,
+    ]))
+}
+
+/// Return the symbol name if node is an unqualified symbol, else None.
+fn symbol_only_name(node: &Node) -> Option<String> {
+    match &node.kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// `(test/fail msg)` — call the test failure handler.
+fn test_fail_call(msg: Node) -> Node {
+    list_node(vec![
+        Node::atom(
+            Atom::Symbol {
+                ns: Some("test".to_string()),
+                name: "fail".to_string(),
+            },
+            Span::synthetic(),
+        ),
+        msg,
+    ])
+}
+
+/// `(str/format fmt args...)` — format a string with runtime values.
+fn str_format_call(fmt: &str, args: Vec<Node>) -> Node {
+    let mut items = vec![
+        Node::atom(
+            Atom::Symbol {
+                ns: Some("str".to_string()),
+                name: "format".to_string(),
+            },
+            Span::synthetic(),
+        ),
+        str_node(fmt),
+    ];
+    items.extend(args);
+    list_node(items)
+}
+
+/// A string literal node.
+fn str_node(s: &str) -> Node {
+    Node::atom(Atom::Str(s.to_string()), Span::synthetic())
 }
 
 fn is_else_keyword(node: &Node) -> bool {

@@ -13,7 +13,7 @@
 
 ## Phase 1: Core (MVP)
 
-- [ ] `is` macro — power-assert expansion for `=`, `not=`, predicates, `<`/`>`
+- [x] `is` macro — power-assert expansion for `=`, `not=`, predicates, `<`/`>`
 - [ ] `deftest` macro — registration + test runner discovery
 - [ ] `describe` macro — nesting, scoped naming
 - [ ] `throws?` assertion

@@ -37,6 +37,7 @@ pub fn standard_env() -> Rc<Env> {
 
     // Comparison
     env.define("=", native("=", eq));
+    env.define("not=", native("not=", not_eq));
     env.define("<", native("<", lt));
     env.define(">", native(">", gt));
     env.define("<=", native("<=", le));
@@ -351,6 +352,12 @@ fn modulo(args: &[Value]) -> Result<Value, String> {
 fn eq(args: &[Value]) -> Result<Value, String> {
     let (a, b) = two_args("=", args)?;
     Ok(Value::Bool(a == b))
+}
+
+/// `(not= a b)` — structural inequality.
+fn not_eq(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("not=", args)?;
+    Ok(Value::Bool(a != b))
 }
 
 /// `(< a b)` — less-than on Int or Float.

@@ -146,6 +146,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "cond" => {
             eval_cond(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "is" => {
+            eval_is(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -592,6 +595,124 @@ fn eval_cond<'a>(
 
     // No clause matched — return Unit
     Ok(EvalReturn::Value(Value::Unit))
+}
+
+/// `(is expr)` or `(is expr "message")` — power-assert assertion.
+///
+/// Evaluates `expr`. On success (Bool true), returns Unit. On failure, produces
+/// a rich error message by analyzing the expression's AST.
+///
+/// Recognized forms:
+/// - `(= a b)`, `(not= a b)`, `(< a b)`, `(> a b)`, `(<= a b)`, `(>= a b)` →
+///   evaluates both sides and reports them as `left` / `right`
+/// - `(pred x)` — single-arg predicate → reports predicate name and value
+/// - Any other form → reports the expression text and boolean result
+fn eval_is<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    // items[0] = "is", items[1] = expr, items[2] = optional message
+    let expr = items.get(1).ok_or(EvalError::Arity)?;
+    let user_msg: Option<String> = items.get(2).and_then(|n| {
+        if let NodeKind::Atom(Atom::Str(s)) = &n.kind {
+            Some(s.clone())
+        } else {
+            None
+        }
+    });
+
+    let expr_text = format!("{expr}");
+    let prefix = match &user_msg {
+        Some(msg) => format!("FAIL: {msg}\n  (is {expr_text})"),
+        None => format!("assertion failed: (is {expr_text})"),
+    };
+
+    // Check for binary comparison forms: (op lhs rhs)
+    if let NodeKind::List(inner) = &expr.kind {
+        if let Some(Atom::Symbol { ns: None, name: op_name }) = inner.first().map(|n| match &n.kind {
+            NodeKind::Atom(a) => Some(a),
+            _ => None,
+        }).flatten() {
+            match op_name.as_str() {
+                "=" | "not=" | "<" | ">" | "<=" | ">=" if inner.len() == 3 => {
+                    let lhs_node = &inner[1];
+                    let rhs_node = &inner[2];
+                    let lhs_text = format!("{lhs_node}");
+                    let rhs_text = format!("{rhs_node}");
+
+                    let lhs = match eval_with_loop(lhs_node, env, loop_state)? {
+                        EvalReturn::Value(v) => v,
+                        r @ EvalReturn::Recur(_) => return Ok(r),
+                    };
+                    let rhs = match eval_with_loop(rhs_node, env, loop_state)? {
+                        EvalReturn::Value(v) => v,
+                        r @ EvalReturn::Recur(_) => return Ok(r),
+                    };
+
+                    // Evaluate the full expression with the captured values
+                    let result = match eval_with_loop(expr, env, loop_state)? {
+                        EvalReturn::Value(Value::Bool(b)) => b,
+                        EvalReturn::Value(_) => {
+                            return Err(EvalError::NativeError(format!(
+                                "{prefix}\n  (is) expression must return Bool"
+                            )));
+                        }
+                        r @ EvalReturn::Recur(_) => return Ok(r),
+                    };
+
+                    if result {
+                        return Ok(EvalReturn::Value(Value::Unit));
+                    }
+
+                    return Err(EvalError::NativeError(format!(
+                        "{prefix}\n  {lhs_text}: {lhs}\n  {rhs_text}: {rhs}"
+                    )));
+                }
+                // 1-arg predicate: (pred val)
+                _ if inner.len() == 2 => {
+                    let val_node = &inner[1];
+                    let val_text = format!("{val_node}");
+                    let val = match eval_with_loop(val_node, env, loop_state)? {
+                        EvalReturn::Value(v) => v,
+                        r @ EvalReturn::Recur(_) => return Ok(r),
+                    };
+
+                    let result = match eval_with_loop(expr, env, loop_state)? {
+                        EvalReturn::Value(Value::Bool(b)) => b,
+                        EvalReturn::Value(_) => {
+                            return Err(EvalError::NativeError(format!(
+                                "{prefix}\n  (is) expression must return Bool"
+                            )));
+                        }
+                        r @ EvalReturn::Recur(_) => return Ok(r),
+                    };
+
+                    if result {
+                        return Ok(EvalReturn::Value(Value::Unit));
+                    }
+
+                    return Err(EvalError::NativeError(format!(
+                        "{prefix}\n  {val_text}: {val}  (expected {op_name} to be true)"
+                    )));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Generic fallback
+    let val = match eval_with_loop(expr, env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        r @ EvalReturn::Recur(_) => return Ok(r),
+    };
+    match val {
+        Value::Bool(true) => Ok(EvalReturn::Value(Value::Unit)),
+        Value::Bool(false) => Err(EvalError::NativeError(prefix)),
+        _ => Err(EvalError::NativeError(format!(
+            "{prefix}\n  (is) expression must return Bool, got {val}"
+        ))),
+    }
 }
 
 /// `(deftype TypeName [params...] | Ctor1 | (Ctor2 arg) ...)`

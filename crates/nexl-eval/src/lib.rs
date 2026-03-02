@@ -5329,4 +5329,111 @@ mod tests {
         }
         assert_eq!(last, Value::Str(Rc::from("inline:hello")));
     }
+
+    // -- is macro tests --
+
+    #[test]
+    fn is_true_returns_unit() {
+        // (is true) should succeed and return Unit (spec §3.1)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is true)", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_false_fails_with_message() {
+        // (is false) should produce a NativeError with "assertion failed" (spec §3.1)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is false)", &env);
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("assertion failed"), "error should contain 'assertion failed', got: {msg}");
+    }
+
+    #[test]
+    fn is_eq_equal_passes() {
+        // (is (= 1 1)) — equal values pass (spec §3.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is (= 1 1))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_eq_unequal_fails_with_left_right() {
+        // (is (= 1 2)) — unequal values fail with left/right message (spec §3.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(let [a 1 b 2] (is (= a b)))", &env);
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("a:") || msg.contains("left"), "error should show operands, got: {msg}");
+        assert!(msg.contains("1") && msg.contains("2"), "error should show values, got: {msg}");
+    }
+
+    #[test]
+    fn is_not_eq_unequal_passes() {
+        // (is (not= 1 2)) — not-equal values pass (spec §3.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is (not= 1 2))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_not_eq_equal_fails() {
+        // (is (not= 1 1)) — equal values fail not= assertion (spec §3.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is (not= 1 1))", &env);
+        assert!(result.is_err(), "not= on equal values should fail");
+    }
+
+    #[test]
+    fn is_lt_passes() {
+        // (is (< 1 2)) — 1 < 2 passes (spec §3.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is (< 1 2))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_lt_fails_with_values() {
+        // (is (< 5 3)) — 5 < 3 fails with both values in message (spec §3.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(let [x 5 y 3] (is (< x y)))", &env);
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("5") && msg.contains("3"), "error should show values, got: {msg}");
+    }
+
+    #[test]
+    fn is_predicate_one_arg_passes() {
+        // (defn even? [n] (= (mod n 2) 0)) then (is (even? 4)) — passes (spec §3.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(defn even? [n] (= (mod n 2) 0)) (is (even? 4))",
+            &env,
+        );
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_predicate_one_arg_fails() {
+        // (defn even? [n] ...) then (is (even? 3)) — fails with predicate name in message (spec §3.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(defn even? [n] (= (mod n 2) 0)) (is (even? 3))",
+            &env,
+        );
+        assert!(result.is_err(), "even? on 3 should fail");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("even?"), "error should mention predicate name, got: {msg}");
+    }
+
+    #[test]
+    fn is_with_explicit_message() {
+        // (is false "my message") — failure includes the user-provided message (spec §3.1)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(is false "my message")"#, &env);
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("my message"), "error should contain user message, got: {msg}");
+    }
 }
