@@ -180,6 +180,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "call-log" => {
             eval_call_log(items, env)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "submodule" => {
+            eval_submodule(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -2808,4 +2811,51 @@ fn eval_call_log(
     ];
 
     Ok(EvalReturn::Value(Value::Map(Rc::new(result_pairs.into()))))
+}
+
+/// Evaluate a `(submodule test name body...)` form (spec §8).
+///
+/// In test mode (`nexl_stdlib::test::is_test_mode()`), evaluates the body
+/// in the current environment (giving access to all enclosing definitions,
+/// including private ones). In non-test mode, the entire block is skipped.
+fn eval_submodule<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    // Syntax: (submodule test <name> body...)
+    if items.len() < 3 {
+        return Err(EvalError::NativeError(
+            "submodule requires: (submodule test <name> body...)".into(),
+        ));
+    }
+
+    // Second element must be the atom `test`
+    match &items[1].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "test" => {}
+        _ => {
+            return Err(EvalError::NativeError(
+                "only `submodule test` is supported".into(),
+            ));
+        }
+    }
+
+    // In non-test mode, skip the entire block
+    if !nexl_stdlib::test::is_test_mode() {
+        return Ok(EvalReturn::Value(Value::Unit));
+    }
+
+    // Evaluate body forms in current env (same scope as enclosing module)
+    // Items[2] is the name, Items[3..] is the body
+    let body_start = if items.len() > 3 { 3 } else { 2 };
+    let body = &items[body_start..];
+    let mut result = Value::Unit;
+    for node in body {
+        match eval_with_loop(node, env, loop_state)? {
+            EvalReturn::Value(v) => result = v,
+            recur @ EvalReturn::Recur(_) => return Ok(recur),
+        }
+    }
+
+    Ok(EvalReturn::Value(result))
 }

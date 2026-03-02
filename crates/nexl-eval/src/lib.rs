@@ -5999,4 +5999,61 @@ mod tests {
             "error should hint at unhandled effect: {msg}"
         );
     }
+
+    // ── submodule test ────────────────────────────────────────────────────────
+
+    #[test]
+    fn submodule_test_evaluates_in_test_mode() {
+        // In test mode, (submodule test ...) body is evaluated
+        nexl_stdlib::test::set_test_mode(true);
+        nexl_stdlib::test::registry_clear();
+        let env = crate::stdlib::standard_env();
+        let _ = eval_forms(
+            r#"
+            (submodule test my-module-tests
+              (deftest "sub-test" (is (= 1 1))))
+            "#,
+            &env,
+        );
+        let count = nexl_stdlib::test::registry_len();
+        nexl_stdlib::test::set_test_mode(false);
+        assert_eq!(count, 1, "deftest inside submodule test should be registered");
+    }
+
+    #[test]
+    fn submodule_test_skipped_in_non_test_mode() {
+        // In non-test mode, (submodule test ...) body is NOT evaluated
+        nexl_stdlib::test::set_test_mode(false);
+        nexl_stdlib::test::registry_clear();
+        let env = crate::stdlib::standard_env();
+        let _ = eval_forms(
+            r#"
+            (submodule test my-module-tests
+              (deftest "sub-test" (is (= 1 1))))
+            "#,
+            &env,
+        );
+        let count = nexl_stdlib::test::registry_len();
+        assert_eq!(count, 0, "submodule test should be skipped in non-test mode");
+    }
+
+    #[test]
+    fn submodule_test_has_access_to_enclosing_defs() {
+        // Body can reference definitions in the enclosing environment
+        nexl_stdlib::test::set_test_mode(true);
+        nexl_stdlib::test::registry_clear();
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"
+            (defn double [x] (* x 2))
+            (submodule test tests
+              (deftest "double works" (is (= 42 (double 21)))))
+            "#,
+            &env,
+        );
+        let count = nexl_stdlib::test::registry_len();
+        nexl_stdlib::test::set_test_mode(false);
+        assert!(result.is_ok(), "submodule test should not error: {:?}", result);
+        assert_eq!(count, 1, "deftest should be registered");
+    }
 }

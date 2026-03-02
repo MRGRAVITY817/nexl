@@ -572,6 +572,8 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String]) -> R
     test_mod::registry_clear();
     test_mod::focus_drain();
     test_mod::tags_drain();
+    // Enable test mode so (submodule test ...) blocks are evaluated (spec §8).
+    test_mod::set_test_mode(true);
 
     // Evaluate the source file. This will call (test/register! ...) for each test.
     let source = std::fs::read_to_string(&input_path)

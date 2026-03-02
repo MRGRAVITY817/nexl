@@ -41,6 +41,20 @@ thread_local! {
     static SETUP_ALL_REGISTRY: RefCell<Vec<Value>> = RefCell::new(Vec::new());
     /// One-time teardown-all thunk, called after all tests in the current describe.
     static TEARDOWN_ALL_REGISTRY: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    /// Whether the evaluator is running in test mode.
+    /// Set to `true` by `nexl test` before evaluating files; `false` by `nexl run`.
+    /// Controls whether `(submodule test ...)` bodies are evaluated (spec §8).
+    static IS_TEST_MODE: RefCell<bool> = const { RefCell::new(false) };
+}
+
+/// Enable test mode: `(submodule test ...)` bodies will be evaluated.
+pub fn set_test_mode(enabled: bool) {
+    IS_TEST_MODE.with(|m| *m.borrow_mut() = enabled);
+}
+
+/// Check whether test mode is active.
+pub fn is_test_mode() -> bool {
+    IS_TEST_MODE.with(|m| *m.borrow())
 }
 
 /// Add a test to the thread-local registry.

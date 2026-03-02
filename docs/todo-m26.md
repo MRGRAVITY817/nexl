@@ -35,7 +35,7 @@
 - [x] `call-log` test utility (recording wrapper for effect operations)
 - [x] Capability-aware test sandboxing (unhandled effects = compile error)
 - [x] `SequentialExecutor` for deterministic concurrent testing
-- [ ] `submodule test` support (compile-time exclusion from release)
+- [x] `submodule test` support (compile-time exclusion from release)
 
 ## Phase 4: Property Testing
 
