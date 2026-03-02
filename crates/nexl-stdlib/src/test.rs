@@ -11,7 +11,7 @@
 //! - `test/run-tests tests` — run a Vec of `[name thunk]` pairs, return report
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use nexl_runtime::Value;
@@ -30,6 +30,8 @@ thread_local! {
     /// Set of focused test names (tests with `:focus` flag).
     /// When non-empty, only focused tests are run by the CLI (spec §6.2).
     static FOCUS_SET: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Map of test name → tag list for tests with `:tags` metadata.
+    static TAGS_REGISTRY: RefCell<HashMap<String, Vec<String>>> = RefCell::new(HashMap::new());
 }
 
 /// Add a test to the thread-local registry.
@@ -75,6 +77,16 @@ pub fn focus_any() -> bool {
 /// Take all focused test names and clear the focus set.
 pub fn focus_drain() -> HashSet<String> {
     FOCUS_SET.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+/// Register tags for a test name (`:tags` metadata on `deftest`).
+pub fn tags_register(name: String, tags: Vec<String>) {
+    TAGS_REGISTRY.with(|t| t.borrow_mut().insert(name, tags));
+}
+
+/// Take all tag registrations and clear the tags registry.
+pub fn tags_drain() -> HashMap<String, Vec<String>> {
+    TAGS_REGISTRY.with(|t| std::mem::take(&mut *t.borrow_mut()))
 }
 
 /// Return the current describe path as a prefix string, e.g. "Outer > Inner > ".
@@ -505,6 +517,28 @@ mod tests {
         focus_push("x".to_string());
         focus_drain();
         assert!(!focus_any(), "focus_any should be false after drain");
+    }
+
+    // ── Test: tags ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn tags_register_and_drain() {
+        tags_drain(); // clear any state
+        tags_register("my-test".to_string(), vec!["db".to_string(), "slow".to_string()]);
+        let map = tags_drain();
+        assert!(map.contains_key("my-test"), "should have registered test");
+        let tags = &map["my-test"];
+        assert!(tags.contains(&"db".to_string()));
+        assert!(tags.contains(&"slow".to_string()));
+    }
+
+    #[test]
+    fn tags_drain_clears_registry() {
+        tags_drain();
+        tags_register("t".to_string(), vec!["unit".to_string()]);
+        tags_drain();
+        let map = tags_drain();
+        assert!(map.is_empty(), "tags should be cleared after drain");
     }
 
     // ── Test: check ──────────────────────────────────────────────────────────

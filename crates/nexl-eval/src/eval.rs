@@ -747,6 +747,7 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
     let mut idx = 2usize;
     let mut skip_reason: Option<String> = None;
     let mut is_focused = false;
+    let mut tag_list: Vec<String> = Vec::new();
 
     while idx < items.len() {
         if let NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) = &items[idx].kind {
@@ -770,7 +771,29 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
                     is_focused = true;
                     idx += 1;
                 }
-                "tags" | "timeout" | "flaky" => {
+                "tags" => {
+                    idx += 1;
+                    if let Some(tags_node) = items.get(idx) {
+                        if let NodeKind::Vector(tag_nodes) = &tags_node.kind {
+                            for tag_node in tag_nodes.iter() {
+                                match &tag_node.kind {
+                                    NodeKind::Atom(Atom::Keyword { name: tag, .. }) => {
+                                        tag_list.push(tag.clone());
+                                    }
+                                    NodeKind::Atom(Atom::Str(s)) => {
+                                        tag_list.push(s.clone());
+                                    }
+                                    NodeKind::Atom(Atom::Symbol { name, .. }) => {
+                                        tag_list.push(name.clone());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            idx += 1;
+                        }
+                    }
+                }
+                "timeout" | "flaky" => {
                     idx += 2; // skip the keyword and its value
                 }
                 _ => break,
@@ -826,6 +849,11 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
     // If :focus, register this test name so the CLI can run only focused tests
     if is_focused {
         nexl_stdlib::test::focus_push(full_name.clone());
+    }
+
+    // If :tags, register tags for this test so the CLI can filter by tag
+    if !tag_list.is_empty() {
+        nexl_stdlib::test::tags_register(full_name.clone(), tag_list);
     }
 
     // Call test/register!("full-name", thunk)

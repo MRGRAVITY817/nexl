@@ -134,6 +134,9 @@ enum Command {
         /// Only run tests whose names contain this substring.
         #[arg(long = "filter")]
         filter: Option<String>,
+        /// Only run tests that have all of these tags (comma-separated, e.g. "db,fast").
+        #[arg(long = "tags")]
+        tags: Option<String>,
     },
     /// Check for updates and print upgrade instructions.
     Upgrade,
@@ -282,8 +285,12 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Test { input, filter } => {
-            match command_test(input, filter.as_deref()) {
+        Command::Test { input, filter, tags } => {
+            let tag_list: Vec<String> = tags
+                .as_deref()
+                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+                .unwrap_or_default();
+            match command_test(input, filter.as_deref(), &tag_list) {
                 Ok(true) => {}
                 Ok(false) => process::exit(1),
                 Err(message) => {
@@ -558,12 +565,13 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
 ///
 /// Returns `Ok(true)` if all tests pass, `Ok(false)` if any fail,
 /// or `Err` if the file fails to evaluate.
-fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, String> {
+fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String]) -> Result<bool, String> {
     use nexl_stdlib::test as test_mod;
 
     // Clear any tests from a previous run.
     test_mod::registry_clear();
     test_mod::focus_drain();
+    test_mod::tags_drain();
 
     // Evaluate the source file. This will call (test/register! ...) for each test.
     let source = std::fs::read_to_string(&input_path)
@@ -581,8 +589,18 @@ fn command_test(input_path: PathBuf, filter: Option<&str>) -> Result<bool, Strin
     let mut tests = test_mod::registry_drain();
     // Focus mode: when any test has :focus, run only focused tests.
     let focused = test_mod::focus_drain();
+    let all_tags = test_mod::tags_drain();
     if !focused.is_empty() {
         tests.retain(|(name, _)| focused.contains(name));
+    } else if !tags.is_empty() {
+        // Tags filter: retain only tests whose tag list contains all requested tags
+        tests.retain(|(name, _)| {
+            if let Some(test_tags) = all_tags.get(name) {
+                tags.iter().all(|t| test_tags.contains(t))
+            } else {
+                false
+            }
+        });
     } else if let Some(f) = filter {
         tests.retain(|(name, _thunk): &(String, _)| name.contains(f));
     }
@@ -2052,9 +2070,10 @@ mod tests {
     fn parse_test_with_input() {
         let cli = Cli::try_parse_from(["nexl", "test", "tests.nx"]).expect("parse");
         match cli.command {
-            Command::Test { input, filter } => {
+            Command::Test { input, filter, tags } => {
                 assert_eq!(input, PathBuf::from("tests.nx"));
                 assert_eq!(filter, None);
+                assert_eq!(tags, None);
             }
             other => panic!("expected Test, got {other:?}"),
         }
@@ -2070,10 +2089,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_test_with_tags() {
+        let cli = Cli::try_parse_from(["nexl", "test", "tests.nx", "--tags", "db"]).expect("parse");
+        match cli.command {
+            Command::Test { tags, .. } => assert_eq!(tags, Some("db".to_string())),
+            other => panic!("expected Test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deftest_tags_filter_runs_only_tagged() {
+        let source = r#"
+(deftest "untagged" (is (= 1 1)))
+(deftest "tagged-db" :tags [:db] (is (= 2 2)))
+"#;
+        let path = write_temp_file(source, "test_tags");
+        let result = command_test(path.clone(), None, &["db".to_string()]);
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "tagged test should pass");
+    }
+
+    #[test]
     fn test_command_runs_empty_file() {
         let source = "(def x 1)";
         let path = write_temp_file(source, "test_cmd_empty");
-        let result = command_test(path.clone(), None);
+        let result = command_test(path.clone(), None, &[]);
         let _ = std::fs::remove_file(&path);
         // Should succeed with 0 tests
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
@@ -2086,7 +2127,7 @@ mod tests {
 (test/register! "pass-test" (fn [] (test/is true)))
 "#;
         let path = write_temp_file(source, "test_cmd_reg");
-        let result = command_test(path.clone(), None);
+        let result = command_test(path.clone(), None, &[]);
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "passing test should return true");
@@ -2099,7 +2140,7 @@ mod tests {
 (deftest "skip-me" :skip "not ready" (is false))
 "#;
         let path = write_temp_file(source, "test_skip");
-        let result = command_test(path.clone(), None);
+        let result = command_test(path.clone(), None, &[]);
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "skipped test should not count as failure");
@@ -2112,7 +2153,7 @@ mod tests {
 (deftest "focused" :focus (is (= 1 1)))
 "#;
         let path = write_temp_file(source, "test_focus");
-        let result = command_test(path.clone(), None);
+        let result = command_test(path.clone(), None, &[]);
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "only focused test should run (and pass)");
@@ -2125,7 +2166,7 @@ mod tests {
 (deftest "new-style" (is (= 2 2)))
 "#;
         let path = write_temp_file(source, "test_compat");
-        let result = command_test(path.clone(), None);
+        let result = command_test(path.clone(), None, &[]);
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "command_test should succeed: {result:?}");
         assert!(result.unwrap(), "both old and new style tests should pass");
