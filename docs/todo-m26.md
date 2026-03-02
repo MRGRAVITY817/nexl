@@ -23,7 +23,7 @@
 
 ## Phase 2: Data, Patterns & Lifecycle
 
-- [ ] `is-match` — pattern matching assertions with destructuring, guards, pins
+- [x] `is-match` — pattern matching assertions with destructuring, guards, pins
 - [ ] `each` — table-driven tests (data-driven)
 - [ ] `:let` clause on `describe`
 - [ ] `:tags` support with CLI `--tags` filtering

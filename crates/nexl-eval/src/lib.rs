@@ -5580,4 +5580,66 @@ mod tests {
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("TypeError"), "error should mention expected type, got: {msg}");
     }
+
+    // ── is-match assertions (spec §7.2) ─────────────────────────────────────
+
+    #[test]
+    fn is_match_simple_literal_passes() {
+        // (is-match 42 42) — literal match succeeds (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is-match 42 42)", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_match_literal_mismatch_fails() {
+        // (is-match 1 2) — literal mismatch → error with diagnostic (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is-match 1 2)", &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("is-match"), "error should mention is-match, got: {msg}");
+    }
+
+    #[test]
+    fn is_match_destructures_vec() {
+        // (is-match [a b] [1 2]) — binds a=1, b=2, body using bindings (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is-match [a b] [1 2] (is (= a 1)) (is (= b 2)))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_match_adt_pattern() {
+        // (is-match (Some x) (Some 42)) — binds x=42, body checks it (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is-match (Some x) (Some 42) (is (= x 42)))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_match_wildcard_always_passes() {
+        // (is-match _ 42) — wildcard matches anything (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is-match _ 42)", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_match_when_guard_passes() {
+        // (is-match x 5 :when (> x 0)) — guard passes for positive value (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is-match x 5 :when (> x 0))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn is_match_when_guard_fails() {
+        // (is-match x -1 :when (> x 0)) — guard fails for negative value (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(is-match x -1 :when (> x 0))", &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("when") || msg.contains("guard"), "got: {msg}");
+    }
 }

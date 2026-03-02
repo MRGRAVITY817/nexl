@@ -58,6 +58,7 @@ enum BuiltinMacro {
     And,
     Or,
     Is,
+    IsMatch,
     Deftest,
 }
 
@@ -85,6 +86,10 @@ impl Expander {
         macros.insert("and".to_string(), MacroKind::Builtin(BuiltinMacro::And));
         macros.insert("or".to_string(), MacroKind::Builtin(BuiltinMacro::Or));
         macros.insert("is".to_string(), MacroKind::Builtin(BuiltinMacro::Is));
+        macros.insert(
+            "is-match".to_string(),
+            MacroKind::Builtin(BuiltinMacro::IsMatch),
+        );
         macros.insert(
             "deftest".to_string(),
             MacroKind::Builtin(BuiltinMacro::Deftest),
@@ -621,6 +626,7 @@ fn expand_builtin_macro(def: BuiltinMacro, call: &Node) -> Result<Node, MacroErr
         BuiltinMacro::And => expand_and(&args, &mut gensym),
         BuiltinMacro::Or => expand_or(&args, &mut gensym),
         BuiltinMacro::Is => expand_is(&args, &mut gensym)?,
+        BuiltinMacro::IsMatch => expand_is_match(&args)?,
         BuiltinMacro::Deftest => expand_deftest(&args)?,
     };
     let result = SyntaxObj::new(node, ScopeSet::new());
@@ -1297,6 +1303,23 @@ fn str_format_call(fmt: &str, args: Vec<Node>) -> Node {
 /// A string literal node.
 fn str_node(s: &str) -> Node {
     Node::atom(Atom::Str(s.to_string()), Span::synthetic())
+}
+
+/// Expand `(is-match pattern expr [:when guard] body...)`.
+///
+/// At the compile-time macro path, `is-match` is treated as a transparent pass-through:
+/// the eval path handles the actual pattern matching semantics. This function returns
+/// the form unchanged as a list node so the evaluator can dispatch it.
+fn expand_is_match(args: &[SyntaxObj]) -> Result<Node, MacroError> {
+    if args.len() < 2 {
+        return Err(MacroError::Message(
+            "`is-match` requires at least (is-match pattern expr)".to_string(),
+        ));
+    }
+    // Return as-is: evaluator handles is-match as a special form
+    let mut items = vec![symbol_node("is-match")];
+    items.extend(args.iter().map(|a| a.node.clone()));
+    Ok(list_node(items))
 }
 
 /// Expand `(deftest "name" body...)` into a test registration call.

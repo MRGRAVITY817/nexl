@@ -158,6 +158,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "throws?" => {
             eval_throws_q(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "is-match" => {
+            eval_is_match(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -973,6 +976,91 @@ fn eval_throws_q<'a>(
             Ok(EvalReturn::Value(Value::Unit))
         }
     }
+}
+
+/// `(is-match pattern expr [:when guard] body...)` — pattern-matching assertion (spec §7.2).
+///
+/// Evaluates `expr`, matches it against `pattern`. On failure: raises an error with diagnostics.
+/// On success: binds variables from the pattern, evaluates optional `:when` guard, then `body`.
+/// If `:when` guard evaluates to false, the assertion fails.
+/// If no body is provided, a successful match passes silently (returns Unit).
+fn eval_is_match<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    // (is-match pattern expr [:when guard] body...)
+    if items.len() < 3 {
+        return Err(EvalError::NativeError(
+            "`is-match` requires at least (is-match pattern expr)".to_string(),
+        ));
+    }
+
+    let pat_node = &items[1];
+    let expr_node = &items[2];
+
+    let pattern =
+        parse_pattern(pat_node).map_err(|e| EvalError::NativeError(format!("is-match: {e}")))?;
+
+    let value = match eval_with_loop(expr_node, env, loop_state)? {
+        EvalReturn::Value(v) => v,
+        r @ EvalReturn::Recur(_) => return Ok(r),
+    };
+
+    let mut bindings: Vec<(Rc<str>, Value)> = Vec::new();
+    if !match_pattern(&pattern, &value, &mut bindings) {
+        return Err(EvalError::NativeError(format!(
+            "is-match: value {value} did not match pattern {pat_node}"
+        )));
+    }
+
+    // Build child env with pattern bindings
+    let match_env = Rc::new(Env::child(Rc::clone(env)));
+    for (name, val) in bindings {
+        match_env.define(name, val);
+    }
+
+    // Parse :when guard if present
+    let mut body_start = 3usize;
+    if let Some(kw_node) = items.get(3) {
+        if let NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) = &kw_node.kind
+            && kw.as_str() == "when"
+        {
+            let guard_node = items.get(4).ok_or_else(|| {
+                EvalError::NativeError("`is-match` :when requires a guard expression".to_string())
+            })?;
+            let guard_val = match eval_with_loop(guard_node, &match_env, loop_state)? {
+                EvalReturn::Value(v) => v,
+                r @ EvalReturn::Recur(_) => return Ok(r),
+            };
+            match guard_val {
+                Value::Bool(true) => {}
+                Value::Bool(false) => {
+                    return Err(EvalError::NativeError(format!(
+                        "is-match: :when guard failed for {value}"
+                    )));
+                }
+                other => {
+                    return Err(EvalError::NativeError(format!(
+                        "is-match: :when guard must return Bool, got {other}"
+                    )));
+                }
+            }
+            body_start = 5;
+        }
+    }
+
+    // Evaluate optional body forms
+    let body_nodes = &items[body_start..];
+    if body_nodes.is_empty() {
+        return Ok(EvalReturn::Value(Value::Unit));
+    }
+
+    let mut last = EvalReturn::Value(Value::Unit);
+    for node in body_nodes {
+        last = eval_with_loop(node, &match_env, loop_state)?;
+    }
+    Ok(last)
 }
 
 /// `(deftype TypeName [params...] | Ctor1 | (Ctor2 arg) ...)`
