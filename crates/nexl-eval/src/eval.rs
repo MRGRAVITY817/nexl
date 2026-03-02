@@ -864,16 +864,50 @@ fn eval_describe<'a>(
         return Err(EvalError::Arity);
     }
 
-    // Skip over `:let` clause if present (spec §7.2 — not fully implemented in Phase 1)
-    let body_start = if let Some(NodeKind::Atom(Atom::Keyword { ns: None, name: kw })) =
-        body_nodes.first().map(|n| &n.kind)
-        && kw == "let"
-    {
-        // Skip :let and its binding vector
-        2
-    } else {
-        0
-    };
+    // Parse optional :let clause — binds local fixtures for all tests in this describe
+    let (body_start, describe_env) =
+        if let Some(NodeKind::Atom(Atom::Keyword { ns: None, name: kw })) =
+            body_nodes.first().map(|n| &n.kind)
+            && kw == "let"
+        {
+            let bindings_node = body_nodes.get(1).ok_or_else(|| {
+                EvalError::NativeError("`describe` :let requires a binding vector".to_string())
+            })?;
+            let binding_pairs = match &bindings_node.kind {
+                NodeKind::Vector(v) => v,
+                _ => {
+                    return Err(EvalError::NativeError(
+                        "`describe` :let bindings must be a vector".to_string(),
+                    ));
+                }
+            };
+            if binding_pairs.len() % 2 != 0 {
+                return Err(EvalError::NativeError(
+                    "`describe` :let bindings must have even number of elements".to_string(),
+                ));
+            }
+            let let_env = Rc::new(Env::child(Rc::clone(env)));
+            let mut i = 0;
+            while i < binding_pairs.len() {
+                let name = match &binding_pairs[i].kind {
+                    NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
+                    _ => {
+                        return Err(EvalError::NativeError(
+                            "`describe` :let binding target must be a symbol".to_string(),
+                        ));
+                    }
+                };
+                let val = match eval_with_loop(&binding_pairs[i + 1], &let_env, loop_state)? {
+                    EvalReturn::Value(v) => v,
+                    r @ EvalReturn::Recur(_) => return Ok(r),
+                };
+                let_env.define(Rc::from(name.as_str()), val);
+                i += 2;
+            }
+            (2, let_env)
+        } else {
+            (0, Rc::clone(env))
+        };
 
     nexl_stdlib::test::describe_push(label);
 
@@ -881,7 +915,7 @@ fn eval_describe<'a>(
     let mut error: Option<EvalError> = None;
 
     for node in &body_nodes[body_start..] {
-        match eval_with_loop(node, env, loop_state) {
+        match eval_with_loop(node, &describe_env, loop_state) {
             Ok(v) => last = v,
             Err(e) => {
                 error = Some(e);

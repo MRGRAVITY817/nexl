@@ -5543,6 +5543,61 @@ mod tests {
         assert!(names.contains(&"outside"));
     }
 
+    // -- describe :let tests (spec §7.2) --
+
+    #[test]
+    fn describe_let_binds_value_for_tests() {
+        // (describe "X" :let [x 42] (deftest "t" (is (= x 42)))) — x is available (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        eval_forms(
+            r#"(describe "X" :let [x 42] (deftest "t" (is (= x 42))))"#,
+            &env,
+        )
+        .expect("should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        assert_eq!(tests.len(), 1);
+        // Run the test thunk — it should pass (x=42)
+        let (_, thunk) = tests.into_iter().next().unwrap();
+        let result = nexl_runtime::call_value(&thunk, &[]);
+        assert!(result.is_ok(), "test with :let binding should pass: {result:?}");
+    }
+
+    #[test]
+    fn describe_let_multiple_bindings() {
+        // (describe "Y" :let [a 1 b 2] (deftest "t" (is (= (+ a b) 3)))) — spec §7.2
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        eval_forms(
+            r#"(describe "Y" :let [a 1 b 2] (deftest "t" (is (= (+ a b) 3))))"#,
+            &env,
+        )
+        .expect("should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        let (_, thunk) = tests.into_iter().next().unwrap();
+        let result = nexl_runtime::call_value(&thunk, &[]);
+        assert!(result.is_ok(), "test with multiple :let bindings should pass: {result:?}");
+    }
+
+    #[test]
+    fn describe_let_nested_describe_inherits() {
+        // Nested describe inherits :let bindings from outer describe (spec §7.2)
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        eval_forms(
+            r#"(describe "Outer" :let [x 10]
+                 (describe "Inner"
+                   (deftest "uses-x" (is (= x 10)))))"#,
+            &env,
+        )
+        .expect("should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        assert_eq!(tests.len(), 1, "should have 1 test");
+        let (_, thunk) = tests.into_iter().next().unwrap();
+        let result = nexl_runtime::call_value(&thunk, &[]);
+        assert!(result.is_ok(), "nested test should see outer :let binding: {result:?}");
+    }
+
     // -- throws? tests --
 
     #[test]

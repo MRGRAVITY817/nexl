@@ -25,7 +25,7 @@
 
 - [x] `is-match` — pattern matching assertions with destructuring, guards, pins
 - [x] `each` — table-driven tests (data-driven)
-- [ ] `:let` clause on `describe`
+- [x] `:let` clause on `describe`
 - [ ] `:tags` support with CLI `--tags` filtering
 - [ ] String/collection diff output in error messages
 - [ ] `setup`/`teardown`/`setup-all`/`teardown-all` lifecycle hooks
