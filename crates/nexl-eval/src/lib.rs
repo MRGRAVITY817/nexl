@@ -6056,4 +6056,108 @@ mod tests {
         assert!(result.is_ok(), "submodule test should not error: {:?}", result);
         assert_eq!(count, 1, "deftest should be registered");
     }
+
+    // ── gen module + check form ───────────────────────────────────────────────
+
+    #[test]
+    fn gen_int_produces_ints() {
+        // gen/int when called with seed 0 returns an Int
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(gen/int 0)"#, &env);
+        assert!(matches!(result.unwrap(), Value::Int(_)));
+    }
+
+    #[test]
+    fn gen_bool_produces_bools() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(gen/bool 42)"#, &env);
+        assert!(matches!(result.unwrap(), Value::Bool(_)));
+    }
+
+    #[test]
+    fn gen_vec_produces_vec() {
+        // (gen/vec gen/int) is a generator; called with seed → Vec
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"((gen/vec gen/int) 0)"#, &env);
+        assert!(matches!(result.unwrap(), Value::Vec(_)));
+    }
+
+    #[test]
+    fn gen_option_produces_option() {
+        // (gen/option gen/int) returns None or Some(Int)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"((gen/option gen/int) 1)"#, &env);
+        match result.unwrap() {
+            Value::Adt { ctor, .. } => {
+                assert!(ctor.as_ref() == "None" || ctor.as_ref() == "Some")
+            }
+            other => panic!("expected Adt None/Some, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gen_constant_always_returns_same() {
+        let env = crate::stdlib::standard_env();
+        let r1 = eval_forms(r#"((gen/constant 42) 0)"#, &env).unwrap();
+        let r2 = eval_forms(r#"((gen/constant 42) 999)"#, &env).unwrap();
+        assert_eq!(r1, Value::Int(42));
+        assert_eq!(r2, Value::Int(42));
+    }
+
+    #[test]
+    fn gen_element_picks_from_collection() {
+        // (gen/element [:a :b :c]) picks one of the elements
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"((gen/element [:a :b :c]) 42)"#, &env);
+        match result.unwrap() {
+            Value::Keyword { .. } => {}
+            other => panic!("expected Keyword, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gen_fmap_transforms_value() {
+        // (gen/fmap (fn [x] (* x 2)) gen/int) applied to seed 1
+        let env = crate::stdlib::standard_env();
+        // Just verify it returns an Int (the doubled value)
+        let result = eval_forms(r#"((gen/fmap (fn [x] (* x 2)) gen/int) 1)"#, &env);
+        assert!(matches!(result.unwrap(), Value::Int(_)));
+    }
+
+    #[test]
+    fn check_passes_when_property_holds() {
+        // (check [x gen/int] (is (= x x))) always passes
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(check [x gen/int] :num-tests 10 (is (= x x)))"#,
+            &env,
+        );
+        assert!(result.is_ok(), "check should pass: {:?}", result);
+    }
+
+    #[test]
+    fn check_fails_when_property_violated() {
+        // (check [x gen/int] (is false)) should fail
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(check [x gen/int] :num-tests 5 (is false))"#,
+            &env,
+        );
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("falsified") || msg.contains("check"), "got: {msg}");
+    }
+
+    #[test]
+    fn check_with_num_tests_config() {
+        // :num-tests 3 runs exactly 3 trials (property always fails on first)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(check [x gen/int] :num-tests 3 (is false))"#,
+            &env,
+        );
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("after 1 tests"), "should fail on first trial: {msg}");
+    }
 }

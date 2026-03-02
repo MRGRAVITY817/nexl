@@ -183,6 +183,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "submodule" => {
             eval_submodule(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "check" => {
+            eval_check(items, env, loop_state)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -717,11 +720,12 @@ fn eval_is<'a>(
     };
 
     // Check for binary comparison forms: (op lhs rhs)
-    if let NodeKind::List(inner) = &expr.kind {
-        if let Some(Atom::Symbol { ns: None, name: op_name }) = inner.first().map(|n| match &n.kind {
+    if let NodeKind::List(inner) = &expr.kind
+        && let Some(Atom::Symbol { ns: None, name: op_name }) = inner.first().and_then(|n| match &n.kind {
             NodeKind::Atom(a) => Some(a),
             _ => None,
-        }).flatten() {
+        })
+    {
             match op_name.as_str() {
                 "=" | "not=" | "<" | ">" | "<=" | ">=" if inner.len() == 3 => {
                     let lhs_node = &inner[1];
@@ -787,7 +791,6 @@ fn eval_is<'a>(
                 }
                 _ => {}
             }
-        }
     }
 
     // Generic fallback
@@ -850,24 +853,24 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
                 }
                 "tags" => {
                     idx += 1;
-                    if let Some(tags_node) = items.get(idx) {
-                        if let NodeKind::Vector(tag_nodes) = &tags_node.kind {
-                            for tag_node in tag_nodes.iter() {
-                                match &tag_node.kind {
-                                    NodeKind::Atom(Atom::Keyword { name: tag, .. }) => {
-                                        tag_list.push(tag.clone());
-                                    }
-                                    NodeKind::Atom(Atom::Str(s)) => {
-                                        tag_list.push(s.clone());
-                                    }
-                                    NodeKind::Atom(Atom::Symbol { name, .. }) => {
-                                        tag_list.push(name.clone());
-                                    }
-                                    _ => {}
+                    if let Some(tags_node) = items.get(idx)
+                        && let NodeKind::Vector(tag_nodes) = &tags_node.kind
+                    {
+                        for tag_node in tag_nodes.iter() {
+                            match &tag_node.kind {
+                                NodeKind::Atom(Atom::Keyword { name: tag, .. }) => {
+                                    tag_list.push(tag.clone());
                                 }
+                                NodeKind::Atom(Atom::Str(s)) => {
+                                    tag_list.push(s.clone());
+                                }
+                                NodeKind::Atom(Atom::Symbol { name, .. }) => {
+                                    tag_list.push(name.clone());
+                                }
+                                _ => {}
                             }
-                            idx += 1;
                         }
+                        idx += 1;
                     }
                 }
                 "timeout" | "flaky" => {
@@ -897,7 +900,7 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
         let skip_fn_clone = skip_fn.clone();
         Value::NativeClosure {
             name: Rc::from("<skipped>"),
-            f: Rc::new(move |_args| nexl_runtime::call_value(&skip_fn_clone, &[reason_val.clone()])),
+            f: Rc::new(move |_args| nexl_runtime::call_value(&skip_fn_clone, std::slice::from_ref(&reason_val))),
         }
     } else if body_nodes.is_empty() {
         return Err(EvalError::NativeError(
@@ -1115,12 +1118,9 @@ fn eval_throws_q<'a>(
     // Evaluate each body form; collect the first error
     let mut error_msg: Option<String> = None;
     for node in body_nodes {
-        match eval_with_loop(node, env, loop_state) {
-            Err(e) => {
-                error_msg = Some(format!("{e}"));
-                break;
-            }
-            Ok(_) => {}
+        if let Err(e) = eval_with_loop(node, env, loop_state) {
+            error_msg = Some(format!("{e}"));
+            break;
         }
     }
 
@@ -1130,20 +1130,20 @@ fn eval_throws_q<'a>(
         )),
         Some(msg) => {
             // Check error_type filter
-            if let Some(type_name) = &error_type {
-                if !msg.to_lowercase().contains(&type_name.to_lowercase()) {
-                    return Err(EvalError::NativeError(format!(
-                        "throws?: expected error of type `{type_name}` but got: {msg}"
-                    )));
-                }
+            if let Some(type_name) = &error_type
+                && !msg.to_lowercase().contains(&type_name.to_lowercase())
+            {
+                return Err(EvalError::NativeError(format!(
+                    "throws?: expected error of type `{type_name}` but got: {msg}"
+                )));
             }
             // Check message pattern filter
-            if let Some(pattern) = &message_pattern {
-                if !msg.contains(pattern.as_str()) {
-                    return Err(EvalError::NativeError(format!(
-                        "throws?: expected error message to contain {pattern:?} but got: {msg}"
-                    )));
-                }
+            if let Some(pattern) = &message_pattern
+                && !msg.contains(pattern.as_str())
+            {
+                return Err(EvalError::NativeError(format!(
+                    "throws?: expected error message to contain {pattern:?} but got: {msg}"
+                )));
             }
             Ok(EvalReturn::Value(Value::Unit))
         }
@@ -1227,10 +1227,10 @@ fn eval_is_match<'a>(
 
     // Parse :when guard if present
     let mut body_start = 3usize;
-    if let Some(kw_node) = items.get(3) {
-        if let NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) = &kw_node.kind
-            && kw.as_str() == "when"
-        {
+    if let Some(kw_node) = items.get(3)
+        && let NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) = &kw_node.kind
+        && kw.as_str() == "when"
+    {
             let guard_node = items.get(4).ok_or_else(|| {
                 EvalError::NativeError("`is-match` :when requires a guard expression".to_string())
             })?;
@@ -1251,8 +1251,7 @@ fn eval_is_match<'a>(
                     )));
                 }
             }
-            body_start = 5;
-        }
+        body_start = 5;
     }
 
     // Evaluate optional body forms
@@ -2858,4 +2857,182 @@ fn eval_submodule<'a>(
     }
 
     Ok(EvalReturn::Value(result))
+}
+
+/// Evaluate a `(check [name gen ...] opts... body...)` property test form (spec §12.1).
+///
+/// Runs the body with randomly generated values for each binding, `num-tests`
+/// times (default 100). On failure, reports the seed and the failing values,
+/// then attempts basic shrinking by re-trying with seed/2.
+///
+/// Options (keyword pairs before the body):
+/// - `:num-tests N` — number of trials (default 100)
+/// - `:seed N` — initial seed (default 42)
+fn eval_check<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    // Syntax: (check [name gen name gen ...] opts... body...)
+    if items.len() < 3 {
+        return Err(EvalError::NativeError(
+            "check requires: (check [name gen ...] body...)".into(),
+        ));
+    }
+
+    // Parse bindings vector
+    let bindings = match &items[1].kind {
+        NodeKind::Vector(elems) => elems,
+        _ => {
+            return Err(EvalError::NativeError(
+                "check: first argument must be a binding vector [name gen ...]".into(),
+            ));
+        }
+    };
+    if bindings.len() % 2 != 0 {
+        return Err(EvalError::NativeError(
+            "check: binding vector must have an even number of elements".into(),
+        ));
+    }
+
+    // Collect (name, generator_value) pairs
+    let mut binding_pairs: Vec<(Rc<str>, Value)> = Vec::new();
+    let mut i = 0;
+    while i < bindings.len() {
+        let name = match &bindings[i].kind {
+            NodeKind::Atom(Atom::Symbol { ns: None, name }) => Rc::from(name.as_str()),
+            _ => {
+                return Err(EvalError::NativeError(
+                    "check: binding names must be symbols".into(),
+                ));
+            }
+        };
+        let generator = eval(&bindings[i + 1], env)?;
+        binding_pairs.push((name, generator));
+        i += 2;
+    }
+
+    // Parse optional keyword options and find body start
+    let mut num_tests: i64 = 100;
+    let mut seed: i64 = 42;
+    let mut body_start = 2;
+    let mut opt_idx = 2;
+    while opt_idx < items.len() {
+        match &items[opt_idx].kind {
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "num-tests" => {
+                if opt_idx + 1 >= items.len() {
+                    return Err(EvalError::NativeError("check: :num-tests requires a value".into()));
+                }
+                match eval(&items[opt_idx + 1], env)? {
+                    Value::Int(n) => num_tests = n,
+                    _ => return Err(EvalError::NativeError("check: :num-tests must be an Int".into())),
+                }
+                opt_idx += 2;
+                body_start = opt_idx;
+            }
+            NodeKind::Atom(Atom::Keyword { ns: None, name }) if name == "seed" => {
+                if opt_idx + 1 >= items.len() {
+                    return Err(EvalError::NativeError("check: :seed requires a value".into()));
+                }
+                match eval(&items[opt_idx + 1], env)? {
+                    Value::Int(n) => seed = n,
+                    _ => return Err(EvalError::NativeError("check: :seed must be an Int".into())),
+                }
+                opt_idx += 2;
+                body_start = opt_idx;
+            }
+            _ => break,
+        }
+    }
+
+    let body = &items[body_start..];
+    if body.is_empty() {
+        return Err(EvalError::NativeError("check: requires a body".into()));
+    }
+
+    // Run the property num_tests times
+    let mut cur_seed = seed;
+    for trial in 0..num_tests {
+        cur_seed = nexl_stdlib::gen_mod::lcg_next(cur_seed);
+        let trial_env = Rc::new(Env::child(Rc::clone(env)));
+
+        // Generate values for each binding
+        let mut gen_seed = cur_seed;
+        for (name, generator) in &binding_pairs {
+            gen_seed = nexl_stdlib::gen_mod::lcg_next(gen_seed);
+            let value = nexl_runtime::call_value(generator, &[Value::Int(gen_seed)])
+                .map_err(|e| EvalError::NativeError(format!("check: generator error: {e}")))?;
+            trial_env.define(Rc::clone(name), value);
+        }
+
+        // Run body assertions
+        let body_result: Result<(), EvalError> = (|| {
+            for node in body {
+                eval_with_loop(node, &trial_env, loop_state)?;
+            }
+            Ok(())
+        })();
+
+        if let Err(e) = body_result {
+            // Property falsified — attempt basic shrinking
+            let shrunk = shrink_check(&binding_pairs, cur_seed, body, env, loop_state);
+            let failing_vals: Vec<String> = binding_pairs
+                .iter()
+                .map(|(name, _)| {
+                    let v = trial_env.get(name).unwrap_or(Value::Unit);
+                    format!("{name} = {v}")
+                })
+                .collect();
+            let shrunk_msg = match shrunk {
+                Some(msg) => format!("\n  Shrunk to: {msg}"),
+                None => String::new(),
+            };
+            return Err(EvalError::NativeError(format!(
+                "check: property falsified after {} tests.\n  Failing input: {}{}\n  Error: {e}",
+                trial + 1,
+                failing_vals.join(", "),
+                shrunk_msg,
+            )));
+        }
+    }
+
+    Ok(EvalReturn::Value(Value::Unit))
+}
+
+/// Try to find a simpler failing input by bisecting the seed.
+///
+/// Returns a description of the smaller failing case, or `None` if shrinking
+/// didn't find a smaller failure.
+fn shrink_check<'a>(
+    binding_pairs: &[(Rc<str>, Value)],
+    failing_seed: i64,
+    body: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Option<String> {
+    let candidate_seeds: Vec<i64> = vec![failing_seed / 2, failing_seed / 4, 0, 1, -1];
+    for s in candidate_seeds {
+        let trial_env = Rc::new(Env::child(Rc::clone(env)));
+        let mut gen_seed = s;
+        for (name, generator) in binding_pairs {
+            gen_seed = nexl_stdlib::gen_mod::lcg_next(gen_seed);
+            if let Ok(value) = nexl_runtime::call_value(generator, &[Value::Int(gen_seed)]) {
+                trial_env.define(Rc::clone(name), value);
+            }
+        }
+        let still_fails = body
+            .iter()
+            .any(|node| eval_with_loop(node, &trial_env, loop_state).is_err());
+        if still_fails {
+            let vals: Vec<String> = binding_pairs
+                .iter()
+                .map(|(name, _)| {
+                    let v = trial_env.get(name).unwrap_or(Value::Unit);
+                    format!("{name} = {v}")
+                })
+                .collect();
+            return Some(vals.join(", "));
+        }
+    }
+    None
 }

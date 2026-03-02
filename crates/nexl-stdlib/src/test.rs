@@ -34,13 +34,13 @@ thread_local! {
     static TAGS_REGISTRY: RefCell<HashMap<String, Vec<String>>> = RefCell::new(HashMap::new());
     /// Stack of per-test setup thunks (one per active describe scope).
     /// Each element is a thunk registered by `setup` in that scope.
-    static SETUP_STACK: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    static SETUP_STACK: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     /// Stack of per-test teardown thunks.
-    static TEARDOWN_STACK: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    static TEARDOWN_STACK: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     /// One-time setup-all thunk, called before all tests in the current describe.
-    static SETUP_ALL_REGISTRY: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    static SETUP_ALL_REGISTRY: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     /// One-time teardown-all thunk, called after all tests in the current describe.
-    static TEARDOWN_ALL_REGISTRY: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+    static TEARDOWN_ALL_REGISTRY: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     /// Whether the evaluator is running in test mode.
     /// Set to `true` by `nexl test` before evaluating files; `false` by `nexl run`.
     /// Controls whether `(submodule test ...)` bodies are evaluated (spec §8).

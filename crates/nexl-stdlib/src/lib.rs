@@ -10,6 +10,7 @@ pub mod core;
 pub mod crypto;
 pub mod db;
 pub mod env;
+pub mod gen_mod;
 pub mod http;
 pub mod io;
 pub mod json;
@@ -82,6 +83,7 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("net", net::entries()),
         ("async", async_mod::entries()),
         ("sys", sys::entries()),
+        ("gen", gen_mod::entries()),
     ]
 }
 
@@ -118,7 +120,7 @@ mod tests {
             names,
             vec![
                 "core", "str", "math", "conv", "io", "json", "http", "db", "env", "time",
-                "random", "crypto", "log", "test", "net", "async", "sys"
+                "random", "crypto", "log", "test", "net", "async", "sys", "gen"
             ]
         );
     }
