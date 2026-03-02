@@ -6287,6 +6287,44 @@ mod tests {
         assert!(r.is_ok(), "not-m should pass when inner matcher fails: {r:?}");
     }
 
+    // --- failure persistence / .test-seeds (spec §12.6) ---
+
+    #[test]
+    fn failed_seeds_pushed_on_check_failure() {
+        nexl_stdlib::test::registry_clear();
+        let env = crate::stdlib::standard_env();
+        // Body always fails: (is false) never passes
+        let r = eval_forms("(check [x gen/int] :num-tests 5 (is false))", &env);
+        assert!(r.is_err(), "check with always-failing body should fail");
+        let seeds = nexl_stdlib::test::failed_seeds_drain();
+        assert!(!seeds.is_empty(), "failing seed should be pushed to registry");
+    }
+
+    #[test]
+    fn passing_check_does_not_push_seed() {
+        nexl_stdlib::test::registry_clear();
+        let env = crate::stdlib::standard_env();
+        let r = eval_forms("(check [x gen/int] :num-tests 5 (is (= x x)))", &env);
+        assert!(r.is_ok(), "check with always-passing body should succeed: {r:?}");
+        let seeds = nexl_stdlib::test::failed_seeds_drain();
+        assert!(seeds.is_empty(), "no seeds should be pushed on success");
+    }
+
+    #[test]
+    fn seed_overrides_replayed_before_random() {
+        nexl_stdlib::test::registry_clear();
+        // Push seed 999 as an override; body always fails so first trial (the replay) fails
+        nexl_stdlib::test::set_seed_overrides(vec![999]);
+        let env = crate::stdlib::standard_env();
+        let r = eval_forms("(check [x gen/int] :num-tests 100 (is false))", &env);
+        assert!(r.is_err(), "replayed seed should trigger failure");
+        let msg = r.unwrap_err().to_string();
+        assert!(
+            msg.contains("after 1 tests"),
+            "should fail on first trial (replay): {msg}"
+        );
+    }
+
     // --- :flaky / :timeout annotations (spec §6.1–6.2) ---
 
     #[test]

@@ -852,6 +852,7 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
     let mut skip_reason: Option<String> = None;
     let mut is_focused = false;
     let mut tag_list: Vec<String> = Vec::new();
+    let mut flaky_retries: usize = 0;
 
     while idx < items.len() {
         if let NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) = &items[idx].kind {
@@ -897,8 +898,24 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
                         idx += 1;
                     }
                 }
-                "timeout" | "flaky" => {
-                    idx += 2; // skip the keyword and its value
+                "timeout" => {
+                    idx += 2; // store as metadata only; not enforced at eval time
+                }
+                "flaky" => {
+                    idx += 1;
+                    if idx < items.len() {
+                        match &items[idx].kind {
+                            NodeKind::Atom(Atom::Int { value: n, .. }) => {
+                                flaky_retries = (*n).max(0) as usize;
+                                idx += 1;
+                            }
+                            NodeKind::Atom(Atom::Bool(true)) => {
+                                flaky_retries = 3; // default retry count
+                                idx += 1;
+                            }
+                            _ => {} // skip unknown value
+                        }
+                    }
                 }
                 _ => break,
             }
@@ -979,6 +996,11 @@ fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> 
     // If :tags, register tags for this test so the CLI can filter by tag
     if !tag_list.is_empty() {
         nexl_stdlib::test::tags_register(full_name.clone(), tag_list);
+    }
+
+    // If :flaky, register retry count so the CLI can retry on failure
+    if flaky_retries > 0 {
+        nexl_stdlib::test::flaky_registry_insert(full_name.clone(), flaky_retries);
     }
 
     // Call test/register!("full-name", thunk)
@@ -3052,10 +3074,18 @@ fn eval_check<'a>(
         return Err(EvalError::NativeError("check: requires a body".into()));
     }
 
-    // Run the property num_tests times
-    let mut cur_seed = seed;
-    for trial in 0..num_tests {
-        cur_seed = nexl_stdlib::gen_mod::lcg_next(cur_seed);
+    // Run persisted failing seeds first (spec §12.6), then random trials.
+    let replay_seeds = nexl_stdlib::test::take_seed_overrides();
+    let mut rng_seed = seed;
+    let all_seeds: Vec<i64> = replay_seeds
+        .into_iter()
+        .chain((0..num_tests).map(|_| {
+            rng_seed = nexl_stdlib::gen_mod::lcg_next(rng_seed);
+            rng_seed
+        }))
+        .collect();
+
+    for (trial_idx, &cur_seed) in all_seeds.iter().enumerate() {
         let trial_env = Rc::new(Env::child(Rc::clone(env)));
 
         // Generate values for each binding
@@ -3076,6 +3106,8 @@ fn eval_check<'a>(
         })();
 
         if let Err(e) = body_result {
+            // Persist the failing seed for future runs (spec §12.6)
+            nexl_stdlib::test::failed_seeds_push(cur_seed);
             // Property falsified — attempt basic shrinking
             let shrunk = shrink_check(&binding_pairs, cur_seed, body, env, loop_state);
             let failing_vals: Vec<String> = binding_pairs
@@ -3091,7 +3123,7 @@ fn eval_check<'a>(
             };
             return Err(EvalError::NativeError(format!(
                 "check: property falsified after {} tests.\n  Failing input: {}{}\n  Error: {e}",
-                trial + 1,
+                trial_idx + 1,
                 failing_vals.join(", "),
                 shrunk_msg,
             )));

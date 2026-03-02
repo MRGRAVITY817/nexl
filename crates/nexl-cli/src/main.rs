@@ -593,6 +593,13 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String], form
     // Enable test mode so (submodule test ...) blocks are evaluated (spec §8).
     test_mod::set_test_mode(true);
 
+    // Load persisted failing seeds from `.test-seeds` next to the test file (spec §12.6).
+    let seeds_path = input_path.with_file_name(".test-seeds");
+    let prior_seeds = load_test_seeds(&seeds_path);
+    if !prior_seeds.is_empty() {
+        test_mod::set_seed_overrides(prior_seeds);
+    }
+
     // Evaluate the source file. This will call (test/register! ...) for each test.
     let source = std::fs::read_to_string(&input_path)
         .map_err(|e| format!("cannot read {:?}: {e}", input_path))?;
@@ -610,6 +617,7 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String], form
     // Focus mode: when any test has :focus, run only focused tests.
     let focused = test_mod::focus_drain();
     let all_tags = test_mod::tags_drain();
+    let flaky_map = test_mod::flaky_registry_drain();
     if !focused.is_empty() {
         tests.retain(|(name, _)| focused.contains(name));
     } else if !tags.is_empty() {
@@ -646,7 +654,15 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String], form
     let mut failures: Vec<String> = Vec::new();
 
     for (name, thunk) in tests {
-        match nexl_runtime::call_value(&thunk, &[]) {
+        // For flaky tests: retry up to N times before reporting failure
+        let max_retries = flaky_map.get(&name).copied().unwrap_or(0);
+        let mut result = nexl_runtime::call_value(&thunk, &[]);
+        for _ in 0..max_retries {
+            if result.is_ok() { break; }
+            result = nexl_runtime::call_value(&thunk, &[]);
+        }
+
+        match result {
             Ok(nexl_runtime::Value::Adt { ctor, fields, .. }) if ctor.as_ref() == "Skip" => {
                 skipped += 1;
                 let reason = fields.first().map(|v| format!("{v}")).unwrap_or_default();
@@ -715,7 +731,31 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String], form
         }
     }
 
+    // Write any newly-discovered failing seeds to `.test-seeds` (spec §12.6).
+    let new_seeds = test_mod::failed_seeds_drain();
+    if !new_seeds.is_empty() {
+        save_test_seeds(&seeds_path, &new_seeds);
+    } else {
+        // If no failures, remove stale seeds file so next run starts clean.
+        let _ = std::fs::remove_file(&seeds_path);
+    }
+
     Ok(failed == 0)
+}
+
+/// Load integer seeds from a `.test-seeds` file (one per line).
+fn load_test_seeds(path: &std::path::Path) -> Vec<i64> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.trim().parse::<i64>().ok())
+        .collect()
+}
+
+/// Write failing seeds to a `.test-seeds` file (one per line).
+fn save_test_seeds(path: &std::path::Path, seeds: &[i64]) {
+    let content = seeds.iter().map(|s| s.to_string()).collect::<Vec<_>>().join("\n");
+    let _ = std::fs::write(path, content);
 }
 
 /// Escape a string for JSON output (basic escaping: `"`, `\`, and control chars).

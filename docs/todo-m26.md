@@ -43,7 +43,7 @@
 - [x] `check` form inside `deftest`
 - [x] Integrated shrinking (generators carry shrink trees)
 - [ ] `Arbitrary` protocol with auto-derive for ADTs/records
-- [ ] Failure persistence (`.test-seeds`)
+- [x] Failure persistence (`.test-seeds`)
 
 ## Phase 5: Snapshots, Doctests & Contracts
 

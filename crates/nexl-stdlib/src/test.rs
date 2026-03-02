@@ -52,6 +52,14 @@ thread_local! {
     /// Bench registry: (name, thunk, warmup, iterations).
     static BENCH_REGISTRY: RefCell<Vec<(String, Value, usize, usize)>> =
         const { RefCell::new(Vec::new()) };
+    /// Flaky registry: test name → max retry count.
+    static FLAKY_REGISTRY: RefCell<HashMap<String, usize>> = RefCell::new(HashMap::new());
+    /// Failed property-test seeds to persist across runs (spec §12.6).
+    /// When a `check` form fails, the failing seed is pushed here.
+    static FAILED_SEEDS_REGISTRY: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
+    /// Seed overrides loaded from `.test-seeds` before a run.
+    /// `eval_check` replays these seeds before running random trials.
+    static SEED_OVERRIDES: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Enable test mode: `(submodule test ...)` bodies will be evaluated.
@@ -89,6 +97,41 @@ pub fn bench_registry_clear() {
     BENCH_REGISTRY.with(|r| r.borrow_mut().clear());
 }
 
+/// Register a test as flaky with a max retry count.
+pub fn flaky_registry_insert(name: String, retries: usize) {
+    FLAKY_REGISTRY.with(|r| { r.borrow_mut().insert(name, retries); });
+}
+
+/// Get the retry count for a test (0 if not flaky).
+pub fn flaky_retries(name: &str) -> usize {
+    FLAKY_REGISTRY.with(|r| *r.borrow().get(name).unwrap_or(&0))
+}
+
+/// Drain the flaky registry.
+pub fn flaky_registry_drain() -> HashMap<String, usize> {
+    FLAKY_REGISTRY.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Push a failing seed to the failed-seeds registry (called by `eval_check` on failure).
+pub fn failed_seeds_push(seed: i64) {
+    FAILED_SEEDS_REGISTRY.with(|r| r.borrow_mut().push(seed));
+}
+
+/// Drain and return all failed seeds accumulated during this run.
+pub fn failed_seeds_drain() -> Vec<i64> {
+    FAILED_SEEDS_REGISTRY.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Set seed overrides to replay before random trials (loaded from `.test-seeds`).
+pub fn set_seed_overrides(seeds: Vec<i64>) {
+    SEED_OVERRIDES.with(|r| *r.borrow_mut() = seeds);
+}
+
+/// Take the seed overrides (consumes them so each run replays once).
+pub fn take_seed_overrides() -> Vec<i64> {
+    SEED_OVERRIDES.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
 /// Add a test to the thread-local registry.
 pub fn registry_push(name: String, thunk: Value) {
     TEST_REGISTRY.with(|r| r.borrow_mut().push((name, thunk)));
@@ -106,6 +149,9 @@ pub fn registry_clear() {
     TEARDOWN_STACK.with(|s| s.borrow_mut().clear());
     SETUP_ALL_REGISTRY.with(|s| s.borrow_mut().clear());
     TEARDOWN_ALL_REGISTRY.with(|s| s.borrow_mut().clear());
+    FLAKY_REGISTRY.with(|r| r.borrow_mut().clear());
+    FAILED_SEEDS_REGISTRY.with(|r| r.borrow_mut().clear());
+    SEED_OVERRIDES.with(|r| r.borrow_mut().clear());
 }
 
 /// Return how many tests are registered.
