@@ -14,7 +14,7 @@
 ## Phase 1: Core (MVP)
 
 - [x] `is` macro — power-assert expansion for `=`, `not=`, predicates, `<`/`>`
-- [ ] `deftest` macro — registration + test runner discovery
+- [x] `deftest` macro — registration + test runner discovery
 - [ ] `describe` macro — nesting, scoped naming
 - [ ] `throws?` assertion
 - [ ] Updated `nexl test` CLI — discovery, filtering (`--filter`), output formatting

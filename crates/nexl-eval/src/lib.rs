@@ -5436,4 +5436,61 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("my message"), "error should contain user message, got: {msg}");
     }
+
+    // -- deftest macro tests --
+
+    #[test]
+    fn deftest_registers_test_and_passes() {
+        // (deftest "name" body) registers a test that can be run (spec §6.1)
+        let env = crate::stdlib::standard_env();
+        let src = r#"(deftest "arithmetic" (is (= (+ 1 2) 3)))"#;
+        let result = eval_forms(src, &env);
+        assert!(result.is_ok(), "deftest registration failed: {result:?}");
+        nexl_stdlib::test::registry_clear();
+    }
+
+    #[test]
+    fn deftest_registered_test_runs() {
+        // (deftest "name" body) then (test/run-registered) runs the test (spec §6.1)
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        let src = r#"
+            (deftest "two plus two" (is (= (+ 2 2) 4)))
+            (test/run-registered)
+        "#;
+        let result = eval_forms(src, &env);
+        assert!(result.is_ok(), "run-registered failed: {result:?}");
+    }
+
+    #[test]
+    fn deftest_failing_test_is_reported() {
+        // deftest body that fails should propagate error through thunk (spec §6.1)
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        eval_forms(r#"(deftest "always fails" (is (= 1 2)))"#, &env)
+            .expect("registration should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        assert!(!tests.is_empty(), "test should be registered");
+        let (_name, thunk) = tests.into_iter().next().unwrap();
+        let run_result = nexl_runtime::call_value(&thunk, &[]);
+        assert!(run_result.is_err(), "failing test thunk should return Err");
+    }
+
+    #[test]
+    fn deftest_skip_registers_as_skipped() {
+        // (deftest "name" :skip "reason" body) — thunk returns Skip ADT (spec §6.2)
+        let env = crate::stdlib::standard_env();
+        nexl_stdlib::test::registry_clear();
+        eval_forms(r#"(deftest "skipped" :skip "not ready" (is false))"#, &env)
+            .expect("registration should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        assert!(!tests.is_empty());
+        let (_name, thunk) = tests.into_iter().next().unwrap();
+        match nexl_runtime::call_value(&thunk, &[]) {
+            Ok(Value::Adt { ctor, .. }) => {
+                assert_eq!(ctor.as_ref(), "Skip", "expected Skip ADT");
+            }
+            other => panic!("expected Skip ADT, got: {other:?}"),
+        }
+    }
 }

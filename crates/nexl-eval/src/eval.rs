@@ -149,6 +149,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "is" => {
             eval_is(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "deftest" => {
+            eval_deftest(items, env)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -713,6 +716,104 @@ fn eval_is<'a>(
             "{prefix}\n  (is) expression must return Bool, got {val}"
         ))),
     }
+}
+
+/// `(deftest "name" body...)` — register a test with the test runner.
+///
+/// Expands to `(test/register! "name" (fn [] body...))` at runtime, respecting
+/// `:skip`, `:focus`, `:tags`, `:timeout`, and `:flaky` keyword metadata (spec §6.1–6.2).
+fn eval_deftest(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    // items[0] = "deftest", items[1] = name string, items[2..] = metadata + body
+    let name_node = items.get(1).ok_or(EvalError::Arity)?;
+    let name = match &name_node.kind {
+        NodeKind::Atom(Atom::Str(s)) => s.clone(),
+        _ => {
+            return Err(EvalError::NativeError(
+                "`deftest` first argument must be a string name".to_string(),
+            ));
+        }
+    };
+
+    // Parse optional metadata flags
+    let mut idx = 2usize;
+    let mut skip_reason: Option<String> = None;
+
+    while idx < items.len() {
+        if let NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) = &items[idx].kind {
+            match kw.as_str() {
+                "skip" => {
+                    idx += 1;
+                    let reason = if idx < items.len() {
+                        if let NodeKind::Atom(Atom::Str(s)) = &items[idx].kind {
+                            let s = s.clone();
+                            idx += 1;
+                            s
+                        } else {
+                            "skipped".to_string()
+                        }
+                    } else {
+                        "skipped".to_string()
+                    };
+                    skip_reason = Some(reason);
+                }
+                "focus" => {
+                    idx += 1;
+                }
+                "tags" | "timeout" | "flaky" => {
+                    idx += 2; // skip the keyword and its value
+                }
+                _ => break,
+            }
+        } else {
+            break;
+        }
+    }
+
+    let body_nodes = &items[idx..];
+
+    // Look up test/register! in the env
+    let register_fn = env.get_qualified("test", "register!").ok_or_else(|| {
+        EvalError::NativeError("`deftest` requires `test/register!` in scope".to_string())
+    })?;
+
+    // Build the body thunk
+    let thunk = if let Some(reason) = skip_reason {
+        // :skip — thunk just calls test/skip
+        let skip_fn = env.get_qualified("test", "skip").ok_or_else(|| {
+            EvalError::NativeError("`deftest` :skip requires `test/skip` in scope".to_string())
+        })?;
+        let reason_val = Value::Str(Rc::from(reason.as_str()));
+        let skip_fn_clone = skip_fn.clone();
+        Value::NativeClosure {
+            name: Rc::from("<skipped>"),
+            f: Rc::new(move |_args| nexl_runtime::call_value(&skip_fn_clone, &[reason_val.clone()])),
+        }
+    } else if body_nodes.is_empty() {
+        return Err(EvalError::NativeError(
+            "`deftest` requires at least one body expression".to_string(),
+        ));
+    } else {
+        // Normal thunk: close over a snapshot of the env and body nodes
+        let env_clone = Rc::clone(env);
+        let body: Vec<Node> = body_nodes.to_vec();
+        Value::NativeClosure {
+            name: Rc::from(name.as_str()),
+            f: Rc::new(move |_args| {
+                let mut last = Value::Unit;
+                for node in &body {
+                    last = crate::eval::eval(node, &env_clone)
+                        .map_err(|e| format!("{e}"))?;
+                }
+                Ok(last)
+            }),
+        }
+    };
+
+    // Call test/register!("name", thunk)
+    nexl_runtime::call_value(&register_fn, &[Value::Str(Rc::from(name.as_str())), thunk])
+        .map_err(EvalError::NativeError)?;
+
+    Ok(EvalReturn::Value(Value::Unit))
 }
 
 /// `(deftype TypeName [params...] | Ctor1 | (Ctor2 arg) ...)`

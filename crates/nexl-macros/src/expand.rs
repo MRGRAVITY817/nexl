@@ -58,6 +58,7 @@ enum BuiltinMacro {
     And,
     Or,
     Is,
+    Deftest,
 }
 
 struct Expander {
@@ -84,6 +85,10 @@ impl Expander {
         macros.insert("and".to_string(), MacroKind::Builtin(BuiltinMacro::And));
         macros.insert("or".to_string(), MacroKind::Builtin(BuiltinMacro::Or));
         macros.insert("is".to_string(), MacroKind::Builtin(BuiltinMacro::Is));
+        macros.insert(
+            "deftest".to_string(),
+            MacroKind::Builtin(BuiltinMacro::Deftest),
+        );
         Self { macros }
     }
 
@@ -616,6 +621,7 @@ fn expand_builtin_macro(def: BuiltinMacro, call: &Node) -> Result<Node, MacroErr
         BuiltinMacro::And => expand_and(&args, &mut gensym),
         BuiltinMacro::Or => expand_or(&args, &mut gensym),
         BuiltinMacro::Is => expand_is(&args, &mut gensym)?,
+        BuiltinMacro::Deftest => expand_deftest(&args)?,
     };
     let result = SyntaxObj::new(node, ScopeSet::new());
     let flipped = result.flip_scope_deep(intro_scope);
@@ -1291,6 +1297,112 @@ fn str_format_call(fmt: &str, args: Vec<Node>) -> Node {
 /// A string literal node.
 fn str_node(s: &str) -> Node {
     Node::atom(Atom::Str(s.to_string()), Span::synthetic())
+}
+
+/// Expand `(deftest "name" body...)` into a test registration call.
+///
+/// Supported forms (spec §6.1–6.2):
+/// - `(deftest "name" body...)`
+///   → `(test/register! "name" (fn [] body...))`
+/// - `(deftest "name" :skip body...)`
+///   → `(test/register! "name" (fn [] (test/skip "skipped")))`
+/// - `(deftest "name" :skip "reason" body...)`
+///   → `(test/register! "name" (fn [] (test/skip "reason")))`
+/// - `(deftest "name" :focus body...)`
+///   → same as basic for now; focus filtering handled at runner level
+fn expand_deftest(args: &[SyntaxObj]) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Err(MacroError::Message(
+            "`deftest` requires a name and a body".to_string(),
+        ));
+    }
+
+    // args[0] must be a string literal — the test name
+    let name_node = &args[0].node;
+    let name = match &name_node.kind {
+        NodeKind::Atom(Atom::Str(s)) => s.clone(),
+        _ => {
+            return Err(MacroError::Message(
+                "`deftest` first argument must be a string name".to_string(),
+            ));
+        }
+    };
+
+    // Parse optional keyword metadata flags before the body
+    let mut idx = 1usize;
+    let mut skip_reason: Option<String> = None;
+    // :focus — recognized but treated same as normal for now
+
+    while idx < args.len() {
+        if let NodeKind::Atom(Atom::Keyword { ns: None, name: kw }) = &args[idx].node.kind {
+            match kw.as_str() {
+                "skip" => {
+                    idx += 1;
+                    // Optional reason string
+                    let reason = if idx < args.len() {
+                        if let NodeKind::Atom(Atom::Str(s)) = &args[idx].node.kind {
+                            let s = s.clone();
+                            idx += 1;
+                            s
+                        } else {
+                            "skipped".to_string()
+                        }
+                    } else {
+                        "skipped".to_string()
+                    };
+                    skip_reason = Some(reason);
+                }
+                "focus" | "tags" | "timeout" | "flaky" => {
+                    idx += 1;
+                    // :tags takes a vector arg, :timeout/:flaky take a value — skip them
+                    if matches!(kw.as_str(), "tags" | "timeout" | "flaky") && idx < args.len() {
+                        idx += 1;
+                    }
+                }
+                _ => break,
+            }
+        } else {
+            break;
+        }
+    }
+
+    let body_args = &args[idx..];
+
+    // Build the body: if :skip, wrap in (test/skip reason)
+    let body_node = if let Some(reason) = skip_reason {
+        let skip_call = list_node(vec![
+            Node::atom(
+                Atom::Symbol {
+                    ns: Some("test".to_string()),
+                    name: "skip".to_string(),
+                },
+                Span::synthetic(),
+            ),
+            str_node(&reason),
+        ]);
+        list_node(vec![symbol_node("fn"), vector_node(vec![]), skip_call])
+    } else if body_args.is_empty() {
+        return Err(MacroError::Message(
+            "`deftest` requires at least one body expression".to_string(),
+        ));
+    } else {
+        let mut fn_items = vec![symbol_node("fn"), vector_node(vec![])];
+        fn_items.extend(body_args.iter().map(|a| a.node.clone()));
+        list_node(fn_items)
+    };
+
+    // (test/register! "name" (fn [] body...))
+    Ok(list_node(vec![
+        Node::atom(
+            Atom::Symbol {
+                ns: Some("test".to_string()),
+                name: "register!".to_string(),
+            },
+            Span::synthetic(),
+        ),
+        str_node(&name),
+        body_node,
+    ]))
 }
 
 fn is_else_keyword(node: &Node) -> bool {
