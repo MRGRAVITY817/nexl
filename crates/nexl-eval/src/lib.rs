@@ -5581,6 +5581,42 @@ mod tests {
         assert!(msg.contains("TypeError"), "error should mention expected type, got: {msg}");
     }
 
+    // ── each: table-driven tests (spec §7.3) ────────────────────────────────
+
+    #[test]
+    fn each_runs_body_for_each_row() {
+        // (each [x [1 2 3]] (is (= x x))) — 3 iterations, all pass (spec §7.3)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(each [x [1 2 3]] (is (= x x)))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn each_fails_on_row_mismatch() {
+        // (each [x [1 2 3]] (is (= x 1))) — fails on row 1 (x=2) (spec §7.3)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(each [x [1 2 3]] (is (= x 1)))", &env);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("row") || msg.contains("each"), "got: {msg}");
+    }
+
+    #[test]
+    fn each_with_destructuring() {
+        // (each [[a b] [[1 2] [3 4]]] (is (= a a))) — destructure each row (spec §7.3)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(each [[a b] [[1 2] [3 4]]] (is (= a a)))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
+    #[test]
+    fn each_empty_collection_passes() {
+        // (each [x []] (is false)) — no iterations, no failure (spec §7.3)
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(each [x []] (is false))", &env);
+        assert_eq!(result.unwrap(), Value::Unit);
+    }
+
     // ── is-match assertions (spec §7.2) ─────────────────────────────────────
 
     #[test]

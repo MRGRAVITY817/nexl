@@ -1694,10 +1694,9 @@ fn eval_each(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         return Err(EvalError::Arity);
     }
 
-    let name = match &bindings[0].kind {
-        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.clone(),
-        _ => return Err(EvalError::InvalidBindingTarget),
-    };
+    let binding_node = &bindings[0];
+    let pattern = parse_pattern(binding_node)
+        .map_err(|_| EvalError::InvalidBindingTarget)?;
 
     let coll_value = match eval_with_loop(&bindings[1], env, None)? {
         EvalReturn::Value(v) => v,
@@ -1731,11 +1730,21 @@ fn eval_each(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         }
     }
 
-    for value in iter_values {
+    for (idx, element) in iter_values.iter().enumerate() {
+        let mut row_bindings: Vec<(Rc<str>, Value)> = Vec::new();
+        if !match_pattern(&pattern, element, &mut row_bindings) {
+            return Err(EvalError::NativeError(format!(
+                "each row {idx}: value {element} did not match binding pattern {binding_node}"
+            )));
+        }
         let iter_env = Rc::new(Env::child(Rc::clone(env)));
-        iter_env.define(name.clone(), value);
+        for (name, val) in row_bindings {
+            iter_env.define(name, val);
+        }
         for expr in &items[2..] {
-            match eval_with_loop(expr, &iter_env, None)? {
+            match eval_with_loop(expr, &iter_env, None).map_err(|e| {
+                EvalError::NativeError(format!("each row {idx}: {e}"))
+            })? {
                 EvalReturn::Value(_) => {}
                 EvalReturn::Recur(_) => return Err(EvalError::InvalidRecur),
             }
