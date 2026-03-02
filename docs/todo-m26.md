@@ -42,7 +42,7 @@
 - [x] Generator primitives and combinators
 - [x] `check` form inside `deftest`
 - [x] Integrated shrinking (generators carry shrink trees)
-- [ ] `Arbitrary` protocol with auto-derive for ADTs/records
+- [ ] `Arbitrary` protocol with auto-derive for ADTs/records (deferred — requires type registry + protocol dispatch)
 - [x] Failure persistence (`.test-seeds`)
 
 ## Phase 5: Snapshots, Doctests & Contracts
@@ -55,10 +55,10 @@
 
 ## Phase 6: Polish & Performance
 
-- [ ] `--watch` mode with smart re-runs
-- [ ] `--parallel` cross-module execution
+- [ ] `--watch` mode with smart re-runs (deferred — requires fs watcher)
+- [ ] `--parallel` cross-module execution (deferred — requires threading)
 - [x] `--format json` output
 - [x] `bench` form and `nexl bench` command
 - [x] Matcher protocol and built-in matchers
-- [ ] `--coverage` support
+- [ ] `--coverage` support (deferred — requires instrumentation infrastructure)
 - [x] `:flaky`, `:timeout` annotations
