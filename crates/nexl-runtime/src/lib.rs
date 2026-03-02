@@ -3,7 +3,7 @@ pub mod sandbox;
 pub mod sys;
 pub mod value;
 pub use ffi_pin::{CTypeLayout, FfiPinGuard};
-pub use value::{HandlerDef, NativeFn, Value};
+pub use value::{BuiltHandlerEffect, HandlerDef, NativeFn, Value};
 
 use std::cell::RefCell;
 

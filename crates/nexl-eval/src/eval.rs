@@ -4,7 +4,7 @@ use meta::{
     Atom, HandledEffect, HandledOp, Node, NodeKind, Pattern, TryCatchForm,
     parse_defhandler_decl, parse_handle_form, parse_pattern, parse_try_form,
 };
-use nexl_runtime::{Value, value::Function, value::HandlerDef};
+use nexl_runtime::{BuiltHandlerEffect, Value, value::Function, value::HandlerDef};
 
 use crate::{Env, EvalError};
 
@@ -165,6 +165,9 @@ fn eval_list<'a>(
             if matches!(name.as_str(), "setup" | "teardown" | "setup-all" | "teardown-all") =>
         {
             eval_lifecycle_hook(name, items, env, loop_state)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "call-log" => {
+            eval_call_log(items, env)
         }
         _ => eval_apply(items, env, loop_state),
     }
@@ -1403,6 +1406,7 @@ fn eval_defhandler(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalErro
         name: Rc::from(decl.name.as_str()),
         params: decl.params.iter().map(|p| Rc::from(p.as_str())).collect(),
         effects: decl.effects,
+        built_ops: vec![],
     };
 
     env.define(
@@ -1447,13 +1451,13 @@ fn eval_handle<'a>(
 
     // Determine whether this is a named handler reference or inline handlers.
     // For parameterized handlers, param_env has the handler params bound.
-    let (effects, param_env) = resolve_handler_effects(handler_vec, env)?;
+    let (effects, built_ops, param_env) = resolve_handler_effects(handler_vec, env)?;
 
     // The env used by handler operations: includes params if parameterized
     let ops_env = param_env.as_ref().unwrap_or(env);
 
     // Bind each effect's operations in the handler environment
-    install_handler_effects(&effects, &handler_env, ops_env);
+    install_handler_effects(&effects, &built_ops, &handler_env, ops_env);
 
     // Evaluate body forms in the handler environment
     let body = &items[2..];
@@ -1468,6 +1472,9 @@ fn eval_handle<'a>(
     Ok(EvalReturn::Value(result))
 }
 
+/// Result of resolving a handler vector: AST-based effects, pre-built ops, optional param env.
+type HandlerResolution = (Vec<HandledEffect>, Vec<BuiltHandlerEffect>, Option<Rc<Env>>);
+
 /// Resolve the handler vector into a list of [`HandledEffect`]s.
 ///
 /// Returns `(effects, optional_param_env)`:
@@ -1477,11 +1484,14 @@ fn eval_handle<'a>(
 /// Handles three cases:
 /// - Single uppercase symbol that resolves to a Handler value → named handler
 /// - List form `(HandlerName args...)` → parameterized named handler
+/// - Arbitrary expression evaluating to `Value::Handler` → dynamic handler
 /// - Inline effect operations → parse normally
+///
+/// Returns `(ast_effects, built_ops, optional_param_env)`.
 fn resolve_handler_effects(
     handler_vec: &[Node],
     env: &Rc<Env>,
-) -> Result<(Vec<HandledEffect>, Option<Rc<Env>>), EvalError> {
+) -> Result<HandlerResolution, EvalError> {
     if handler_vec.is_empty() {
         return Err(EvalError::NativeError(
             "handle vector must list at least one effect".into(),
@@ -1494,9 +1504,9 @@ fn resolve_handler_effects(
         if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &handler_vec[0].kind
             && let Some(Value::Handler(h)) = env.get(name)
         {
-            return Ok((h.effects.clone(), None));
+            return Ok((h.effects.clone(), h.built_ops.clone(), None));
         }
-        // Case 3: [(HandlerName args)] — parameterized handler in list
+        // Case 2: [(HandlerName args)] — parameterized handler in list
         if let NodeKind::List(call_items) = &handler_vec[0].kind
             && !call_items.is_empty()
             && let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &call_items[0].kind
@@ -1517,7 +1527,11 @@ fn resolve_handler_effects(
                 let val = eval(arg_node, env)?;
                 param_env.define(Rc::clone(param), val);
             }
-            return Ok((h.effects.clone(), Some(param_env)));
+            return Ok((h.effects.clone(), h.built_ops.clone(), Some(param_env)));
+        }
+        // Case 3: arbitrary expression evaluating to Value::Handler (e.g. `(:handler log)`)
+        if let Ok(Value::Handler(h)) = eval(&handler_vec[0], env) {
+            return Ok((h.effects.clone(), h.built_ops.clone(), None));
         }
     }
 
@@ -1525,7 +1539,7 @@ fn resolve_handler_effects(
     if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &handler_vec[0].kind
         && let Some(Value::Handler(h)) = env.get(name)
     {
-        return Ok((h.effects.clone(), None));
+        return Ok((h.effects.clone(), h.built_ops.clone(), None));
     }
 
     // Fall through to inline handler parsing
@@ -1543,7 +1557,7 @@ fn resolve_handler_effects(
     )
     .map_err(|e| EvalError::NativeError(format!("handle: {}", e.description)))?;
 
-    Ok((decl.effects, None))
+    Ok((decl.effects, vec![], None))
 }
 
 /// Install handler effects into the environment by binding operations as functions.
@@ -1551,12 +1565,29 @@ fn resolve_handler_effects(
 /// For each effect, binds each operation as:
 /// - Unqualified: `op-name` → function
 /// - Qualified: `EffectName/op-name` → function (via module alias)
+///
+/// When `built_ops` is non-empty (call-log-wrapped handlers), uses pre-built
+/// Value functions directly instead of building from AST nodes.
 fn install_handler_effects(
     effects: &[HandledEffect],
+    built_ops: &[BuiltHandlerEffect],
     handler_env: &Rc<Env>,
     parent_env: &Rc<Env>,
 ) {
     use std::collections::HashMap;
+
+    // If pre-built ops are present, use them directly (skips AST-based effects)
+    if !built_ops.is_empty() {
+        for effect in built_ops {
+            let mut module_exports: HashMap<Rc<str>, Value> = HashMap::new();
+            for (op_name, op_fn) in &effect.ops {
+                handler_env.define(op_name.as_str(), op_fn.clone());
+                module_exports.insert(Rc::from(op_name.as_str()), op_fn.clone());
+            }
+            handler_env.define_module_alias(effect.name.as_str(), Rc::new(module_exports));
+        }
+        return;
+    }
 
     for effect in effects {
         let mut module_exports: HashMap<Rc<str>, Value> = HashMap::new();
@@ -2658,4 +2689,112 @@ fn eval_try_form<'a>(
             other.type_name()
         ))),
     }
+}
+
+/// Evaluate a `(call-log HandlerName)` form.
+///
+/// Creates a recording-wrapped handler that logs every operation call.
+/// Returns `{:handler wrapped-handler :calls (atom [])}` where each logged
+/// call is `{:op :op-name :args [...] :returned value}`.
+fn eval_call_log(
+    items: &[Node],
+    env: &Rc<Env>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() != 2 {
+        return Err(EvalError::NativeError(
+            "call-log requires exactly one argument (handler name or expression)".into(),
+        ));
+    }
+
+    let handler_val = eval(&items[1], env)?;
+    let h = match &handler_val {
+        Value::Handler(h) => Rc::clone(h),
+        other => {
+            return Err(EvalError::NativeError(format!(
+                "call-log: expected a Handler, got {}",
+                other.type_name()
+            )));
+        }
+    };
+
+    use std::cell::RefCell;
+    use nexl_runtime::BuiltHandlerEffect;
+
+    // The shared calls atom: (atom [])
+    let calls_inner: Rc<RefCell<Value>> = Rc::new(RefCell::new(Value::Vec(Rc::new(vec![]))));
+    let calls_atom = Value::Atom(Rc::clone(&calls_inner));
+
+    // Build wrapped effects — for each op, wrap with recording logic
+    let mut built_effects: Vec<BuiltHandlerEffect> = Vec::new();
+
+    // Process both AST-based effects and any existing built_ops
+    let effect_names_and_ops: Vec<(String, Vec<(String, Value)>)> = if !h.built_ops.is_empty() {
+        // Wrap existing built ops
+        h.built_ops.iter().map(|be| {
+            let ops = be.ops.iter().map(|(op_name, op_fn)| (op_name.clone(), op_fn.clone())).collect();
+            (be.name.clone(), ops)
+        }).collect()
+    } else {
+        // Build from AST effects
+        h.effects.iter().map(|effect| {
+            let ops = effect.operations.iter().map(|op| {
+                let op_fn = build_handler_op_fn(op, env);
+                (op.name.clone(), op_fn)
+            }).collect();
+            (effect.name.clone(), ops)
+        }).collect()
+    };
+
+    for (effect_name, ops) in effect_names_and_ops {
+        let mut wrapped_ops: Vec<(String, Value)> = Vec::new();
+        for (op_name, original_fn) in ops {
+            let calls_rc = Rc::clone(&calls_inner);
+            let kw_name: Rc<str> = Rc::from(op_name.as_str());
+            let wrapped_fn = Value::NativeClosure {
+                name: Rc::from(op_name.as_str()),
+                f: Rc::new(move |args: &[Value]| {
+                    // Call original
+                    let result = nexl_runtime::call_value(&original_fn, args)?;
+
+                    // Record call: {:op :op-name :args [...] :returned result}
+                    let kw = |s: &'static str| Value::Keyword { ns: None, name: Rc::from(s) };
+                    let entry: Vec<(Value, Value)> = vec![
+                        (kw("op"),       Value::Keyword { ns: None, name: Rc::clone(&kw_name) }),
+                        (kw("args"),     Value::Vec(Rc::new(args.to_vec()))),
+                        (kw("returned"), result.clone()),
+                    ];
+                    let entry_val = Value::Map(Rc::new(entry.into()));
+
+                    // Append to calls atom
+                    let mut calls = calls_rc.borrow_mut();
+                    if let Value::Vec(ref vec_rc) = *calls {
+                        let mut new_vec = (**vec_rc).clone();
+                        new_vec.push(entry_val);
+                        *calls = Value::Vec(Rc::new(new_vec));
+                    }
+
+                    Ok(result)
+                }),
+            };
+            wrapped_ops.push((op_name, wrapped_fn));
+        }
+        built_effects.push(BuiltHandlerEffect { name: effect_name, ops: wrapped_ops });
+    }
+
+    // Create new HandlerDef with built_ops and empty AST effects
+    let wrapped_handler_def = HandlerDef {
+        name: Rc::from(format!("call-log({})", h.name).as_str()),
+        params: vec![],
+        effects: vec![],
+        built_ops: built_effects,
+    };
+
+    // Return {:handler wrapped-handler :calls calls-atom}
+    let kw = |s: &'static str| Value::Keyword { ns: None, name: Rc::from(s) };
+    let result_pairs: Vec<(Value, Value)> = vec![
+        (kw("handler"), Value::Handler(Rc::new(wrapped_handler_def))),
+        (kw("calls"),   calls_atom),
+    ];
+
+    Ok(EvalReturn::Value(Value::Map(Rc::new(result_pairs.into()))))
 }

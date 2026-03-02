@@ -5836,4 +5836,109 @@ mod tests {
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("when") || msg.contains("guard"), "got: {msg}");
     }
+
+    // ── call-log ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn call_log_returns_map_with_handler_and_calls() {
+        // (call-log SomeHandler) returns {:handler h :calls (atom [])}
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"
+            (defhandler TestH
+              SimpleEff
+              (ping [] "pong"))
+            (call-log TestH)
+            "#,
+            &env,
+        );
+        let v = result.expect("call-log should succeed");
+        match &v {
+            Value::Map(m) => {
+                let kw = |s: &str| Value::Keyword { ns: None, name: Rc::from(s) };
+                let handler_val = m.get(&kw("handler")).expect(":handler key missing");
+                assert!(matches!(handler_val, Value::Handler(_)), "expected Handler, got {handler_val:?}");
+                let calls_val = m.get(&kw("calls")).expect(":calls key missing");
+                assert!(matches!(calls_val, Value::Atom(_)), "expected Atom, got {calls_val:?}");
+            }
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn call_log_records_op_call() {
+        // Install wrapped handler, call one op, check :calls has 1 entry
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"
+            (defhandler Adder
+              Math
+              (add [x y] (+ x y)))
+            (let [log (call-log Adder)]
+              (handle [(:handler log)]
+                (add 3 4))
+              (deref (:calls log)))
+            "#,
+            &env,
+        );
+        let v = result.expect("call-log roundtrip should succeed");
+        match &v {
+            Value::Vec(entries) => {
+                assert_eq!(entries.len(), 1, "expected 1 call, got {}", entries.len());
+                let entry = &entries[0];
+                match entry {
+                    Value::Map(m) => {
+                        let kw = |s: &str| Value::Keyword { ns: None, name: Rc::from(s) };
+                        let op_val = m.get(&kw("op")).expect(":op missing");
+                        assert_eq!(*op_val, Value::Keyword { ns: None, name: Rc::from("add") });
+                        let args_val = m.get(&kw("args")).expect(":args missing");
+                        assert_eq!(*args_val, Value::Vec(Rc::new(vec![Value::Int(3), Value::Int(4)])));
+                        let ret_val = m.get(&kw("returned")).expect(":returned missing");
+                        assert_eq!(*ret_val, Value::Int(7));
+                    }
+                    other => panic!("entry should be a Map, got {other:?}"),
+                }
+            }
+            other => panic!("expected Vec, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn call_log_records_multiple_calls() {
+        // 3 op invocations → 3 entries in the calls log
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"
+            (defhandler Counter
+              Count
+              (tick [] unit))
+            (let [log (call-log Counter)]
+              (handle [(:handler log)]
+                (tick)
+                (tick)
+                (tick))
+              (count (deref (:calls log))))
+            "#,
+            &env,
+        );
+        assert_eq!(result.unwrap(), Value::Int(3));
+    }
+
+    #[test]
+    fn call_log_handler_works_via_dynamic_handle_expr() {
+        // (handle [(:handler log)] body) — dynamic expression in handle vector
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"
+            (defhandler Doubler
+              Math
+              (double [x] (* x 2)))
+            (let [log (call-log Doubler)]
+              (handle [(:handler log)]
+                (double 21)))
+            "#,
+            &env,
+        );
+        assert_eq!(result.unwrap(), Value::Int(42));
+    }
 }

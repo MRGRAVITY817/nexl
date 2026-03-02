@@ -263,6 +263,33 @@ pub struct Function {
     pub ensures: Vec<Node>,
 }
 
+/// A single pre-built handler operation for `call-log`-wrapped handlers.
+///
+/// Used in [`HandlerDef::built_ops`] to hold recording-wrapped op functions
+/// without requiring AST nodes.
+#[derive(Clone)]
+pub struct BuiltHandlerEffect {
+    /// Effect name, e.g. `"Console"`.
+    pub name: String,
+    /// Operation name → pre-built function value.
+    pub ops: Vec<(String, Value)>,
+}
+
+impl std::fmt::Debug for BuiltHandlerEffect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuiltHandlerEffect")
+            .field("name", &self.name)
+            .field("ops", &self.ops.iter().map(|(k, _)| k).collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl PartialEq for BuiltHandlerEffect {
+    fn eq(&self, _other: &Self) -> bool {
+        false // pre-built effects are not structurally comparable
+    }
+}
+
 /// A named effect handler definition (spec §6.10 `defhandler`).
 ///
 /// Stored as a `Value::Handler` in the environment. When installed via
@@ -274,8 +301,13 @@ pub struct HandlerDef {
     pub name: Rc<str>,
     /// Parameter names for parameterized handlers (empty if non-parameterized).
     pub params: Vec<Rc<str>>,
-    /// Effect implementations — effect name + operation bodies.
+    /// Effect implementations — effect name + operation bodies (AST-based).
     pub effects: Vec<meta::HandledEffect>,
+    /// Pre-built operation functions for `call-log`-wrapped handlers.
+    ///
+    /// When non-empty, `install_handler_effects` uses these Values directly
+    /// instead of building functions from the AST-based `effects` field.
+    pub built_ops: Vec<BuiltHandlerEffect>,
 }
 
 /// A runtime value produced by the Nexl tree-walk interpreter.
