@@ -51,7 +51,7 @@
 - [x] `snap-file!` file-based snapshots
 - [x] `--accept` CLI command (deferred `--review` — interactive diff out of scope)
 - [x] Contract-driven testing (`:examples` auto-execution)
-- [ ] Doctest `>>>` parsing from docstrings
+- [x] Doctest `>>>` parsing from docstrings
 
 ## Phase 6: Polish & Performance
 

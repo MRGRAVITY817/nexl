@@ -6287,6 +6287,86 @@ mod tests {
         assert!(r.is_ok(), "not-m should pass when inner matcher fails: {r:?}");
     }
 
+    // --- doctest parsing (spec §14.2) ---
+
+    #[test]
+    fn parse_doctests_extracts_pairs() {
+        let doc = r#"
+  Greets the given name.
+
+  >>> (greet "Alice")
+  "Hello, Alice!"
+
+  >>> (greet "")
+  "Hello, stranger!"
+"#;
+        let pairs = crate::eval::parse_doctests(doc);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].0, r#"(greet "Alice")"#);
+        assert_eq!(pairs[0].1, r#""Hello, Alice!""#);
+        assert_eq!(pairs[1].0, r#"(greet "")"#);
+        assert_eq!(pairs[1].1, r#""Hello, stranger!""#);
+    }
+
+    #[test]
+    fn doctest_registered_from_defn_docstring() {
+        nexl_stdlib::test::registry_clear();
+        nexl_stdlib::test::set_test_mode(true);
+        let env = crate::stdlib::standard_env();
+        // Nexl defn: (defn name docstring params body) — docstring BEFORE params
+        let src = r#"(defn greet "Greets name.
+
+  >>> (greet \"Alice\")
+  \"Hi Alice\"
+" [name]
+  (str "Hi " name))"#;
+        eval_forms(src, &env).expect("defn should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        assert!(
+            tests.iter().any(|(n, _)| n.contains("doctest")),
+            "doctest should be registered: {tests:?}"
+        );
+    }
+
+    #[test]
+    fn doctest_passes_for_correct_output() {
+        nexl_stdlib::test::registry_clear();
+        nexl_stdlib::test::set_test_mode(true);
+        let env = crate::stdlib::standard_env();
+        let src = r#"(defn add1 "Adds 1.
+
+  >>> (add1 5)
+  6
+" [n]
+  (+ n 1))"#;
+        eval_forms(src, &env).expect("defn should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        let (_, thunk) = tests.iter().find(|(n, _)| n.contains("doctest")).expect("doctest registered");
+        let result = nexl_runtime::call_value(thunk, &[]);
+        assert!(result.is_ok(), "doctest should pass: {result:?}");
+    }
+
+    #[test]
+    fn doctest_fails_for_wrong_output() {
+        nexl_stdlib::test::registry_clear();
+        nexl_stdlib::test::set_test_mode(true);
+        let env = crate::stdlib::standard_env();
+        // always returns 42 but expected 999
+        let src = r#"(defn wrong "Wrong.
+
+  >>> (wrong 1)
+  999
+" [n]
+  42)"#;
+        eval_forms(src, &env).expect("defn should succeed");
+        let tests = nexl_stdlib::test::registry_drain();
+        let (_, thunk) = tests.iter().find(|(n, _)| n.contains("doctest")).expect("doctest registered");
+        let result = nexl_runtime::call_value(thunk, &[]);
+        assert!(result.is_err(), "doctest should fail when output differs");
+        let msg = result.unwrap_err();
+        assert!(msg.contains("doctest"), "error should mention doctest: {msg}");
+    }
+
     // --- failure persistence / .test-seeds (spec §12.6) ---
 
     #[test]

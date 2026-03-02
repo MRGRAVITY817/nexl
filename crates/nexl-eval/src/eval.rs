@@ -1852,6 +1852,80 @@ fn register_contract_examples(
     Ok(())
 }
 
+/// Parse `>>> expr` / expected pairs from a docstring (spec §14.2).
+///
+/// Returns a `Vec<(input_src, expected_src)>` for each `>>> expr` line followed
+/// by a non-blank expected line.
+pub(crate) fn parse_doctests(docstring: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let mut lines = docstring.lines().peekable();
+    while let Some(line) = lines.next() {
+        if let Some(expr) = line.trim().strip_prefix(">>> ") {
+            // Skip blank lines before expected output
+            let mut expected_opt = None;
+            for next_line in lines.by_ref() {
+                let t = next_line.trim();
+                if t.is_empty() {
+                    continue;
+                }
+                if !t.starts_with(">>>") {
+                    expected_opt = Some(t.to_string());
+                }
+                break;
+            }
+            if let Some(expected) = expected_opt {
+                pairs.push((expr.to_string(), expected));
+            }
+        }
+    }
+    pairs
+}
+
+/// Register doctest examples extracted from a `defn` docstring (spec §14.2).
+///
+/// Each `>>> expr` / expected pair becomes a test named `"<fn-name> doctest N"`.
+/// The thunk evaluates `expr` in `env` (which will have `fn-name` bound by runtime)
+/// and compares the result to the evaluated expected value.
+fn register_doctest_examples(fn_name: &str, docstring: &str, env: &Rc<Env>) {
+    let pairs = parse_doctests(docstring);
+    for (idx, (input_src, expected_src)) in pairs.into_iter().enumerate() {
+        let test_name = format!("{fn_name} doctest {}", idx + 1);
+        let env_clone = Rc::clone(env);
+        let name_clone = test_name.clone();
+        let thunk = Value::NativeClosure {
+            name: Rc::from(test_name.as_str()),
+            f: Rc::new(move |_| {
+                let in_nodes = nexl_reader::read(&input_src, meta::FileId::SYNTHETIC)
+                    .map_err(|e| format!("doctest parse error in `{name_clone}`: {e:?}"))?;
+                let in_node = in_nodes
+                    .into_iter()
+                    .last()
+                    .ok_or_else(|| format!("doctest `{name_clone}`: empty input"))?;
+                let actual = eval(&in_node, &env_clone)
+                    .map_err(|e| format!("doctest eval error in `{name_clone}`: {e}"))?;
+
+                let exp_nodes = nexl_reader::read(&expected_src, meta::FileId::SYNTHETIC)
+                    .map_err(|e| format!("doctest expected parse error in `{name_clone}`: {e:?}"))?;
+                let exp_node = exp_nodes
+                    .into_iter()
+                    .last()
+                    .ok_or_else(|| format!("doctest `{name_clone}`: empty expected"))?;
+                let expected = eval(&exp_node, &env_clone)
+                    .map_err(|e| format!("doctest expected eval error in `{name_clone}`: {e}"))?;
+
+                if actual == expected {
+                    Ok(Value::Unit)
+                } else {
+                    Err(format!(
+                        "doctest `{name_clone}` failed.\n  input:    {input_src}\n  expected: {expected}\n  actual:   {actual}"
+                    ))
+                }
+            }),
+        };
+        nexl_stdlib::test::registry_push(test_name, thunk);
+    }
+}
+
 fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     if items.len() < 4 {
         return Err(EvalError::Arity);
@@ -1864,9 +1938,9 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     };
 
     // Optional docstring at position 2 when it's a Str literal
-    let (params_idx, body_start) = match &items[2].kind {
-        NodeKind::Atom(Atom::Str(_)) => (3, 4),
-        _ => (2, 3),
+    let (params_idx, body_start, docstring) = match &items[2].kind {
+        NodeKind::Atom(Atom::Str(s)) => (3, 4, Some(s.clone())),
+        _ => (2, 3, None),
     };
 
     if body_start > items.len() - 1 {
@@ -1954,6 +2028,12 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
     // In test mode, register :examples before moving fn/name into env (spec §4.2.1).
     if nexl_stdlib::test::is_test_mode() && !examples_nodes.is_empty() {
         register_contract_examples(&name, &fn_value_named, &examples_nodes, env)?;
+    }
+    // In test mode, register docstring `>>>` examples (spec §14.2).
+    if nexl_stdlib::test::is_test_mode() {
+        if let Some(ref doc) = docstring {
+            register_doctest_examples(&name, doc, env);
+        }
     }
 
     env.define(name, fn_value_named);
