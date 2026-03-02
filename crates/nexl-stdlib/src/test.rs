@@ -60,6 +60,13 @@ thread_local! {
     /// Seed overrides loaded from `.test-seeds` before a run.
     /// `eval_check` replays these seeds before running random trials.
     static SEED_OVERRIDES: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
+    /// Whether the test runner is in `--accept` mode (spec §13).
+    /// When `true`, `snap-file!` always writes its value (updating snapshots).
+    static IS_ACCEPT_MODE: RefCell<bool> = const { RefCell::new(false) };
+    /// Optional override for the snapshots base directory.
+    /// When `None`, `snap-file!` uses `__snapshots__/` relative to CWD.
+    /// Set in tests to avoid `set_current_dir` races.
+    static SNAPSHOTS_BASE_DIR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// Enable test mode: `(submodule test ...)` bodies will be evaluated.
@@ -110,6 +117,27 @@ pub fn flaky_retries(name: &str) -> usize {
 /// Drain the flaky registry.
 pub fn flaky_registry_drain() -> HashMap<String, usize> {
     FLAKY_REGISTRY.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Set the base directory for snapshots (overrides CWD-relative `__snapshots__/`).
+/// Pass `None` to restore the default (CWD + `__snapshots__/`).
+pub fn set_snapshots_base(dir: Option<String>) {
+    SNAPSHOTS_BASE_DIR.with(|d| *d.borrow_mut() = dir);
+}
+
+/// Get the current snapshots base directory, or `None` for the CWD-relative default.
+pub fn snapshots_base() -> Option<String> {
+    SNAPSHOTS_BASE_DIR.with(|d| d.borrow().clone())
+}
+
+/// Enable or disable snapshot accept mode (`nexl test --accept`).
+pub fn set_accept_mode(enabled: bool) {
+    IS_ACCEPT_MODE.with(|m| *m.borrow_mut() = enabled);
+}
+
+/// Check whether accept mode is active.
+pub fn is_accept_mode() -> bool {
+    IS_ACCEPT_MODE.with(|m| *m.borrow())
 }
 
 /// Push a failing seed to the failed-seeds registry (called by `eval_check` on failure).

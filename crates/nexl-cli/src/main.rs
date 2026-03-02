@@ -140,6 +140,9 @@ enum Command {
         /// Output format: "text" (default) or "json" (JSON Lines).
         #[arg(long = "format", default_value = "text")]
         format: String,
+        /// Accept all new/changed snapshots (overwrites .snap files).
+        #[arg(long = "accept")]
+        accept: bool,
     },
     /// Run benchmarks in a Nexl file.
     Bench {
@@ -294,11 +297,12 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Test { input, filter, tags, format } => {
+        Command::Test { input, filter, tags, format, accept } => {
             let tag_list: Vec<String> = tags
                 .as_deref()
                 .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
                 .unwrap_or_default();
+            nexl_stdlib::test::set_accept_mode(accept);
             match command_test(input, filter.as_deref(), &tag_list, &format) {
                 Ok(true) => {}
                 Ok(false) => process::exit(1),

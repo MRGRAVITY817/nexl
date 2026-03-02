@@ -6325,6 +6325,63 @@ mod tests {
         );
     }
 
+    // --- snap-file! snapshots (spec §13.2) ---
+
+    fn snap_test_env() -> (Rc<Env>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        nexl_stdlib::test::set_test_mode(true);
+        nexl_stdlib::test::set_accept_mode(false);
+        nexl_stdlib::test::set_snapshots_base(Some(
+            dir.path().to_str().expect("utf8 path").to_string(),
+        ));
+        (crate::stdlib::standard_env(), dir)
+    }
+
+    #[test]
+    fn snap_file_creates_snapshot_first_run() {
+        let (env, dir) = snap_test_env();
+        let r = eval_forms(r#"(snap-file! "my-snap" 42)"#, &env);
+        assert!(r.is_ok(), "first run should create snapshot and pass: {r:?}");
+        let snap = dir.path().join("__snapshots__/my-snap.snap");
+        let content = std::fs::read_to_string(&snap).expect("snap file created");
+        assert_eq!(content, "42");
+    }
+
+    #[test]
+    fn snap_file_passes_when_matches() {
+        let (env, dir) = snap_test_env();
+        let snap_dir = dir.path().join("__snapshots__");
+        std::fs::create_dir_all(&snap_dir).unwrap();
+        std::fs::write(snap_dir.join("match-snap.snap"), "99").unwrap();
+        let r = eval_forms(r#"(snap-file! "match-snap" 99)"#, &env);
+        assert!(r.is_ok(), "snap-file! should pass when value matches: {r:?}");
+    }
+
+    #[test]
+    fn snap_file_fails_on_mismatch() {
+        let (env, dir) = snap_test_env();
+        let snap_dir = dir.path().join("__snapshots__");
+        std::fs::create_dir_all(&snap_dir).unwrap();
+        std::fs::write(snap_dir.join("mismatch-snap.snap"), "100").unwrap();
+        let r = eval_forms(r#"(snap-file! "mismatch-snap" 99)"#, &env);
+        assert!(r.is_err(), "snap-file! should fail when value differs");
+        let msg = r.unwrap_err().to_string();
+        assert!(msg.contains("snapshot mismatch"), "error should mention mismatch: {msg}");
+    }
+
+    #[test]
+    fn snap_file_accept_mode_overwrites() {
+        let (env, dir) = snap_test_env();
+        nexl_stdlib::test::set_accept_mode(true);
+        let snap_dir = dir.path().join("__snapshots__");
+        std::fs::create_dir_all(&snap_dir).unwrap();
+        std::fs::write(snap_dir.join("accept-snap.snap"), "old-value").unwrap();
+        let r = eval_forms(r#"(snap-file! "accept-snap" 42)"#, &env);
+        assert!(r.is_ok(), "accept mode should always pass: {r:?}");
+        let content = std::fs::read_to_string(snap_dir.join("accept-snap.snap")).unwrap();
+        assert_eq!(content, "42", "accept mode should overwrite snapshot");
+    }
+
     // --- :flaky / :timeout annotations (spec §6.1–6.2) ---
 
     #[test]

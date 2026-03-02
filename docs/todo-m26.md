@@ -47,9 +47,9 @@
 
 ## Phase 5: Snapshots, Doctests & Contracts
 
-- [ ] `snap!` inline snapshots with source rewriting
-- [ ] `snap-file!` file-based snapshots
-- [ ] `--accept` and `--review` CLI commands
+- [ ] `snap!` inline snapshots with source rewriting (deferred — requires source rewriting)
+- [x] `snap-file!` file-based snapshots
+- [x] `--accept` CLI command (deferred `--review` — interactive diff out of scope)
 - [x] Contract-driven testing (`:examples` auto-execution)
 - [ ] Doctest `>>>` parsing from docstrings
 

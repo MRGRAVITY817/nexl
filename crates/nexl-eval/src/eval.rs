@@ -189,6 +189,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "bench" => {
             eval_bench(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "snap-file!" => {
+            eval_snap_file(items, env)
+        }
         _ => eval_apply(items, env, loop_state),
     }
 }
@@ -3169,6 +3172,70 @@ fn shrink_check<'a>(
         }
     }
     None
+}
+
+/// `(snap-file! "name" expr)` — file-based snapshot assertion (spec §13.2).
+///
+/// Stores the value in `__snapshots__/{name}.snap` relative to CWD.
+/// - First run (no file): creates the snapshot and passes.
+/// - Subsequent runs: compares `expr` to stored value; fails on mismatch.
+/// - Accept mode (`nexl test --accept`): always overwrites and passes.
+///
+/// Outside test mode, evaluates `expr` and returns Unit (no-op).
+fn eval_snap_file(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    if items.len() < 3 {
+        return Err(EvalError::NativeError(
+            "snap-file! requires: (snap-file! \"name\" expr)".into(),
+        ));
+    }
+
+    let name = match eval(&items[1], env)? {
+        Value::Str(s) => s.to_string(),
+        other => {
+            return Err(EvalError::NativeError(format!(
+                "snap-file! name must be a Str, got {other}"
+            )))
+        }
+    };
+    let actual = eval(&items[2], env)?;
+
+    // Outside test mode: no-op
+    if !nexl_stdlib::test::is_test_mode() {
+        return Ok(EvalReturn::Value(Value::Unit));
+    }
+
+    let base = nexl_stdlib::test::snapshots_base()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let snap_dir = base.join("__snapshots__");
+    let snap_path = snap_dir.join(format!("{name}.snap"));
+    let actual_str = format!("{actual}");
+
+    if nexl_stdlib::test::is_accept_mode() {
+        // Accept mode: write the snapshot unconditionally
+        let _ = std::fs::create_dir_all(snap_dir);
+        std::fs::write(&snap_path, &actual_str)
+            .map_err(|e| EvalError::NativeError(format!("snap-file!: cannot write snapshot: {e}")))?;
+        return Ok(EvalReturn::Value(Value::Unit));
+    }
+
+    if snap_path.exists() {
+        // Compare to stored snapshot
+        let stored = std::fs::read_to_string(&snap_path)
+            .map_err(|e| EvalError::NativeError(format!("snap-file!: cannot read snapshot: {e}")))?;
+        if actual_str != stored {
+            return Err(EvalError::NativeError(format!(
+                "snap-file! \"{name}\" snapshot mismatch.\n  expected: {stored}\n  actual:   {actual_str}\n  (run with --accept to update)"
+            )));
+        }
+        Ok(EvalReturn::Value(Value::Unit))
+    } else {
+        // First run: create the snapshot
+        let _ = std::fs::create_dir_all(snap_dir);
+        std::fs::write(&snap_path, &actual_str)
+            .map_err(|e| EvalError::NativeError(format!("snap-file!: cannot write snapshot: {e}")))?;
+        Ok(EvalReturn::Value(Value::Unit))
+    }
 }
 
 /// `(bench "name" body)` or `(bench "name" {:iterations N :warmup N} body...)` — benchmark form.

@@ -12,3 +12,6 @@ nexl-reader = { path = "../nexl-reader" }
 nexl-modules = { path = "../nexl-modules" }
 nexl-stdlib = { path = "../nexl-stdlib" }
 thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3"
