@@ -706,8 +706,29 @@ fn eval_is<'a>(
     env: &Rc<Env>,
     loop_state: Option<&'a LoopFrame<'a>>,
 ) -> Result<EvalReturn, EvalError> {
-    // items[0] = "is", items[1] = expr, items[2] = optional message
+    // items[0] = "is", items[1] = expr/actual, items[2] = optional matcher or message
     let expr = items.get(1).ok_or(EvalError::Arity)?;
+
+    // Detect matcher form: (is actual matcher) where matcher is non-string (spec §3.5, §15)
+    let is_matcher_form = items.get(2).is_some_and(|n| {
+        !matches!(&n.kind, NodeKind::Atom(Atom::Str(_)))
+    });
+
+    if is_matcher_form && items.len() >= 3 {
+        let actual = match eval_with_loop(expr, env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            r @ EvalReturn::Recur(_) => return Ok(r),
+        };
+        let matcher = match eval_with_loop(&items[2], env, loop_state)? {
+            EvalReturn::Value(v) => v,
+            r @ EvalReturn::Recur(_) => return Ok(r),
+        };
+        return match nexl_runtime::call_value(&matcher, std::slice::from_ref(&actual)) {
+            Ok(_) => Ok(EvalReturn::Value(Value::Unit)),
+            Err(msg) => Err(EvalError::NativeError(format!("is: {msg}"))),
+        };
+    }
+
     let user_msg: Option<String> = items.get(2).and_then(|n| {
         if let NodeKind::Atom(Atom::Str(s)) = &n.kind {
             Some(s.clone())

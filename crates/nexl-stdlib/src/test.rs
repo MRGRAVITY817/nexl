@@ -211,6 +211,215 @@ pub fn describe_prefix() -> String {
     })
 }
 
+// ─── Matchers (spec §15) ──────────────────────────────────────────────────────
+
+/// Helper: make a matcher NativeClosure from a predicate closure.
+fn make_matcher(name: &'static str, f: impl Fn(&Value) -> Result<(), String> + 'static) -> Value {
+    Value::NativeClosure {
+        name: Rc::from(name),
+        f: Rc::new(move |args: &[Value]| match args {
+            [v] => f(v).map(|()| Value::Unit),
+            _ => Err(format!("matcher `{name}` expects 1 argument, got {}", args.len())),
+        }),
+    }
+}
+
+/// `(test/eq expected)` — matcher: actual == expected.
+fn eq_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [expected] => {
+            let expected = expected.clone();
+            Ok(make_matcher("eq", move |v| {
+                if v == &expected { Ok(()) } else { Err(format!("expected {expected}, got {v}")) }
+            }))
+        }
+        _ => Err("`test/eq` requires 1 argument".into()),
+    }
+}
+
+/// `(test/gt n)` — matcher: actual > n.
+fn gt_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [n @ (Value::Int(_) | Value::Float(_))] => {
+            let n = n.clone();
+            Ok(make_matcher("gt", move |v| match (v, &n) {
+                (Value::Int(a), Value::Int(b)) if a > b => Ok(()),
+                (Value::Float(a), Value::Float(b)) if a > b => Ok(()),
+                (Value::Int(a), Value::Float(b)) if (*a as f64) > *b => Ok(()),
+                (Value::Float(a), Value::Int(b)) if *a > (*b as f64) => Ok(()),
+                _ => Err(format!("expected > {n}, got {v}")),
+            }))
+        }
+        _ => Err("`test/gt` requires 1 numeric argument".into()),
+    }
+}
+
+/// `(test/gte n)` — matcher: actual >= n.
+fn gte_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [n @ (Value::Int(_) | Value::Float(_))] => {
+            let n = n.clone();
+            Ok(make_matcher("gte", move |v| match (v, &n) {
+                (Value::Int(a), Value::Int(b)) if a >= b => Ok(()),
+                (Value::Float(a), Value::Float(b)) if a >= b => Ok(()),
+                (Value::Int(a), Value::Float(b)) if (*a as f64) >= *b => Ok(()),
+                (Value::Float(a), Value::Int(b)) if *a >= (*b as f64) => Ok(()),
+                _ => Err(format!("expected >= {n}, got {v}")),
+            }))
+        }
+        _ => Err("`test/gte` requires 1 numeric argument".into()),
+    }
+}
+
+/// `(test/lt n)` — matcher: actual < n.
+fn lt_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [n @ (Value::Int(_) | Value::Float(_))] => {
+            let n = n.clone();
+            Ok(make_matcher("lt", move |v| match (v, &n) {
+                (Value::Int(a), Value::Int(b)) if a < b => Ok(()),
+                (Value::Float(a), Value::Float(b)) if a < b => Ok(()),
+                (Value::Int(a), Value::Float(b)) if (*a as f64) < *b => Ok(()),
+                (Value::Float(a), Value::Int(b)) if *a < (*b as f64) => Ok(()),
+                _ => Err(format!("expected < {n}, got {v}")),
+            }))
+        }
+        _ => Err("`test/lt` requires 1 numeric argument".into()),
+    }
+}
+
+/// `(test/lte n)` — matcher: actual <= n.
+fn lte_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [n @ (Value::Int(_) | Value::Float(_))] => {
+            let n = n.clone();
+            Ok(make_matcher("lte", move |v| match (v, &n) {
+                (Value::Int(a), Value::Int(b)) if a <= b => Ok(()),
+                (Value::Float(a), Value::Float(b)) if a <= b => Ok(()),
+                (Value::Int(a), Value::Float(b)) if (*a as f64) <= *b => Ok(()),
+                (Value::Float(a), Value::Int(b)) if *a <= (*b as f64) => Ok(()),
+                _ => Err(format!("expected <= {n}, got {v}")),
+            }))
+        }
+        _ => Err("`test/lte` requires 1 numeric argument".into()),
+    }
+}
+
+/// `(test/starts-with prefix)` — matcher: string starts with prefix.
+fn starts_with_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Str(prefix)] => {
+            let prefix = Rc::clone(prefix);
+            Ok(make_matcher("starts-with", move |v| match v {
+                Value::Str(s) if s.starts_with(prefix.as_ref()) => Ok(()),
+                Value::Str(s) => Err(format!("expected string starting with {prefix:?}, got {s:?}")),
+                _ => Err(format!("starts-with: expected Str, got {v}")),
+            }))
+        }
+        _ => Err("`test/starts-with` requires 1 Str argument".into()),
+    }
+}
+
+/// `(test/ends-with suffix)` — matcher: string ends with suffix.
+fn ends_with_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Str(suffix)] => {
+            let suffix = Rc::clone(suffix);
+            Ok(make_matcher("ends-with", move |v| match v {
+                Value::Str(s) if s.ends_with(suffix.as_ref()) => Ok(()),
+                Value::Str(s) => Err(format!("expected string ending with {suffix:?}, got {s:?}")),
+                _ => Err(format!("ends-with: expected Str, got {v}")),
+            }))
+        }
+        _ => Err("`test/ends-with` requires 1 Str argument".into()),
+    }
+}
+
+/// `(test/contains-str sub)` — matcher: string contains substring.
+fn contains_str_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Str(sub)] => {
+            let sub = Rc::clone(sub);
+            Ok(make_matcher("contains-str", move |v| match v {
+                Value::Str(s) if s.contains(sub.as_ref()) => Ok(()),
+                Value::Str(s) => Err(format!("expected string containing {sub:?}, got {s:?}")),
+                _ => Err(format!("contains-str: expected Str, got {v}")),
+            }))
+        }
+        _ => Err("`test/contains-str` requires 1 Str argument".into()),
+    }
+}
+
+/// `(test/has-length n)` — matcher: collection or string has exactly n elements.
+fn has_length_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Int(n)] => {
+            let n = *n as usize;
+            Ok(make_matcher("has-length", move |v| {
+                let len = match v {
+                    Value::Vec(items) => items.len(),
+                    Value::Str(s) => s.chars().count(),
+                    _ => return Err(format!("has-length: expected Vec or Str, got {v}")),
+                };
+                if len == n { Ok(()) } else { Err(format!("expected length {n}, got {len}")) }
+            }))
+        }
+        _ => Err("`test/has-length` requires 1 Int argument".into()),
+    }
+}
+
+/// `(test/all-of [m1 m2 ...])` — matcher: all matchers pass.
+fn all_of_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Vec(matchers)] => {
+            let matchers = Rc::clone(matchers);
+            Ok(make_matcher("all-of", move |v| {
+                for m in matchers.iter() {
+                    nexl_runtime::call_value(m, std::slice::from_ref(v))?;
+                }
+                Ok(())
+            }))
+        }
+        _ => Err("`test/all-of` requires a Vec of matchers".into()),
+    }
+}
+
+/// `(test/any-of [m1 m2 ...])` — matcher: at least one matcher passes.
+fn any_of_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Vec(matchers)] => {
+            let matchers = Rc::clone(matchers);
+            Ok(make_matcher("any-of", move |v| {
+                let mut last_err = String::from("any-of: no matchers provided");
+                for m in matchers.iter() {
+                    match nexl_runtime::call_value(m, std::slice::from_ref(v)) {
+                        Ok(_) => return Ok(()),
+                        Err(e) => last_err = e,
+                    }
+                }
+                Err(last_err)
+            }))
+        }
+        _ => Err("`test/any-of` requires a Vec of matchers".into()),
+    }
+}
+
+/// `(test/not-m matcher)` — inverts a matcher.
+fn not_m_matcher(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [m] => {
+            let m = m.clone();
+            Ok(make_matcher("not-m", move |v| {
+                match nexl_runtime::call_value(&m, std::slice::from_ref(v)) {
+                    Ok(_) => Err(format!("not-m: matcher unexpectedly passed for {v}")),
+                    Err(_) => Ok(()),
+                }
+            }))
+        }
+        _ => Err("`test/not-m` requires 1 matcher argument".into()),
+    }
+}
+
 // ─── Stdlib entries ───────────────────────────────────────────────────────────
 
 /// Return all `test` module function entries.
@@ -225,6 +434,19 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("register!", register_fn),
         ("run-registered", run_registered_fn),
         ("clear-registry!", clear_registry_fn),
+        // Matchers (spec §15)
+        ("eq", eq_matcher),
+        ("gt", gt_matcher),
+        ("gte", gte_matcher),
+        ("lt", lt_matcher),
+        ("lte", lte_matcher),
+        ("starts-with", starts_with_matcher),
+        ("ends-with", ends_with_matcher),
+        ("contains-str", contains_str_matcher),
+        ("has-length", has_length_matcher),
+        ("all-of", all_of_matcher),
+        ("any-of", any_of_matcher),
+        ("not-m", not_m_matcher),
     ]
 }
 

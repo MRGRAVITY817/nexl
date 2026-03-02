@@ -57,8 +57,8 @@
 
 - [ ] `--watch` mode with smart re-runs
 - [ ] `--parallel` cross-module execution
-- [ ] `--format json` output
-- [ ] `bench` form and `nexl bench` command
-- [ ] Matcher protocol and built-in matchers
+- [x] `--format json` output
+- [x] `bench` form and `nexl bench` command
+- [x] Matcher protocol and built-in matchers
 - [ ] `--coverage` support
 - [ ] `:flaky`, `:timeout` annotations

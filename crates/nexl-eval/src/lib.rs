@@ -6240,4 +6240,50 @@ mod tests {
         nexl_stdlib::test::set_test_mode(false);
         assert_eq!(map_int(&report, "passed"), 3, "expected 3 examples to pass");
     }
+
+    // --- Matcher protocol (spec §15) ---
+
+    #[test]
+    fn is_matcher_eq_passes() {
+        let env = stdlib_test_env();
+        let r = eval_forms("(is 42 (test/eq 42))", &env);
+        assert!(r.is_ok(), "eq matcher should pass: {r:?}");
+    }
+
+    #[test]
+    fn is_matcher_eq_fails() {
+        let env = stdlib_test_env();
+        let r = eval_forms("(is 42 (test/eq 99))", &env);
+        assert!(r.is_err(), "eq matcher should fail");
+        let msg = format!("{}", r.unwrap_err());
+        assert!(msg.contains("42") || msg.contains("99"), "error should mention values: {msg}");
+    }
+
+    #[test]
+    fn is_matcher_gt_passes() {
+        let env = stdlib_test_env();
+        let r = eval_forms("(is 5 (test/gt 3))", &env);
+        assert!(r.is_ok(), "gt matcher should pass when 5 > 3: {r:?}");
+    }
+
+    #[test]
+    fn is_matcher_gt_fails() {
+        let env = stdlib_test_env();
+        let r = eval_forms("(is 2 (test/gt 5))", &env);
+        assert!(r.is_err(), "gt matcher should fail when 2 > 5 is false");
+    }
+
+    #[test]
+    fn is_matcher_all_of_passes() {
+        let env = stdlib_test_env();
+        let r = eval_forms("(is 5 (test/all-of [(test/gt 3) (test/lt 10)]))", &env);
+        assert!(r.is_ok(), "all-of should pass when both conditions hold: {r:?}");
+    }
+
+    #[test]
+    fn is_matcher_not_m_negates() {
+        let env = stdlib_test_env();
+        let r = eval_forms("(is 2 (test/not-m (test/gt 5)))", &env);
+        assert!(r.is_ok(), "not-m should pass when inner matcher fails: {r:?}");
+    }
 }
