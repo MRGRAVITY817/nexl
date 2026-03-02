@@ -1,5 +1,6 @@
 pub mod assert;
 pub mod component;
+pub mod defhandler;
 pub mod effect;
 pub mod ffi;
 pub mod handle;
@@ -16,6 +17,7 @@ pub use component::{
     ComponentParseError, ExportComponentDecl, ImportComponentDecl, parse_export_component_decl,
     parse_import_component_decl,
 };
+pub use defhandler::{DefHandlerDecl, DefHandlerParseError, parse_defhandler_decl};
 pub use effect::{EffectDecl, EffectOpDecl, EffectParseError, parse_effect_decl};
 pub use ffi::{
     DefExportDecl, DefExternDecl, DefTypeOpaqueDecl, FfiParseError, parse_defexport_decl,

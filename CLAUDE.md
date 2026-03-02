@@ -79,7 +79,7 @@ the AI executes one test at a time; no one skips the Red step.
 ## Milestones & Stages
 - **Stage 0** (M0–M18): Bootstrap compiler — all core language features
 - **Stage 1** (M19–M22): Self-hosting preparation — collections, algorithms, eval completeness
-- **Stage 2** (M23–M26): Real-world readiness — WASI interop, production stack, DX, 1.0
+- **Stage 2** (M23–M27): Real-world readiness — WASI interop, production stack, DX, testing, 1.0
 
 See `docs/current-milestone.md` for active work and the corresponding `docs/todo-m{N}.md`.
 Read `milestones.md` for the Stage 0 plan, `docs/stage-2-milestones.md` for Stage 2.

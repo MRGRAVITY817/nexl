@@ -1,4 +1,4 @@
-# Stage 2 — Real-World Readiness (M23–M26)
+# Stage 2 — Real-World Readiness (M23–M27)
 
 **Premise:** Stage 0 built the compiler. Stage 1 proved the evaluator works for
 real programs. Stage 2 bridges from "complete language" to "language people build
@@ -11,11 +11,12 @@ does. A language without JSON, HTTP, and database access is a language without
 production users.
 
 ```
-Stage 2: Real-World Readiness   M23–M26
+Stage 2: Real-World Readiness   M23–M27
   M23  WASI Integration & Interop
   M24  Hello Production Stack
   M25  Developer Experience & Toolchain Polish
-  M26  Flagship Project & 1.0 Preparation
+  M26  nexl.test: Effect-Powered Testing Library
+  M27  Flagship Project & 1.0 Preparation
 ```
 
 ---
@@ -261,7 +262,76 @@ Listening on http://localhost:8080
 
 ---
 
-## M26 — Flagship Project & 1.0
+## M26 — nexl.test: Effect-Powered Testing Library
+
+**Goal:** Implement Nexl's built-in testing library as specified in
+`docs/nexl-test-spec.md`. The library leverages the effect system for mocking
+and sandboxing, and provides power-assert `is` macros, property testing,
+snapshots, and doctests.
+
+**Why this comes before 1.0:** A language cannot ship 1.0 without a mature
+testing story. Nexl's effect system enables a uniquely powerful approach to
+mocking — test doubles are just effect handlers. This must be proven and
+polished before the stability guarantee.
+
+**Deliverables:**
+
+1. **`defhandler` — named effect handlers** (language primitive, spec §6.10)
+   - `(defhandler Name Effect (op [resume args] body))` syntax
+   - Simple, continuation, parameterized, and multi-effect handlers
+   - `(handle [HandlerName])` and `(handle [(HandlerName args)])` installation
+   - Full type inference with completeness checking
+
+2. **Core testing API** (Phase 1)
+   - `(deftest "name" body)` with `(is expr)` power-assert macro
+   - `(describe "group" body)` for nesting and scoped naming
+   - `(throws? ExnType expr)` assertion
+   - Updated `nexl test` CLI with `--filter` and output formatting
+   - `:skip` and `:focus` annotations
+
+3. **Data, patterns & lifecycle** (Phase 2)
+   - `(is-match expr pattern)` pattern matching assertions
+   - `(each [row data] body)` table-driven tests
+   - String/collection diff output in error messages
+   - `setup`/`teardown`/`setup-all`/`teardown-all` lifecycle hooks
+   - `:tags` support with CLI `--tags` filtering
+
+4. **Effect-based mocking** (Phase 3)
+   - `call-log` recording wrapper for effect operations
+   - Capability-aware test sandboxing
+   - `SequentialExecutor` for deterministic concurrent testing
+   - `submodule test` for compile-time exclusion from release builds
+
+5. **Property testing** (Phase 4)
+   - Generator primitives and combinators
+   - `(check "name" gen (fn [x] (is ...)))` inside `deftest`
+   - Integrated shrinking with shrink trees
+   - `Arbitrary` protocol with auto-derive for ADTs/records
+
+6. **Snapshots, doctests & contracts** (Phase 5)
+   - `snap!` inline snapshots, `snap-file!` file-based snapshots
+   - `--accept` and `--review` CLI commands
+   - Doctest `>>>` parsing from docstrings
+   - Contract-driven testing (`:examples` auto-execution)
+
+7. **Polish & performance** (Phase 6)
+   - `--watch`, `--parallel`, `--format json`
+   - `bench` form and `nexl bench` command
+   - Matcher protocol and built-in matchers
+   - `--coverage`, `:flaky`, `:timeout`
+
+**After M26 you can:** Write expressive tests with power-assert diagnostics,
+mock any effect with a handler, run property tests with shrinking, and use
+snapshot testing — all built into the language:
+```clojure
+(deftest "fetch handles timeout"
+  (handle [MockNet]
+    (is (= (Err "timeout") (fetch-data "http://example.com")))))
+```
+
+---
+
+## M27 — Flagship Project & 1.0
 
 **Goal:** Prove Nexl's value proposition with a real project. Ship 1.0 with a
 stability guarantee. Make Nexl ready for early adopters.
@@ -334,7 +404,7 @@ to evaluate.
    - Verify: Claude/GPT can write basic Nexl programs from documentation
      context (test with fresh conversations)
 
-**After M26 you can:** Deploy a production web service written in Nexl, import
+**After M27 you can:** Deploy a production web service written in Nexl, import
 Rust libraries via WASM components, test with effect-based mocking, publish
 packages to the registry, and tell your team "this is 1.0 — it won't break."
 
@@ -355,13 +425,17 @@ M24 (Production Stack) ←── depends on M23 for WASI-backed HTTP/DB
 M25 (DevEx + Toolchain) ←── depends on M24 for cookbook content / error audit
   │
   ▼
-M26 (Flagship + 1.0) ←── depends on everything above
+M26 (nexl.test) ←── depends on M25 for effect system maturity + defhandler
+  │
+  ▼
+M27 (Flagship + 1.0) ←── depends on everything above
 ```
 
 Milestones are sequential. Each builds on the previous. No parallelism within
 Stage 2 — the interop foundation (M23) must exist before libraries (M24), which
-must exist before the developer experience can be polished (M25), which must all
-work before shipping 1.0 (M26).
+must exist before the developer experience can be polished (M25), which must be
+solid before the testing library (M26), which must all work before shipping 1.0
+(M27).
 
 ---
 
@@ -373,7 +447,7 @@ work before shipping 1.0 (M26).
 | WIT tooling immature | Start with hand-written bindings for core WASI interfaces. Automate with `wit-import` incrementally. |
 | SQLite-in-WASM performance | Benchmark early. Fall back to native SQLite for native target, WASI filesystem for WASM. |
 | Effect error messages too complex | Dedicate explicit effort in M25. Collect real errors from M23/M24 dev as test corpus. |
-| No early adopters | The flagship project (M26) is both proof-of-concept and marketing. Blog about it during development. |
+| No early adopters | The flagship project (M27) is both proof-of-concept and marketing. Blog about it during development. |
 | LLM training data gap | Publish cookbook and examples early (M25), don't wait for 1.0. |
 
 ---
@@ -385,7 +459,8 @@ Stage 2 is complete when:
 1. A Nexl program can import a Rust-compiled WASM component and use it
 2. A web service with JSON API + SQLite persistence runs on Wasmtime
 3. `nexl new && nexl run` works on a fresh machine in under 5 minutes
-4. The flagship project (`nexl-functions`) is deployed and handling requests
-5. 1.0 is tagged with a stability guarantee
-6. A developer unfamiliar with Nexl can follow the tutorial and build something
+4. `nexl test` runs power-assert tests with effect-based mocking out of the box
+5. The flagship project (`nexl-functions`) is deployed and handling requests
+6. 1.0 is tagged with a stability guarantee
+7. A developer unfamiliar with Nexl can follow the tutorial and build something
    useful in an afternoon
