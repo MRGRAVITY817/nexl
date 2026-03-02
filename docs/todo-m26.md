@@ -6,7 +6,7 @@
 - [x] `defhandler` parsing in nexl-reader (impl-style flat syntax, uppercase = effect section)
 - [x] `defhandler` evaluation in nexl-eval (simple, continuation, parameterized, multi-effect)
 - [x] `handle [HandlerName]` — install named handler by reference
-- [ ] `handle [(HandlerName args)]` — install parameterized handler
+- [x] `handle [(HandlerName args)]` — install parameterized handler
 - [ ] `defhandler` type inference in nexl-infer (completeness checking, effect row)
 - [ ] `defhandler` LSP support (hover, go-to-definition)
 - [ ] E2E tests for defhandler (simple, continuation, parameterized, multi-effect, nested)

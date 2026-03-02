@@ -5273,6 +5273,47 @@ mod tests {
     }
 
     #[test]
+    fn handle_parameterized() {
+        // Parameterized handler — args are bound to handler params
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler PrefixLog [prefix]
+              Log
+              (info [msg] (str prefix ": " msg)))
+            (handle [(PrefixLog "APP")]
+              (Log/info "started"))
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        assert_eq!(last, Value::Str(Rc::from("APP: started")));
+    }
+
+    #[test]
+    fn handle_parameterized_multi_arg() {
+        // Parameterized handler with multiple args
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler ConfigStack [db-path prefix]
+              Db
+              (query [sql] (str db-path ":" sql))
+              Log
+              (info [msg] (str prefix ": " msg)))
+            (handle [(ConfigStack "/tmp/test.db" "TEST")]
+              (let [r (Db/query "SELECT 1")]
+                (Log/info r)))
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        assert_eq!(last, Value::Str(Rc::from("TEST: /tmp/test.db:SELECT 1")));
+    }
+
+    #[test]
     fn handle_inline_simple() {
         // Inline handler (not named) — existing syntax
         let env = crate::stdlib::standard_env();

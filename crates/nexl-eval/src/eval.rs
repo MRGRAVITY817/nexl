@@ -788,11 +788,15 @@ fn eval_handle<'a>(
     // Create a child environment for the handler scope
     let handler_env = Rc::new(Env::child(Rc::clone(env)));
 
-    // Determine whether this is a named handler reference or inline handlers
-    let effects = resolve_handler_effects(handler_vec, env)?;
+    // Determine whether this is a named handler reference or inline handlers.
+    // For parameterized handlers, param_env has the handler params bound.
+    let (effects, param_env) = resolve_handler_effects(handler_vec, env)?;
+
+    // The env used by handler operations: includes params if parameterized
+    let ops_env = param_env.as_ref().unwrap_or(env);
 
     // Bind each effect's operations in the handler environment
-    install_handler_effects(&effects, &handler_env, env);
+    install_handler_effects(&effects, &handler_env, ops_env);
 
     // Evaluate body forms in the handler environment
     let body = &items[2..];
@@ -809,6 +813,10 @@ fn eval_handle<'a>(
 
 /// Resolve the handler vector into a list of [`HandledEffect`]s.
 ///
+/// Returns `(effects, optional_param_env)`:
+/// - `effects` — the handler's effect implementations
+/// - `param_env` — if parameterized, an env with handler params bound
+///
 /// Handles three cases:
 /// - Single uppercase symbol that resolves to a Handler value → named handler
 /// - List form `(HandlerName args...)` → parameterized named handler
@@ -816,7 +824,7 @@ fn eval_handle<'a>(
 fn resolve_handler_effects(
     handler_vec: &[Node],
     env: &Rc<Env>,
-) -> Result<Vec<HandledEffect>, EvalError> {
+) -> Result<(Vec<HandledEffect>, Option<Rc<Env>>), EvalError> {
     if handler_vec.is_empty() {
         return Err(EvalError::NativeError(
             "handle vector must list at least one effect".into(),
@@ -829,7 +837,7 @@ fn resolve_handler_effects(
         if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &handler_vec[0].kind
             && let Some(Value::Handler(h)) = env.get(name)
         {
-            return Ok(h.effects.clone());
+            return Ok((h.effects.clone(), None));
         }
         // Case 3: [(HandlerName args)] — parameterized handler in list
         if let NodeKind::List(call_items) = &handler_vec[0].kind
@@ -837,9 +845,22 @@ fn resolve_handler_effects(
             && let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &call_items[0].kind
             && let Some(Value::Handler(h)) = env.get(name)
         {
-            // For parameterized handlers, we just return the effects
-            // (parameter binding would happen in a more complete impl)
-            return Ok(h.effects.clone());
+            // Evaluate the arguments and bind them to the handler's params
+            let param_env = Rc::new(Env::child(Rc::clone(env)));
+            let arg_nodes = &call_items[1..];
+            if arg_nodes.len() != h.params.len() {
+                return Err(EvalError::NativeError(format!(
+                    "parameterized handler `{}` expects {} argument(s), got {}",
+                    h.name,
+                    h.params.len(),
+                    arg_nodes.len()
+                )));
+            }
+            for (param, arg_node) in h.params.iter().zip(arg_nodes.iter()) {
+                let val = eval(arg_node, env)?;
+                param_env.define(Rc::clone(param), val);
+            }
+            return Ok((h.effects.clone(), Some(param_env)));
         }
     }
 
@@ -847,7 +868,7 @@ fn resolve_handler_effects(
     if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &handler_vec[0].kind
         && let Some(Value::Handler(h)) = env.get(name)
     {
-        return Ok(h.effects.clone());
+        return Ok((h.effects.clone(), None));
     }
 
     // Fall through to inline handler parsing
@@ -865,7 +886,7 @@ fn resolve_handler_effects(
     )
     .map_err(|e| EvalError::NativeError(format!("handle: {}", e.description)))?;
 
-    Ok(decl.effects)
+    Ok((decl.effects, None))
 }
 
 /// Install handler effects into the environment by binding operations as functions.
