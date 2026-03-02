@@ -5189,4 +5189,103 @@ mod tests {
         // defhandler itself returns Unit (like def/defn)
         assert_eq!(last, Value::Unit);
     }
+
+    // ── handle [HandlerName] tests ──
+
+    #[test]
+    fn handle_named_simple_op() {
+        // Named handler with simple (non-continuation) op — op body is evaluated
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler MyLog
+              Log
+              (info [msg] (str "LOG: " msg)))
+            (handle [MyLog]
+              (Log/info "hello"))
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        assert_eq!(last, Value::Str(Rc::from("LOG: hello")));
+    }
+
+    #[test]
+    fn handle_named_unqualified_op() {
+        // Named handler — operations can be called without qualification
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler MyLog
+              Log
+              (info [msg] (str "LOG: " msg)))
+            (handle [MyLog]
+              (info "world"))
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        assert_eq!(last, Value::Str(Rc::from("LOG: world")));
+    }
+
+    #[test]
+    fn handle_named_multi_effect() {
+        // Named handler with multiple effects
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler Stack
+              Db
+              (query [sql] (str "result:" sql))
+              Log
+              (info [msg] (str "log:" msg)))
+            (handle [Stack]
+              (let [r (Db/query "SELECT 1")]
+                (Log/info r)))
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        assert_eq!(last, Value::Str(Rc::from("log:result:SELECT 1")));
+    }
+
+    #[test]
+    fn handle_named_continuation() {
+        // Named handler with continuation (resume) — resume returns value
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (defhandler WrappedLog
+              Log
+              (info [resume msg]
+                (resume (str "wrapped:" msg))))
+            (handle [WrappedLog]
+              (Log/info "test"))
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        assert_eq!(last, Value::Str(Rc::from("wrapped:test")));
+    }
+
+    #[test]
+    fn handle_inline_simple() {
+        // Inline handler (not named) — existing syntax
+        let env = crate::stdlib::standard_env();
+        let src = r#"
+            (handle [Log
+                      (info [msg] (str "inline:" msg))]
+              (Log/info "hello"))
+        "#;
+        let nodes = read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut last = Value::Unit;
+        for node in &nodes {
+            last = eval::eval(node, &env).unwrap();
+        }
+        assert_eq!(last, Value::Str(Rc::from("inline:hello")));
+    }
 }

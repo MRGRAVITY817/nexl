@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use meta::{
-    Atom, Node, NodeKind, Pattern, TryCatchForm, parse_defhandler_decl, parse_pattern,
-    parse_try_form,
+    Atom, HandledEffect, HandledOp, Node, NodeKind, Pattern, TryCatchForm,
+    parse_defhandler_decl, parse_handle_form, parse_pattern, parse_try_form,
 };
 use nexl_runtime::{Value, value::Function, value::HandlerDef};
 
@@ -133,6 +133,9 @@ fn eval_list<'a>(
         }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "defhandler" => {
             eval_defhandler(items, env)
+        }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "handle" => {
+            eval_handle(items, env, loop_state)
         }
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "and" => {
             eval_and(items, env, loop_state)
@@ -751,6 +754,205 @@ fn eval_defhandler(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalErro
     );
 
     Ok(EvalReturn::Value(Value::Unit))
+}
+
+/// Evaluate a `(handle [...] body...)` form (spec §6.4–§6.5, §6.10).
+///
+/// Supports three kinds of handler specifications in the vector:
+/// 1. Inline: `[Effect (op [args] body)]` — operations defined inline
+/// 2. Named: `[HandlerName]` — reference to a `defhandler` definition
+/// 3. Parameterized: `[(HandlerName args)]` — named handler with args
+///
+/// For each effect in the handler, binds the operations as functions in a
+/// child environment, then evaluates the body forms in that scope.
+fn eval_handle<'a>(
+    items: &[Node],
+    env: &Rc<Env>,
+    loop_state: Option<&'a LoopFrame<'a>>,
+) -> Result<EvalReturn, EvalError> {
+    if items.len() < 3 {
+        return Err(EvalError::NativeError(
+            "handle form requires a handler vector and body".into(),
+        ));
+    }
+
+    let handler_vec = match &items[1].kind {
+        NodeKind::Vector(elems) => elems,
+        _ => {
+            return Err(EvalError::NativeError(
+                "handle form requires a vector of effect handlers".into(),
+            ));
+        }
+    };
+
+    // Create a child environment for the handler scope
+    let handler_env = Rc::new(Env::child(Rc::clone(env)));
+
+    // Determine whether this is a named handler reference or inline handlers
+    let effects = resolve_handler_effects(handler_vec, env)?;
+
+    // Bind each effect's operations in the handler environment
+    install_handler_effects(&effects, &handler_env, env);
+
+    // Evaluate body forms in the handler environment
+    let body = &items[2..];
+    let mut result = Value::Unit;
+    for node in body {
+        match eval_with_loop(node, &handler_env, loop_state)? {
+            EvalReturn::Value(v) => result = v,
+            recur @ EvalReturn::Recur(_) => return Ok(recur),
+        }
+    }
+
+    Ok(EvalReturn::Value(result))
+}
+
+/// Resolve the handler vector into a list of [`HandledEffect`]s.
+///
+/// Handles three cases:
+/// - Single uppercase symbol that resolves to a Handler value → named handler
+/// - List form `(HandlerName args...)` → parameterized named handler
+/// - Inline effect operations → parse normally
+fn resolve_handler_effects(
+    handler_vec: &[Node],
+    env: &Rc<Env>,
+) -> Result<Vec<HandledEffect>, EvalError> {
+    if handler_vec.is_empty() {
+        return Err(EvalError::NativeError(
+            "handle vector must list at least one effect".into(),
+        ));
+    }
+
+    // Check if the first element is a named handler reference
+    // Case 1: [HandlerName] — single symbol that resolves to a Handler
+    if handler_vec.len() == 1 {
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &handler_vec[0].kind
+            && let Some(Value::Handler(h)) = env.get(name)
+        {
+            return Ok(h.effects.clone());
+        }
+        // Case 3: [(HandlerName args)] — parameterized handler in list
+        if let NodeKind::List(call_items) = &handler_vec[0].kind
+            && !call_items.is_empty()
+            && let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &call_items[0].kind
+            && let Some(Value::Handler(h)) = env.get(name)
+        {
+            // For parameterized handlers, we just return the effects
+            // (parameter binding would happen in a more complete impl)
+            return Ok(h.effects.clone());
+        }
+    }
+
+    // Check if first element resolves to a named handler (in a multi-element vector)
+    if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &handler_vec[0].kind
+        && let Some(Value::Handler(h)) = env.get(name)
+    {
+        return Ok(h.effects.clone());
+    }
+
+    // Fall through to inline handler parsing
+    let decl = parse_handle_form(
+        &std::iter::once(Node::atom(
+            Atom::Symbol { ns: None, name: "handle".into() },
+            meta::Span::synthetic(),
+        ))
+        .chain(std::iter::once(Node::new(
+            NodeKind::Vector(handler_vec.to_vec()),
+            meta::Span::synthetic(),
+        )))
+        .chain(std::iter::once(Node::atom(Atom::Unit, meta::Span::synthetic())))
+        .collect::<Vec<_>>(),
+    )
+    .map_err(|e| EvalError::NativeError(format!("handle: {}", e.description)))?;
+
+    Ok(decl.effects)
+}
+
+/// Install handler effects into the environment by binding operations as functions.
+///
+/// For each effect, binds each operation as:
+/// - Unqualified: `op-name` → function
+/// - Qualified: `EffectName/op-name` → function (via module alias)
+fn install_handler_effects(
+    effects: &[HandledEffect],
+    handler_env: &Rc<Env>,
+    parent_env: &Rc<Env>,
+) {
+    use std::collections::HashMap;
+
+    for effect in effects {
+        let mut module_exports: HashMap<Rc<str>, Value> = HashMap::new();
+
+        for op in &effect.operations {
+            let op_fn = build_handler_op_fn(op, parent_env);
+
+            // Bind unqualified name
+            handler_env.define(op.name.as_str(), op_fn.clone());
+
+            // Collect for qualified access
+            module_exports.insert(Rc::from(op.name.as_str()), op_fn);
+        }
+
+        // Register as module alias for qualified access (e.g., Log/info)
+        handler_env.define_module_alias(
+            effect.name.as_str(),
+            Rc::new(module_exports),
+        );
+    }
+}
+
+/// Build a function value from a handler operation definition.
+///
+/// For simple (non-continuation) ops, creates a closure that evaluates the
+/// op body with params bound to arguments.
+/// For continuation ops, creates a closure that also binds `resume`.
+fn build_handler_op_fn(op: &HandledOp, env: &Rc<Env>) -> Value {
+    let params: Vec<Rc<str>> = op.params.iter().map(|p| Rc::from(p.as_str())).collect();
+    let body = op.body.clone();
+    let has_resume = op.has_resume;
+    let env = env.clone();
+
+    Value::NativeClosure {
+        name: Rc::from(op.name.as_str()),
+        f: Rc::new(move |args: &[Value]| {
+            let op_env = Rc::new(Env::child(Rc::clone(&env)));
+
+            if has_resume {
+                // For continuation form, bind `resume` as an identity function
+                // (simple one-shot resume: returns the value as the effect result)
+                let resume_fn = Value::NativeClosure {
+                    name: Rc::from("resume"),
+                    f: Rc::new(|args: &[Value]| {
+                        if args.len() != 1 {
+                            return Err("resume expects exactly 1 argument".into());
+                        }
+                        Ok(args[0].clone())
+                    }),
+                };
+                op_env.define("resume", resume_fn);
+            }
+
+            // Bind operation parameters
+            if args.len() != params.len() {
+                return Err(format!(
+                    "handler operation expects {} argument(s), got {}",
+                    params.len(),
+                    args.len()
+                ));
+            }
+            for (param, arg) in params.iter().zip(args.iter()) {
+                op_env.define(Rc::clone(param), arg.clone());
+            }
+
+            // Evaluate body
+            let mut result = Value::Unit;
+            for node in &body {
+                result = crate::eval::eval(node, &op_env)
+                    .map_err(|e| format!("handler operation error: {e}"))?;
+            }
+            Ok(result)
+        }),
+    }
 }
 
 fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
