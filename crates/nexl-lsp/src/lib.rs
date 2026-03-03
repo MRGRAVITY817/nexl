@@ -1853,12 +1853,15 @@ fn build_hover(name: &str, ty: &Type, docstring: Option<&str>, span: Span, sourc
 }
 
 fn defn_name_and_docstring(node: &Node) -> Option<(&Node, Option<String>)> {
-    if !list_head_is(node, "defn") {
-        return None;
-    }
     let NodeKind::List(items) = &node.kind else {
         return None;
     };
+    let head = symbol_name(items.first()?)?;
+    let is_defn = head == "defn";
+    let is_macro = head == "defmacro-syntax" || head == "defmacro" || head == "defmacro-elab";
+    if !is_defn && !is_macro {
+        return None;
+    }
     let name_node = items.get(1)?;
     match &name_node.kind {
         NodeKind::Atom(Atom::Symbol { .. }) => {}

@@ -255,10 +255,25 @@
 ;; evaluated, so `(throws? ...)`, `(setup ...)`, etc. expand to primitive
 ;; calls rather than being dispatched as special forms.
 
-;; `(throws? body ...)` — assert that body raises any exception.
-;; `(throws? [type-hint] body ...)` — assert that body raises an error whose
-;;   message contains the source text of `type-hint` (e.g. `[TypeError]`).
 (defmacro-syntax throws?
+  """
+  Assert that the body raises an exception, optionally matching a type hint.
+
+  `(throws? body ...)` — passes if body raises any error.
+  `(throws? [TypeHint] body ...)` — passes if the error message contains the
+  source text of `TypeHint` (e.g. `[DivisionByZero]`).
+
+  ## Examples
+
+  ```nexl
+  (throws? (panic "boom"))
+  (throws? [DivisionByZero] (/ 1 0))
+  ```
+
+  ## See Also
+  - `is` — general assertion form
+  - `deftest` — define a named test
+  """
   [(_ [type-hint] body ...)
    `(match (test/try-call! (fn [] ~@body))
       (Ok _)  (test/fail "expected exception, got none")
@@ -272,15 +287,114 @@
       (Ok _)  (test/fail "expected exception, got none")
       (Err _) unit)])
 
-;; Lifecycle hooks: auto-wrap body forms in (fn [] ...) so callers write
-;;   (setup-all (io/println "..."))  rather than  (setup-all (fn [] ...))
-(defmacro-syntax setup        [(_ body ...) `(test/setup-push!        (fn [] ~@body))])
-(defmacro-syntax teardown     [(_ body ...) `(test/teardown-push!     (fn [] ~@body))])
-(defmacro-syntax setup-all    [(_ body ...) `(test/setup-all-push!    (fn [] ~@body))])
-(defmacro-syntax teardown-all [(_ body ...) `(test/teardown-all-push! (fn [] ~@body))])
+(defmacro-syntax setup
+  """
+  Register a setup hook that runs before each test in the current `describe` scope.
 
-;; `(is-match pattern expr [:when guard] body ...)` — match assertion.
+  Body forms are collected into a zero-argument function automatically.
+
+  ## Examples
+
+  ```nexl
+  (describe "DB tests"
+    (setup (db/reset!))
+    (deftest "insert" ...))
+  ```
+
+  ## See Also
+  - `teardown` — runs after each test
+  - `setup-all` — runs once before all tests in the scope
+  """
+  [(_ body ...) `(test/setup-push! (fn [] ~@body))])
+
+(defmacro-syntax teardown
+  """
+  Register a teardown hook that runs after each test in the current `describe` scope.
+
+  Body forms are collected into a zero-argument function automatically.
+
+  ## Examples
+
+  ```nexl
+  (describe "DB tests"
+    (teardown (db/close! conn))
+    (deftest "query" ...))
+  ```
+
+  ## See Also
+  - `setup` — runs before each test
+  - `teardown-all` — runs once after all tests in the scope
+  """
+  [(_ body ...) `(test/teardown-push! (fn [] ~@body))])
+
+(defmacro-syntax setup-all
+  """
+  Register a setup hook that runs once before all tests in the current `describe` scope.
+
+  Body forms are collected into a zero-argument function automatically.
+
+  ## Examples
+
+  ```nexl
+  (describe "Suite"
+    (setup-all (io/println "suite start"))
+    (deftest "first" ...))
+  ```
+
+  ## See Also
+  - `teardown-all` — runs once after all tests
+  - `setup` — runs before each individual test
+  """
+  [(_ body ...) `(test/setup-all-push! (fn [] ~@body))])
+
+(defmacro-syntax teardown-all
+  """
+  Register a teardown hook that runs once after all tests in the current `describe` scope.
+
+  Body forms are collected into a zero-argument function automatically.
+
+  ## Examples
+
+  ```nexl
+  (describe "Suite"
+    (teardown-all (io/println "suite end"))
+    (deftest "last" ...))
+  ```
+
+  ## See Also
+  - `setup-all` — runs once before all tests
+  - `teardown` — runs after each individual test
+  """
+  [(_ body ...) `(test/teardown-all-push! (fn [] ~@body))])
+
 (defmacro-syntax is-match
+  """
+  Assert that `expr` matches `pattern`, then run optional body assertions
+  with the pattern's bindings in scope.
+
+  `(is-match pattern expr)` — fails if expr does not match pattern.
+  `(is-match pattern expr :when guard)` — additionally fails if guard is false.
+  `(is-match pattern expr body ...)` — runs body forms if the pattern matches.
+
+  The body can contain further `is` or `is-match` assertions, making
+  it easy to chain structural checks without deep nesting at the call site.
+
+  ## Examples
+
+  ```nexl
+  (is-match (Ok id) (create-user db "alice"))
+
+  (is-match (Ok user) (find-user db 1)
+    (is (= (:name user) "alice"))
+    (is (> (:age user) 0)))
+
+  (is-match (Some x) (find-item items) :when (> x 0))
+  ```
+
+  ## See Also
+  - `is` — simple boolean assertion
+  - `throws?` — assert that an expression raises
+  """
   [(_ pattern expr :when guard body ...)
    `(match ~expr
       ~pattern (if ~guard
@@ -297,12 +411,38 @@
                         ~(syntax-str expr)
                         " did not match pattern")))])
 
-;; `(describe "label" body ...)` — group tests under a named scope.
-;; `(describe "label" :let [bindings ...] body ...)` — with fixture bindings.
-;;
-;; Pushes the label onto the describe stack before body, pops it after.
-;; Also cleans up any setup/teardown hooks registered in this scope.
 (defmacro-syntax describe
+  """
+  Group tests under a named scope.
+
+  The label is prepended to each test name inside the block, producing
+  output like `"Outer > Inner > test name"`. Scopes can be nested.
+
+  `(describe "label" body ...)` — plain grouping.
+  `(describe "label" :let [bindings ...] body ...)` — with fixture bindings
+  shared across all nested tests.
+
+  `setup` / `teardown` / `setup-all` / `teardown-all` hooks registered
+  inside a `describe` are automatically cleaned up when the block exits.
+
+  ## Examples
+
+  ```nexl
+  (describe "User domain"
+    (describe "creation"
+      (deftest "valid name" ...))
+    (describe "deletion"
+      (deftest "removes record" ...)))
+
+  (describe "DB suite" :let [db (make-test-db)]
+    (setup (db/reset! db))
+    (deftest "insert" ...))
+  ```
+
+  ## See Also
+  - `deftest` — define an individual test
+  - `setup` / `teardown` — per-test lifecycle hooks
+  """
   ;; `:let bindings` — `bindings` is bound to the whole vector `[name val ...]`
   ;; and spliced directly into the inner `let` form.
   [(_ label :let bindings body ...)
@@ -329,13 +469,30 @@
           (test/teardown-pop!)))
       (test/describe-pop!))])
 
-;; `(is expr)` — assert `expr` evaluates to `true`, failing the test otherwise.
-;; Power-assert variants:
-;;   `(is (= lhs rhs))`   → shows both values on failure
-;;   `(is (op lhs rhs))`  → same for not=, <, >, <=, >=
-;;   `(is (pred val))`    → shows predicate and value on failure
-;;   `(is expr "msg")`    → user message prepended to failure
 (defmacro-syntax is
+  """
+  Assert that an expression is true, with power-assert style failure messages.
+
+  `(is expr)` — fails with `"assertion failed: <source>"` if expr is false.
+  `(is (op lhs rhs))` — evaluates both sides and shows them on failure:
+    `"assertion failed: (= x y)\n  left: 1\n  right: 2"`
+  `(is (pred val))` — shows the predicate and value on failure.
+  `(is expr "msg")` — prepends a custom message.
+  `(is actual matcher)` — runs a matcher function returning `(Ok _)` or `(Err msg)`.
+
+  ## Examples
+
+  ```nexl
+  (is (= result 42))
+  (is (> count 0))
+  (is (str/starts-with? name "alice"))
+  (is valid? "value should be valid")
+  ```
+
+  ## See Also
+  - `is-match` — pattern-matching assertion
+  - `throws?` — assert that an expression raises
+  """
   ;; Binary op: (is (op lhs rhs)) — evaluates both sides, reports them on failure
   [(_ (op lhs rhs))
    `(let [l# ~lhs r# ~rhs]
@@ -367,19 +524,40 @@
    `(when (not ~expr)
       (test/fail (str "assertion failed: " ~(syntax-str expr))))])
 
-;; `(deftest "name" body ...)` — register a named test (no metadata).
-;; `(deftest "name" {:skip reason :focus true :tags vec :flaky n} body ...)` — with metadata.
-;;
-;; Registers body as a thunk in the test registry. The thunk snapshots the current
-;; setup/teardown hooks at definition time and runs them around the body. The test
-;; name is prefixed with the current describe stack (e.g. "Group > test").
-;;
-;; Metadata map (optional second argument):
-;;   :skip   — skip with reason string; body is not evaluated
-;;   :focus  — mark as focused; only focused tests run when any test is focused
-;;   :tags   — keyword/string vector for tag-based filtering
-;;   :flaky  — retry count (Int) or true (default 3 retries) on failure
 (defmacro-syntax deftest
+  """
+  Define a named test and register it in the current test suite.
+
+  `(deftest "name" body ...)` — registers body as a test thunk.
+  `(deftest "name" {:tags [...] :skip "reason" :focus true :flaky N} body ...)` — with metadata.
+
+  The test name is prefixed with the current `describe` stack, e.g.
+  `"Outer > Inner > name"`. Setup/teardown hooks active at definition time
+  are captured and run around the body automatically.
+
+  ## Metadata keys
+  - `:skip "reason"` — mark the test as skipped; body is not evaluated.
+  - `:focus true` — run only focused tests when any test has `:focus`.
+  - `:tags [:tag1 :tag2]` — filter with `nexl test --tags tag1`.
+  - `:flaky N` — retry up to N times before reporting failure (default 3).
+
+  ## Examples
+
+  ```nexl
+  (deftest "addition is commutative"
+    (is (= (+ 1 2) (+ 2 1))))
+
+  (deftest "slow network call" {:tags [:integration] :flaky 3}
+    (is-match (Ok _) (http/get "https://example.com")))
+
+  (deftest "pending feature" {:skip "not implemented yet"}
+    (is false))
+  ```
+
+  ## See Also
+  - `describe` — group tests under a named scope
+  - `is` — assertion form used inside tests
+  """
   ;; With metadata map
   [(_ name {:& meta} body ...)
    `(let [full#   (str (test/describe-prefix) ~name)
@@ -404,12 +582,31 @@
         ~@body
         (each [h (reverse teardn#)] (h)))))])
 
-;; `(bench "name" body ...)` — register or run a benchmark.
-;; `(bench "name" :iterations N :warmup W body ...)` — with explicit config.
-;;
-;; In bench mode: registers body as a benchmark thunk.
-;; Outside bench mode: evaluates body once and discards the result.
 (defmacro-syntax bench
+  """
+  Define a benchmark.
+
+  `(bench "name" body ...)` — 1000 iterations, 10 warmup rounds.
+  `(bench "name" :iterations N :warmup W body ...)` — explicit config.
+
+  In bench mode (`nexl bench file.nx`): registers body as a benchmark thunk
+  and reports median/p99 timing. Outside bench mode: evaluates body once and
+  discards the result (zero overhead in test runs).
+
+  ## Examples
+
+  ```nexl
+  (bench "string concatenation"
+    (str/join ["hello" " " "world"]))
+
+  (bench "json encode" :iterations 5000 :warmup 100
+    (json/encode {:name "alice" :age 30}))
+  ```
+
+  ## See Also
+  - `check` — property-based testing
+  - `deftest` — functional test definition
+  """
   [(_ name :iterations iters :warmup wu body ...)
    `(if (test/is-bench-mode?)
       (test/bench-register! ~name ~iters ~wu (fn [] ~@body))
@@ -459,13 +656,35 @@
                       (test/fail (str "check: falsified " name-str "=" val
                                       " (seed " trial-seed "): " e))))))))
 
-;; `(check [name gen] :num-tests N :seed S body ...)` — property test with all options.
-;; `(check [name gen] :num-tests N body ...)`          — default seed 42.
-;; `(check [name gen] body ...)`                        — default 100 trials, seed 42.
-;;
-;; Runs `body` with `name` bound to a generated value from `gen` for each trial.
-;; On failure: persists the failing seed and raises a test failure.
 (defmacro-syntax check
+  """
+  Property-based test: run body for N randomly generated values.
+
+  `(check [name gen] body ...)` — 100 trials, seed 42.
+  `(check [name gen] :num-tests N body ...)` — N trials, seed 42.
+  `(check [name gen] :num-tests N :seed S body ...)` — explicit seed.
+
+  `name` is bound to a value produced by `gen` for each trial. If any
+  trial fails, the seed is persisted to `.test-seeds` so it is replayed
+  on the next run (shrinking-by-replay).
+
+  ## Examples
+
+  ```nexl
+  (check [x gen/int]
+    (is (= x (+ x 0))))
+
+  (check [s gen/str] :num-tests 500
+    (is (= s (str/trim-start (str/trim-end s)))))
+
+  (check [n gen/pos-int] :num-tests 200 :seed 1234
+    (is (> (* n 2) n)))
+  ```
+
+  ## See Also
+  - `gen/int`, `gen/str`, `gen/bool` — built-in generators
+  - `deftest` — deterministic test definition
+  """
   [(_ [name gen] :num-tests n :seed s body ...)
    `(test/check-run! ~(syntax-str name) ~gen ~n ~s (fn [~name] ~@body))]
   [(_ [name gen] :num-tests n body ...)
@@ -475,13 +694,34 @@
 
 ;; ── Phase 7: snap-file! ───────────────────────────────────────────────────────
 
-;; `(snap-file! "name" expr)` — snapshot test.
-;;
-;; On first run: writes `(str expr)` to `__snapshots__/<name>.snap`.
-;; On subsequent runs: compares `(str expr)` to the stored snapshot.
-;; In accept mode (`nexl test --accept`): overwrites stored snapshot.
-;; Outside test mode: no-op.
 (defn snap-file!
+  """
+  Snapshot assertion: compare `expr` against a stored `.snap` file.
+
+  On the first run the snapshot is written automatically. On subsequent
+  runs the stringified value of `expr` is compared to the stored content;
+  a mismatch fails the test. Outside test mode the call is a no-op.
+
+  Pass `--accept` to `nexl test` to overwrite all snapshots in one pass.
+
+  ## Parameters
+  - `name` — snapshot name used as the filename (`__snapshots__/<name>.snap`).
+  - `expr` — value whose `str` representation is snapshotted.
+
+  ## Returns
+  `Unit`
+
+  ## Examples
+
+  ```nexl
+  (snap-file! "user-json" (json/encode user))
+  (snap-file! "report"    (render-report data))
+  ```
+
+  ## See Also
+  - `deftest` — test definition form
+  - `is-match` — structural assertion
+  """
   [name expr]
   (when (test/test-mode?)
     (let [snap-dir (str (test/snapshots-dir) "/__snapshots__")

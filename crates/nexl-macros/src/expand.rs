@@ -450,8 +450,14 @@ fn parse_defmacro_syntax(node: &Node) -> Result<Option<(String, MacroKind)>, Mac
         .ok_or_else(|| MacroError::Message("defmacro-syntax name must be a symbol".to_string()))?
         .to_string();
 
+    // Optional docstring before the first clause — skip it silently.
+    let clause_start = match items.get(2) {
+        Some(Node { kind: NodeKind::Atom(Atom::Str(_)), .. }) => 3,
+        _ => 2,
+    };
+
     let mut clauses = Vec::new();
-    for clause in &items[2..] {
+    for clause in &items[clause_start..] {
         let NodeKind::Vector(parts) = &clause.kind else {
             return Err(MacroError::Message(
                 "defmacro-syntax clauses must be vectors".to_string(),
