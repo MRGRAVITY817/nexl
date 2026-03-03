@@ -272,11 +272,12 @@
       (Ok _)  (test/fail "expected exception, got none")
       (Err _) unit)])
 
-;; Lifecycle hooks: register thunks onto the current describe scope's stacks.
-(defmacro-syntax setup        [(_ thunk) `(test/setup-push!       ~thunk)])
-(defmacro-syntax teardown     [(_ thunk) `(test/teardown-push!    ~thunk)])
-(defmacro-syntax setup-all    [(_ thunk) `(test/setup-all-push!   ~thunk)])
-(defmacro-syntax teardown-all [(_ thunk) `(test/teardown-all-push! ~thunk)])
+;; Lifecycle hooks: auto-wrap body forms in (fn [] ...) so callers write
+;;   (setup-all (io/println "..."))  rather than  (setup-all (fn [] ...))
+(defmacro-syntax setup        [(_ body ...) `(test/setup-push!        (fn [] ~@body))])
+(defmacro-syntax teardown     [(_ body ...) `(test/teardown-push!     (fn [] ~@body))])
+(defmacro-syntax setup-all    [(_ body ...) `(test/setup-all-push!    (fn [] ~@body))])
+(defmacro-syntax teardown-all [(_ body ...) `(test/teardown-all-push! (fn [] ~@body))])
 
 ;; `(is-match pattern expr [:when guard] body ...)` — match assertion.
 (defmacro-syntax is-match
