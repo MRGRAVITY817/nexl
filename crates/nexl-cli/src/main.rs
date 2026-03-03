@@ -143,6 +143,9 @@ enum Command {
         /// Accept all new/changed snapshots (overwrites .snap files).
         #[arg(long = "accept")]
         accept: bool,
+        /// Do not stop after the first file with failures (run all files).
+        #[arg(long = "no-fail-fast")]
+        no_fail_fast: bool,
     },
     /// Run benchmarks in a Nexl file.
     Bench {
@@ -297,7 +300,7 @@ fn main() {
                 process::exit(1);
             }
         }
-        Command::Test { input, filter, tags, format, accept } => {
+        Command::Test { input, filter, tags, format, accept, no_fail_fast } => {
             let tag_list: Vec<String> = tags
                 .as_deref()
                 .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
@@ -313,12 +316,18 @@ fn main() {
             }
             let mut all_passed = true;
             for file in files {
-                match command_test(file, filter.as_deref(), &tag_list, &format) {
-                    Ok(true) => {}
-                    Ok(false) => all_passed = false,
+                let passed = match command_test(file, filter.as_deref(), &tag_list, &format) {
+                    Ok(true) => true,
+                    Ok(false) => false,
                     Err(message) => {
                         print_error(&message);
-                        all_passed = false;
+                        false
+                    }
+                };
+                if !passed {
+                    all_passed = false;
+                    if !no_fail_fast {
+                        break;
                     }
                 }
             }
