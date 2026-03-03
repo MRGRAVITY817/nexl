@@ -1357,6 +1357,8 @@ fn is_body_indent_form(name: &str) -> bool {
             | "each"
             | "times"
             | "for"
+            | "describe"
+            | "deftest"
     )
 }
 
@@ -1425,6 +1427,16 @@ fn body_form_leading_count(head: &str, items: &[Node]) -> usize {
         "each" | "times" => 3.min(items.len()),
         // (for clauses body) — just head
         "for" => 1.min(items.len()),
+        // (describe "label" body...) — head + label
+        "describe" => 2.min(items.len()),
+        // (deftest "name" body...) or (deftest "name" {:tags ...} body...) — head + name + optional map
+        "deftest" => {
+            let mut count = 2; // head + name
+            if count < items.len() && matches!(&items[count].kind, NodeKind::Map(_)) {
+                count += 1;
+            }
+            count.min(items.len())
+        }
         // Default: head + all args that aren't body
         _ => 1.min(items.len()),
     }
