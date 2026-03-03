@@ -1658,8 +1658,9 @@ produces a `(regex/new "...")` call in the AST.
 
 ```nexl
 ;; The Iterable protocol — any type can implement this
-(defprotocol Iterable
-  (into-iter [self] -> (Iter a)))
+(defprotocol Iterable [a]
+  "A type whose elements can be lazily iterated."
+  (into-iter : (Fn [Self] -> (Iter a))))
 
 ;; Built-in implementations:
 ;; Vec, Map, Set, Str, Channel, Iter (identity) all implement Iterable
@@ -1667,7 +1668,8 @@ produces a `(regex/new "...")` call in the AST.
 ;; User-defined types can implement it:
 (deftype FileLines {:path Str :handle Db})
 
-(extend-protocol Iterable FileLines
+(impl FileLines
+  (Iterable Str)
   (into-iter [self]
     (iter/unfold
       (fn [h] (match (read-next-line h)
