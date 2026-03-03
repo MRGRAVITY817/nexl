@@ -466,9 +466,13 @@ impl PrettyPrinter {
             })
             .collect();
 
+        // Use flat_len_kind (ignores leading comments) for width calculations:
+        // a leading comment doesn't affect the visual width of the name token,
+        // and flat_len returns usize::MAX for commented nodes which would otherwise
+        // inflate max_name_width and break alignment.
         let max_name_width = pairs
             .iter()
-            .map(|(name, _)| self.flat_len(name).min(40))
+            .map(|(name, _)| self.flat_len_kind(&name.kind).min(40))
             .max()
             .unwrap_or(0);
 
@@ -481,9 +485,13 @@ impl PrettyPrinter {
         for (i, (name, val)) in pairs.iter().enumerate() {
             if i > 0 {
                 out.push('\n');
-                push_indent(out, start_col + 1);
+                // Don't pre-push indent when name has leading comments —
+                // write_node_indented handles its own indent for those.
+                if name.leading_comments.is_empty() {
+                    push_indent(out, start_col + 1);
+                }
             }
-            let name_len = self.flat_len(name).min(40);
+            let name_len = self.flat_len_kind(&name.kind).min(40);
             self.write_node_indented(name, out, start_col + 1, start_col + 1);
             if use_alignment {
                 // Pad to align
@@ -2748,6 +2756,50 @@ mod tests {
         assert!(lines[0].contains("(match x"), "scrutinee inline: {out:?}");
         let arm_indent = lines[1].len() - lines[1].trim_start().len();
         assert!(arm_indent > 3, "arms must indent from (match, got {arm_indent} in {out:?}");
+    }
+
+    // ── 79. comment_in_aligned_let_binding ──────────────────────────────
+    #[test]
+    fn comment_in_aligned_let_binding() {
+        use crate::node::Comment;
+        // (let [a 1
+        //       ;; step two
+        //       b 2
+        //       c 3
+        //       d 4]
+        //   body)
+        //
+        // Four pairs → aligned path. `b` has a leading comment.
+        // Bug 1: outer loop pre-pushed indent AND write_node_indented re-pushed it
+        //        → comment appeared at 2× start_col+1.
+        // Bug 2: flat_len on a commented name returns usize::MAX → .min(40) = 40
+        //        → max_name_width inflated to 40 → use_alignment=false
+        //        → val_col computed as start_col+1+40+1 = 53 → values at col 53.
+        let mut b_node = sym("b");
+        b_node.leading_comments.push(Comment(" step two".to_string()));
+        let bindings = vec![
+            sym("a"),  int(1),
+            b_node,    int(2),
+            sym("cc"), int(3),
+            sym("d"),  int(4),
+        ];
+        let node = list(vec![
+            sym("let"),
+            vec_node(bindings),
+            sym("body"),
+        ]);
+        let out = pp().print_file(&[node]);
+        // Comment at correct (single) indent level.
+        assert!(
+            out.contains("\n      ; step two\n      b"),
+            "comment should be at binding indent, got:\n{out}"
+        );
+        // Values must align with the widest name (`cc` = 2), not at column 53.
+        // The value `1` follows `a ` (padded to width 2): `a  1`.
+        assert!(
+            out.contains("a  1"),
+            "alignment should be based on name width, not usize::MAX; got:\n{out}"
+        );
     }
 
     // ── 75. deftype_pipe_sum_always_multiline ────────────────────────────
