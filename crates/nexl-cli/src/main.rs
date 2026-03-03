@@ -126,11 +126,11 @@ enum Command {
         #[command(subcommand)]
         command: PkgCommand,
     },
-    /// Run tests in a Nexl source file.
+    /// Run tests in a Nexl source file, or discover all *_test.nx files.
     Test {
-        /// File to test.
+        /// File to test. If omitted, discovers all *_test.nx files under tests/.
         #[arg(value_name = "FILE")]
-        input: PathBuf,
+        input: Option<PathBuf>,
         /// Only run tests whose names contain this substring.
         #[arg(long = "filter")]
         filter: Option<String>,
@@ -303,13 +303,27 @@ fn main() {
                 .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
                 .unwrap_or_default();
             nexl_stdlib::test::set_accept_mode(accept);
-            match command_test(input, filter.as_deref(), &tag_list, &format) {
-                Ok(true) => {}
-                Ok(false) => process::exit(1),
-                Err(message) => {
-                    print_error(&message);
-                    process::exit(1);
+            let files = match input {
+                Some(path) => vec![path],
+                None => discover_test_files(),
+            };
+            if files.is_empty() {
+                eprintln!("No test files found. Create *_test.nx files under tests/.");
+                process::exit(1);
+            }
+            let mut all_passed = true;
+            for file in files {
+                match command_test(file, filter.as_deref(), &tag_list, &format) {
+                    Ok(true) => {}
+                    Ok(false) => all_passed = false,
+                    Err(message) => {
+                        print_error(&message);
+                        all_passed = false;
+                    }
                 }
+            }
+            if !all_passed {
+                process::exit(1);
             }
         }
         Command::Bench { input } => {
@@ -611,6 +625,31 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Discover test files for `nexl test` (no argument).
+///
+/// Looks for `*_test.nx` files in `tests/` relative to the current directory,
+/// sorted alphabetically for a deterministic run order.
+fn discover_test_files() -> Vec<PathBuf> {
+    let tests_dir = PathBuf::from("tests");
+    if !tests_dir.is_dir() {
+        return Vec::new();
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&tests_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("nx")
+                && p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.ends_with("_test") || s.ends_with("-test"))
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 /// `nexl test [file]` — evaluate source file and run all registered tests.
@@ -2275,7 +2314,7 @@ mod tests {
         let cli = Cli::try_parse_from(["nexl", "test", "tests.nx"]).expect("parse");
         match cli.command {
             Command::Test { input, filter, tags, .. } => {
-                assert_eq!(input, PathBuf::from("tests.nx"));
+                assert_eq!(input, Some(PathBuf::from("tests.nx")));
                 assert_eq!(filter, None);
                 assert_eq!(tags, None);
             }
