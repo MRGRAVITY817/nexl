@@ -247,3 +247,252 @@
   """
   [tests]
   (native "test/run-tests" tests))
+
+;; ── Phase 2 Macros (M27) ─────────────────────────────────────────────────────
+;;
+;; The forms below replace the corresponding special forms in nexl-eval's
+;; eval.rs. They are registered by the macro expander before user code is
+;; evaluated, so `(throws? ...)`, `(setup ...)`, etc. expand to primitive
+;; calls rather than being dispatched as special forms.
+
+;; `(throws? body ...)` — assert that body raises any exception.
+;; `(throws? [type-hint] body ...)` — assert that body raises an error whose
+;;   message contains the source text of `type-hint` (e.g. `[TypeError]`).
+(defmacro-syntax throws?
+  [(_ [type-hint] body ...)
+   `(match (test/try-call! (fn [] ~@body))
+      (Ok _)  (test/fail "expected exception, got none")
+      (Err e) (if (str/contains? e ~(syntax-str type-hint))
+                unit
+                (test/fail (str "expected error containing \""
+                               ~(syntax-str type-hint)
+                               "\", got: " e))))]
+  [(_ body ...)
+   `(match (test/try-call! (fn [] ~@body))
+      (Ok _)  (test/fail "expected exception, got none")
+      (Err _) unit)])
+
+;; Lifecycle hooks: register thunks onto the current describe scope's stacks.
+(defmacro-syntax setup        [(_ thunk) `(test/setup-push!       ~thunk)])
+(defmacro-syntax teardown     [(_ thunk) `(test/teardown-push!    ~thunk)])
+(defmacro-syntax setup-all    [(_ thunk) `(test/setup-all-push!   ~thunk)])
+(defmacro-syntax teardown-all [(_ thunk) `(test/teardown-all-push! ~thunk)])
+
+;; `(is-match pattern expr [:when guard] body ...)` — match assertion.
+(defmacro-syntax is-match
+  [(_ pattern expr :when guard body ...)
+   `(match ~expr
+      ~pattern (if ~guard
+                 (do ~@body unit)
+                 (test/fail (str "is-match: guard failed for: "
+                                ~(syntax-str expr))))
+      _ (test/fail (str "is-match: "
+                        ~(syntax-str expr)
+                        " did not match pattern")))]
+  [(_ pattern expr body ...)
+   `(match ~expr
+      ~pattern (do ~@body unit)
+      _ (test/fail (str "is-match: "
+                        ~(syntax-str expr)
+                        " did not match pattern")))])
+
+;; `(describe "label" body ...)` — group tests under a named scope.
+;; `(describe "label" :let [bindings ...] body ...)` — with fixture bindings.
+;;
+;; Pushes the label onto the describe stack before body, pops it after.
+;; Also cleans up any setup/teardown hooks registered in this scope.
+(defmacro-syntax describe
+  ;; `:let bindings` — `bindings` is bound to the whole vector `[name val ...]`
+  ;; and spliced directly into the inner `let` form.
+  [(_ label :let bindings body ...)
+   `(do
+      (test/describe-push! ~label)
+      (let [setup-depth#    (test/setup-stack-len)
+            teardown-depth# (test/teardown-stack-len)]
+        (let ~bindings
+          ~@body)
+        (each [_ (range (- (test/setup-stack-len) setup-depth#))]
+          (test/setup-pop!))
+        (each [_ (range (- (test/teardown-stack-len) teardown-depth#))]
+          (test/teardown-pop!)))
+      (test/describe-pop!))]
+  [(_ label body ...)
+   `(do
+      (test/describe-push! ~label)
+      (let [setup-depth#    (test/setup-stack-len)
+            teardown-depth# (test/teardown-stack-len)]
+        ~@body
+        (each [_ (range (- (test/setup-stack-len) setup-depth#))]
+          (test/setup-pop!))
+        (each [_ (range (- (test/teardown-stack-len) teardown-depth#))]
+          (test/teardown-pop!)))
+      (test/describe-pop!))])
+
+;; `(is expr)` — assert `expr` evaluates to `true`, failing the test otherwise.
+;; Power-assert variants:
+;;   `(is (= lhs rhs))`   → shows both values on failure
+;;   `(is (op lhs rhs))`  → same for not=, <, >, <=, >=
+;;   `(is (pred val))`    → shows predicate and value on failure
+;;   `(is expr "msg")`    → user message prepended to failure
+(defmacro-syntax is
+  ;; Binary op: (is (op lhs rhs)) — evaluates both sides, reports them on failure
+  [(_ (op lhs rhs))
+   `(let [l# ~lhs r# ~rhs]
+      (when (not (~op l# r#))
+        (test/fail (str "assertion failed: (" ~(syntax-str op)
+                        " " ~(syntax-str lhs) " " ~(syntax-str rhs)
+                        ")\n  left:  " l#
+                        "\n  right: " r#))))]
+  ;; 1-arg predicate: (is (pred val))
+  [(_ (pred val))
+   `(let [v# ~val]
+      (when (not (~pred v#))
+        (test/fail (str "assertion failed: (" ~(syntax-str pred)
+                        " " ~(syntax-str val)
+                        ")\n  " ~(syntax-str val) ": " v#))))]
+  ;; 2-arg: message string OR matcher function — dispatch at runtime
+  [(_ actual mm)
+   `(let [mm# ~mm]
+      (if (test/str? mm#)
+        ;; message form: (is expr "msg")
+        (when (not ~actual)
+          (test/fail (str mm# ": " ~(syntax-str actual))))
+        ;; matcher form: (is actual matcher-fn) — matcher returns (Ok _) or (Err msg)
+        (match (mm# ~actual)
+          (Err e) (test/fail e)
+          _ unit)))]
+  ;; Simple bool
+  [(_ expr)
+   `(when (not ~expr)
+      (test/fail (str "assertion failed: " ~(syntax-str expr))))])
+
+;; `(deftest "name" body ...)` — register a named test (no metadata).
+;; `(deftest "name" {:skip reason :focus true :tags vec :flaky n} body ...)` — with metadata.
+;;
+;; Registers body as a thunk in the test registry. The thunk snapshots the current
+;; setup/teardown hooks at definition time and runs them around the body. The test
+;; name is prefixed with the current describe stack (e.g. "Group > test").
+;;
+;; Metadata map (optional second argument):
+;;   :skip   — skip with reason string; body is not evaluated
+;;   :focus  — mark as focused; only focused tests run when any test is focused
+;;   :tags   — keyword/string vector for tag-based filtering
+;;   :flaky  — retry count (Int) or true (default 3 retries) on failure
+(defmacro-syntax deftest
+  ;; With metadata map
+  [(_ name {:& meta} body ...)
+   `(let [full#   (str (test/describe-prefix) ~name)
+          setup#  (test/current-setup-hooks)
+          teardn# (test/current-teardown-hooks)]
+      (match (:skip ~meta)
+        (None) (test/register! full# (fn []
+                 (each [h setup#] (h))
+                 ~@body
+                 (each [h (reverse teardn#)] (h))))
+        reason# (test/register! full# (fn [] (test/skip reason#))))
+      (match (:focus ~meta) (None) unit _ (test/focus-register! full#))
+      (match (:tags ~meta)  (None) unit tags# (test/tags-register! full# tags#))
+      (match (:flaky ~meta) (None) unit n# (test/flaky-register! full# n#)))]
+  ;; Without metadata
+  [(_ name body ...)
+   `(let [full#   (str (test/describe-prefix) ~name)
+          setup#  (test/current-setup-hooks)
+          teardn# (test/current-teardown-hooks)]
+      (test/register! full# (fn []
+        (each [h setup#] (h))
+        ~@body
+        (each [h (reverse teardn#)] (h)))))])
+
+;; `(bench "name" body ...)` — register or run a benchmark.
+;; `(bench "name" :iterations N :warmup W body ...)` — with explicit config.
+;;
+;; In bench mode: registers body as a benchmark thunk.
+;; Outside bench mode: evaluates body once and discards the result.
+(defmacro-syntax bench
+  [(_ name :iterations iters :warmup wu body ...)
+   `(if (test/is-bench-mode?)
+      (test/bench-register! ~name ~iters ~wu (fn [] ~@body))
+      (do ~@body unit))]
+  [(_ name body ...)
+   `(if (test/is-bench-mode?)
+      (test/bench-register! ~name 1000 10 (fn [] ~@body))
+      (do ~@body unit))])
+
+;; ── Phase 6: check — property-based testing ──────────────────────────────────
+
+;; Helper: generate n seeds by successive LCG steps from start.
+;; Returns a Vec of n Int seeds.
+(defn gen/seed-seq
+  [start n]
+  (loop [i    0
+         seed start
+         acc  []]
+    (if (= i n)
+      acc
+      (let [next-seed (gen/lcg-next seed)]
+        (recur (+ i 1) next-seed (append acc next-seed))))))
+
+;; Internal helper: run a single-binding property check.
+;; - name-str:  string label for the binding (used in failure messages)
+;; - gen:       generator function `(fn [seed] -> value)`
+;; - n:         number of trials (Int)
+;; - seed:      initial RNG seed (Int)
+;; - body-fn:   `(fn [val] body...)` — property under test
+(defn test/check-run!
+  [name-str gen n seed body-fn]
+  (let [overrides (test/take-seed-overrides)]
+    ;; Run override seeds first (replayed failures from .test-seeds)
+    (each [trial-seed overrides]
+      (let [val (gen trial-seed)]
+        (match (test/try-call! (fn [] (body-fn val)))
+          (Ok _) unit
+          (Err e) (do (test/persist-seed! trial-seed)
+                      (test/fail (str "check: falsified " name-str "=" val
+                                      " (seed " trial-seed "): " e))))))
+    ;; Then run fresh random seeds
+    (each [trial-seed (gen/seed-seq seed n)]
+      (let [val (gen trial-seed)]
+        (match (test/try-call! (fn [] (body-fn val)))
+          (Ok _) unit
+          (Err e) (do (test/persist-seed! trial-seed)
+                      (test/fail (str "check: falsified " name-str "=" val
+                                      " (seed " trial-seed "): " e))))))))
+
+;; `(check [name gen] :num-tests N :seed S body ...)` — property test with all options.
+;; `(check [name gen] :num-tests N body ...)`          — default seed 42.
+;; `(check [name gen] body ...)`                        — default 100 trials, seed 42.
+;;
+;; Runs `body` with `name` bound to a generated value from `gen` for each trial.
+;; On failure: persists the failing seed and raises a test failure.
+(defmacro-syntax check
+  [(_ [name gen] :num-tests n :seed s body ...)
+   `(test/check-run! ~(syntax-str name) ~gen ~n ~s (fn [~name] ~@body))]
+  [(_ [name gen] :num-tests n body ...)
+   `(test/check-run! ~(syntax-str name) ~gen ~n 42 (fn [~name] ~@body))]
+  [(_ [name gen] body ...)
+   `(test/check-run! ~(syntax-str name) ~gen 100 42 (fn [~name] ~@body))])
+
+;; ── Phase 7: snap-file! ───────────────────────────────────────────────────────
+
+;; `(snap-file! "name" expr)` — snapshot test.
+;;
+;; On first run: writes `(str expr)` to `__snapshots__/<name>.snap`.
+;; On subsequent runs: compares `(str expr)` to the stored snapshot.
+;; In accept mode (`nexl test --accept`): overwrites stored snapshot.
+;; Outside test mode: no-op.
+(defn snap-file!
+  [name expr]
+  (when (test/test-mode?)
+    (let [snap-dir (str (test/snapshots-dir) "/__snapshots__")
+          path     (str snap-dir "/" name ".snap")
+          actual   (str expr)]
+      (io/create-dir-all snap-dir)
+      (if (test/accept-mode?)
+        (io/write-file path actual)
+        (match (io/read-file path)
+          (Err _)     (io/write-file path actual)
+          (Ok stored) (when (not= stored actual)
+                        (test/fail (str "snap-file! \"" name "\" mismatch.\n"
+                                        "  expected: " stored "\n"
+                                        "  actual:   " actual "\n"
+                                        "  (run with --accept to update)"))))))))

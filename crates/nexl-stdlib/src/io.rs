@@ -24,6 +24,7 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("file-exists?", file_exists),
         ("read-dir", read_dir),
         ("delete-file", delete_file),
+        ("create-dir-all", create_dir_all),
     ]
 }
 
@@ -177,6 +178,17 @@ fn delete_file(args: &[Value]) -> Result<Value, String> {
     let v = one_arg("delete-file", args)?;
     let path = expect_str("delete-file", v)?;
     match std::fs::remove_file(path.as_ref()) {
+        Ok(()) => Ok(result_ok(Value::Unit)),
+        Err(e) => Ok(result_err(&e.to_string())),
+    }
+}
+
+/// `(io/create-dir-all path)` — recursively create directory and parents. Returns (Result Unit Str).
+fn create_dir_all(args: &[Value]) -> Result<Value, String> {
+    nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::FileSystem)?;
+    let v = one_arg("create-dir-all", args)?;
+    let path = expect_str("create-dir-all", v)?;
+    match std::fs::create_dir_all(path.as_ref()) {
         Ok(()) => Ok(result_ok(Value::Unit)),
         Err(e) => Ok(result_err(&e.to_string())),
     }

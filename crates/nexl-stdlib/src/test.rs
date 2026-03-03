@@ -494,6 +494,302 @@ fn not_m_matcher(args: &[Value]) -> Result<Value, String> {
     }
 }
 
+// ─── Primitive accessors exposed to Nexl for macro use ───────────────────────
+
+/// `(test/describe-prefix)` — return the current describe prefix string.
+fn describe_prefix_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/describe-prefix` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Str(Rc::from(describe_prefix().as_str())))
+}
+
+/// `(test/describe-push! label)` — push a describe label onto the stack.
+fn describe_push_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Str(s)] => {
+            describe_push(s.to_string());
+            Ok(Value::Unit)
+        }
+        [other] => {
+            describe_push(other.to_string());
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/describe-push!` requires 1 argument, got {}", args.len())),
+    }
+}
+
+/// `(test/describe-pop!)` — pop the most recent describe label.
+fn describe_pop_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/describe-pop!` takes no arguments, got {}", args.len()));
+    }
+    describe_pop();
+    Ok(Value::Unit)
+}
+
+/// `(test/focus-register! name)` — register a focused test name.
+fn focus_register_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Str(s)] => {
+            focus_push(s.to_string());
+            Ok(Value::Unit)
+        }
+        [other] => {
+            focus_push(other.to_string());
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/focus-register!` requires 1 argument, got {}", args.len())),
+    }
+}
+
+/// `(test/tags-register! name tags)` — register tags for a test.
+fn tags_register_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [name, Value::Vec(tag_vals)] => {
+            let name_str = match name {
+                Value::Str(s) => s.to_string(),
+                other => other.to_string(),
+            };
+            let tags: Vec<String> = tag_vals
+                .iter()
+                .map(|v| match v {
+                    Value::Str(s) => s.to_string(),
+                    Value::Keyword { name, .. } => name.to_string(),
+                    other => other.to_string(),
+                })
+                .collect();
+            tags_register(name_str, tags);
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/tags-register!` requires 2 arguments (name tags-vec), got {}", args.len())),
+    }
+}
+
+/// `(test/flaky-register! name retries)` — register retry count for a flaky test.
+fn flaky_register_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [name, Value::Int(retries)] => {
+            let name_str = match name {
+                Value::Str(s) => s.to_string(),
+                other => other.to_string(),
+            };
+            flaky_registry_insert(name_str, (*retries).max(0) as usize);
+            Ok(Value::Unit)
+        }
+        [name, Value::Bool(true)] => {
+            let name_str = match name {
+                Value::Str(s) => s.to_string(),
+                other => other.to_string(),
+            };
+            flaky_registry_insert(name_str, 3);
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/flaky-register!` requires 2 arguments (name retries), got {}", args.len())),
+    }
+}
+
+/// `(test/setup-push! thunk)` — push a per-test setup hook.
+fn setup_push_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [thunk] => {
+            setup_push(thunk.clone());
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/setup-push!` requires 1 thunk argument, got {}", args.len())),
+    }
+}
+
+/// `(test/teardown-push! thunk)` — push a per-test teardown hook.
+fn teardown_push_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [thunk] => {
+            teardown_push(thunk.clone());
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/teardown-push!` requires 1 thunk argument, got {}", args.len())),
+    }
+}
+
+/// `(test/setup-all-push! thunk)` — push a one-time setup-all hook.
+fn setup_all_push_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [thunk] => {
+            setup_all_push(thunk.clone());
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/setup-all-push!` requires 1 thunk argument, got {}", args.len())),
+    }
+}
+
+/// `(test/teardown-all-push! thunk)` — push a one-time teardown-all hook.
+fn teardown_all_push_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [thunk] => {
+            teardown_all_push(thunk.clone());
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/teardown-all-push!` requires 1 thunk argument, got {}", args.len())),
+    }
+}
+
+/// `(test/current-setup-hooks)` — return snapshot of current setup hooks as Vec.
+fn current_setup_hooks_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/current-setup-hooks` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Vec(Rc::new(setup_snapshot())))
+}
+
+/// `(test/current-teardown-hooks)` — return snapshot of current teardown hooks as Vec.
+fn current_teardown_hooks_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/current-teardown-hooks` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Vec(Rc::new(teardown_snapshot())))
+}
+
+/// `(test/setup-stack-len)` — number of hooks currently on the setup stack.
+fn setup_stack_len_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/setup-stack-len` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Int(setup_snapshot().len() as i64))
+}
+
+/// `(test/teardown-stack-len)` — number of hooks currently on the teardown stack.
+fn teardown_stack_len_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/teardown-stack-len` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Int(teardown_snapshot().len() as i64))
+}
+
+/// `(test/setup-pop!)` — remove the top hook from the setup stack.
+fn setup_pop_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/setup-pop!` takes no arguments, got {}", args.len()));
+    }
+    setup_pop();
+    Ok(Value::Unit)
+}
+
+/// `(test/teardown-pop!)` — remove the top hook from the teardown stack.
+fn teardown_pop_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/teardown-pop!` takes no arguments, got {}", args.len()));
+    }
+    teardown_pop();
+    Ok(Value::Unit)
+}
+
+/// `(test/persist-seed! seed)` — push a failing check seed to the registry.
+fn persist_seed_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Int(seed)] => {
+            failed_seeds_push(*seed);
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/persist-seed!` requires 1 Int argument, got {}", args.len())),
+    }
+}
+
+/// `(test/take-seed-overrides)` — drain and return seed override list as Vec.
+fn take_seed_overrides_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/take-seed-overrides` takes no arguments, got {}", args.len()));
+    }
+    let seeds = take_seed_overrides();
+    Ok(Value::Vec(Rc::new(seeds.into_iter().map(Value::Int).collect())))
+}
+
+/// `(test/accept-mode?)` — is --accept mode active?
+fn accept_mode_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/accept-mode?` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Bool(is_accept_mode()))
+}
+
+/// `(test/snapshots-dir)` — return snapshots base directory (or "." if default).
+fn snapshots_dir_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/snapshots-dir` takes no arguments, got {}", args.len()));
+    }
+    let dir = snapshots_base().unwrap_or_else(|| ".".to_string());
+    Ok(Value::Str(Rc::from(dir.as_str())))
+}
+
+/// `(test/bench-register! name iterations warmup thunk)` — register a benchmark.
+fn bench_register_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [name, Value::Int(iterations), Value::Int(warmup), thunk] => {
+            let name_str = match name {
+                Value::Str(s) => s.to_string(),
+                other => other.to_string(),
+            };
+            bench_registry_push(name_str, thunk.clone(), (*warmup).max(0) as usize, (*iterations).max(1) as usize);
+            Ok(Value::Unit)
+        }
+        _ => Err(format!("`test/bench-register!` requires 4 arguments (name iterations warmup thunk), got {}", args.len())),
+    }
+}
+
+/// `(test/test-mode?)` — is test mode active?
+fn test_mode_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/test-mode?` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Bool(is_test_mode()))
+}
+
+/// `(test/is-bench-mode?)` — is bench mode active?
+fn is_bench_mode_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`test/is-bench-mode?` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Bool(is_bench_mode()))
+}
+
+/// `(test/try-call! thunk)` — call `thunk` and catch any exception.
+///
+/// Returns `(Ok result)` if the thunk completes normally, or `(Err msg)` if
+/// it raises any runtime error (including `panic`, `test/fail`, etc.).
+///
+/// Used by the `throws?` macro to intercept exceptions at the Nexl level:
+/// ```nexl
+/// (throws? (panic "oops"))
+/// ;; expands to (match (test/try-call! (fn [] (panic "oops"))) ...)
+/// ```
+fn try_call_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [thunk] => {
+            let result = nexl_runtime::call_value(thunk, &[]);
+            Ok(match result {
+                Ok(v) => Value::Adt {
+                    type_name: Rc::from("Result"),
+                    ctor: Rc::from("Ok"),
+                    fields: Rc::new(vec![v]),
+                },
+                Err(e) => Value::Adt {
+                    type_name: Rc::from("Result"),
+                    ctor: Rc::from("Err"),
+                    fields: Rc::new(vec![Value::Str(Rc::from(e.as_str()))]),
+                },
+            })
+        }
+        _ => Err(format!("`test/try-call!` requires 1 thunk argument, got {}", args.len())),
+    }
+}
+
+/// `(test/str? v)` — return `true` if `v` is a `Str`, `false` otherwise.
+fn is_str_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [v] => Ok(Value::Bool(matches!(v, Value::Str(_)))),
+        _ => Err(format!("`test/str?` requires 1 argument, got {}", args.len())),
+    }
+}
+
 // ─── Stdlib entries ───────────────────────────────────────────────────────────
 
 /// Return all `test` module function entries.
@@ -521,6 +817,32 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("all-of", all_of_matcher),
         ("any-of", any_of_matcher),
         ("not-m", not_m_matcher),
+        // Macro support primitives (Phase 0 — M27)
+        ("describe-prefix",       describe_prefix_fn),
+        ("describe-push!",        describe_push_fn),
+        ("describe-pop!",         describe_pop_fn),
+        ("focus-register!",       focus_register_fn),
+        ("tags-register!",        tags_register_fn),
+        ("flaky-register!",       flaky_register_fn),
+        ("setup-push!",           setup_push_fn),
+        ("teardown-push!",        teardown_push_fn),
+        ("setup-all-push!",       setup_all_push_fn),
+        ("teardown-all-push!",    teardown_all_push_fn),
+        ("current-setup-hooks",   current_setup_hooks_fn),
+        ("current-teardown-hooks", current_teardown_hooks_fn),
+        ("persist-seed!",         persist_seed_fn),
+        ("take-seed-overrides",   take_seed_overrides_fn),
+        ("accept-mode?",          accept_mode_fn),
+        ("snapshots-dir",         snapshots_dir_fn),
+        ("bench-register!",       bench_register_fn),
+        ("test-mode?",            test_mode_fn),
+        ("is-bench-mode?",        is_bench_mode_fn),
+        ("try-call!",             try_call_fn),
+        ("str?",                  is_str_fn),
+        ("setup-stack-len",       setup_stack_len_fn),
+        ("teardown-stack-len",    teardown_stack_len_fn),
+        ("setup-pop!",            setup_pop_fn),
+        ("teardown-pop!",         teardown_pop_fn),
     ]
 }
 
@@ -1046,5 +1368,105 @@ mod tests {
             }
             other => panic!("expected Map, got {other}"),
         }
+    }
+
+    // ── Test: Phase 0 macro-support primitives ───────────────────────────────
+
+    #[test]
+    fn describe_prefix_returns_empty_when_no_stack() {
+        DESCRIBE_STACK.with(|s| s.borrow_mut().clear());
+        let result = describe_prefix_fn(&[]).unwrap();
+        assert_eq!(result, Value::Str(Rc::from("")));
+    }
+
+    #[test]
+    fn describe_push_pop_round_trips() {
+        DESCRIBE_STACK.with(|s| s.borrow_mut().clear());
+        describe_push_fn(&[Value::Str(Rc::from("Suite"))]).unwrap();
+        let prefix = describe_prefix_fn(&[]).unwrap();
+        assert_eq!(prefix, Value::Str(Rc::from("Suite > ")));
+        describe_pop_fn(&[]).unwrap();
+        let after = describe_prefix_fn(&[]).unwrap();
+        assert_eq!(after, Value::Str(Rc::from("")));
+    }
+
+    #[test]
+    fn setup_push_and_current_hooks() {
+        SETUP_STACK.with(|s| s.borrow_mut().clear());
+        let thunk = Value::NativeFunction(Rc::new(nexl_runtime::NativeFn { name: "noop", f: |_| Ok(Value::Unit) }));
+        setup_push_fn(&[thunk]).unwrap();
+        let hooks = current_setup_hooks_fn(&[]).unwrap();
+        match hooks {
+            Value::Vec(v) => assert_eq!(v.len(), 1),
+            other => panic!("expected Vec, got {other}"),
+        }
+        SETUP_STACK.with(|s| s.borrow_mut().clear());
+    }
+
+    #[test]
+    fn teardown_push_and_current_hooks() {
+        TEARDOWN_STACK.with(|s| s.borrow_mut().clear());
+        let thunk = Value::NativeFunction(Rc::new(nexl_runtime::NativeFn { name: "noop", f: |_| Ok(Value::Unit) }));
+        teardown_push_fn(&[thunk]).unwrap();
+        let hooks = current_teardown_hooks_fn(&[]).unwrap();
+        match hooks {
+            Value::Vec(v) => assert_eq!(v.len(), 1),
+            other => panic!("expected Vec, got {other}"),
+        }
+        TEARDOWN_STACK.with(|s| s.borrow_mut().clear());
+    }
+
+    #[test]
+    fn persist_seed_and_take_overrides() {
+        FAILED_SEEDS_REGISTRY.with(|r| r.borrow_mut().clear());
+        SEED_OVERRIDES.with(|r| r.borrow_mut().clear());
+        persist_seed_fn(&[Value::Int(42)]).unwrap();
+        persist_seed_fn(&[Value::Int(99)]).unwrap();
+        // Set seeds as overrides (mimic CLI behaviour)
+        let seeds = failed_seeds_drain();
+        set_seed_overrides(seeds);
+        let overrides = take_seed_overrides_fn(&[]).unwrap();
+        match overrides {
+            Value::Vec(v) => {
+                assert_eq!(v.len(), 2);
+                assert!(v.contains(&Value::Int(42)));
+                assert!(v.contains(&Value::Int(99)));
+            }
+            other => panic!("expected Vec, got {other}"),
+        }
+    }
+
+    #[test]
+    fn accept_mode_fn_returns_bool() {
+        set_accept_mode(false);
+        assert_eq!(accept_mode_fn(&[]).unwrap(), Value::Bool(false));
+        set_accept_mode(true);
+        assert_eq!(accept_mode_fn(&[]).unwrap(), Value::Bool(true));
+        set_accept_mode(false);
+    }
+
+    #[test]
+    fn test_mode_fn_returns_bool() {
+        set_test_mode(false);
+        assert_eq!(test_mode_fn(&[]).unwrap(), Value::Bool(false));
+        set_test_mode(true);
+        assert_eq!(test_mode_fn(&[]).unwrap(), Value::Bool(true));
+        set_test_mode(false);
+    }
+
+    #[test]
+    fn snapshots_dir_fn_returns_dot_by_default() {
+        set_snapshots_base(None);
+        assert_eq!(snapshots_dir_fn(&[]).unwrap(), Value::Str(Rc::from(".")));
+    }
+
+    #[test]
+    fn bench_register_fn_adds_entry() {
+        bench_registry_clear();
+        let thunk = Value::NativeFunction(Rc::new(nexl_runtime::NativeFn { name: "b", f: |_| Ok(Value::Unit) }));
+        bench_register_fn(&[Value::Str(Rc::from("my-bench")), Value::Int(100), Value::Int(10), thunk]).unwrap();
+        let entries = bench_registry_drain();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "my-bench");
     }
 }

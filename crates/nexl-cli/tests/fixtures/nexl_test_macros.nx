@@ -1,0 +1,32 @@
+;; E2E fixture: verify nexl.test macros work end-to-end via `nexl run`.
+;; All assertions pass; any failure would crash with a non-zero exit code.
+
+;; is: binary equality and inequality
+(is (= 1 1))
+(is (not= 1 2))
+(is (> 5 3))
+(is (< 2 9))
+(is (<= 4 4))
+(is (>= 7 6))
+
+;; is: simple boolean
+(is true)
+
+;; is: message form (passes because true)
+(is true "should be true")
+
+;; throws?: body raises an error
+(throws? (panic "expected error"))
+
+;; check: property that always holds
+(check [x gen/int]
+  :num-tests 10
+  (is (= x x)))
+
+;; check: with explicit seed
+(check [x gen/int]
+  :num-tests 5
+  :seed 123
+  (is (= (* x 2) (+ x x))))
+
+(io/println "nexl.test macros: ok")

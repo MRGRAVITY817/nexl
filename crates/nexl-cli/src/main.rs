@@ -453,6 +453,32 @@ fn has_module_decl(nodes: &[Node]) -> bool {
     )
 }
 
+/// Macro-expand a sequence of top-level nodes.
+///
+/// Creates a fresh [`nexl_macros::Expander`] pre-loaded with the stdlib macro
+/// definitions embedded from `nexl-stdlib/nexl/test.nx`. Any `defmacro-syntax`
+/// forms in that file are registered in the expander; non-macro forms (`defn`
+/// etc.) are discarded since they are already live via `standard_env()`.
+///
+/// Call this before `eval` so that `deftest`, `is`, `throws?`, etc. expand.
+/// Expand macros in `nodes` using the test.nx stdlib prelude.
+/// Returns `(expanded_user_nodes, expanded_prelude_defns)`.
+/// The caller should evaluate `expanded_prelude_defns` before `expanded_user_nodes`
+/// so that Nexl-defined helpers (`test/check-run!`, `gen/seed-seq`, etc.) are in scope.
+fn macro_expand(nodes: &[Node]) -> Result<(Vec<Node>, Vec<Node>), String> {
+    const STDLIB_TEST: &str = include_str!("../../nexl-stdlib/nexl/test.nx");
+    let mut expander = nexl_macros::Expander::new();
+    let prelude = nexl_reader::read(STDLIB_TEST, meta::FileId::SYNTHETIC)
+        .map_err(|e| format!("stdlib macro parse error: {e}"))?;
+    let prelude_forms = expander
+        .expand_forms(&prelude)
+        .map_err(|e| format!("stdlib macro expand error: {e}"))?;
+    let expanded = expander
+        .expand_forms(nodes)
+        .map_err(|e| format!("macro error: {e}"))?;
+    Ok((expanded, prelude_forms))
+}
+
 /// Discover and load all modules transitively starting from the entry file.
 ///
 /// Returns the loaded `ModuleSource` values ready for `eval_modules`.
@@ -576,7 +602,11 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
 
     // Single-file fallback
     let env = nexl_eval::stdlib::standard_env();
-    for node in &nodes {
+    let (expanded, prelude_forms) = macro_expand(&nodes)?;
+    for node in &prelude_forms {
+        let _ = nexl_eval::eval::eval(node, &env);
+    }
+    for node in &expanded {
         nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
     }
 
@@ -612,7 +642,11 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String], form
         .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
 
     let env = nexl_eval::stdlib::standard_env();
-    for node in &nodes {
+    let (expanded, prelude_forms) = macro_expand(&nodes)?;
+    for node in &prelude_forms {
+        let _ = nexl_eval::eval::eval(node, &env);
+    }
+    for node in &expanded {
         nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
     }
 
@@ -792,7 +826,11 @@ fn command_bench(input_path: PathBuf) -> Result<(), String> {
     let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
         .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
     let env = nexl_eval::stdlib::standard_env();
-    for node in &nodes {
+    let (expanded, prelude_forms) = macro_expand(&nodes)?;
+    for node in &prelude_forms {
+        let _ = nexl_eval::eval::eval(node, &env);
+    }
+    for node in &expanded {
         nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
     }
 
@@ -2267,7 +2305,7 @@ mod tests {
     fn deftest_tags_filter_runs_only_tagged() {
         let source = r#"
 (deftest "untagged" (is (= 1 1)))
-(deftest "tagged-db" :tags [:db] (is (= 2 2)))
+(deftest "tagged-db" {:tags [:db]} (is (= 2 2)))
 "#;
         let path = write_temp_file(source, "test_tags");
         let result = command_test(path.clone(), None, &["db".to_string()], "text");
@@ -2303,7 +2341,7 @@ mod tests {
     fn deftest_skip_counts_as_skipped_not_failed() {
         let source = r#"
 (deftest "always-passes" (is (= 1 1)))
-(deftest "skip-me" :skip "not ready" (is false))
+(deftest "skip-me" {:skip "not ready"} (is false))
 "#;
         let path = write_temp_file(source, "test_skip");
         let result = command_test(path.clone(), None, &[], "text");
@@ -2316,7 +2354,7 @@ mod tests {
     fn deftest_focus_runs_only_focused_tests() {
         let source = r#"
 (deftest "regular" (is false))
-(deftest "focused" :focus (is (= 1 1)))
+(deftest "focused" {:focus true} (is (= 1 1)))
 "#;
         let path = write_temp_file(source, "test_focus");
         let result = command_test(path.clone(), None, &[], "text");
@@ -2380,6 +2418,330 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "setup-all/teardown-all test should succeed: {result:?}");
         assert!(result.unwrap(), "tests should pass");
+    }
+
+    // ── Phase 2: throws? macro ──────────────────────────────────────────────
+
+    #[test]
+    fn throws_macro_passes_when_exception_raised() {
+        let source = r#"
+(deftest "should-throw" (throws? (panic "err")))
+"#;
+        let path = write_temp_file(source, "throws_pass");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "throws? should pass when exception is raised");
+    }
+
+    #[test]
+    fn throws_macro_fails_when_no_exception() {
+        let source = r#"
+(deftest "no-throw" (throws? (+ 1 1)))
+"#;
+        let path = write_temp_file(source, "throws_fail");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(!result.unwrap(), "throws? should fail when no exception is raised");
+    }
+
+    #[test]
+    fn throws_macro_with_type_hint_passes() {
+        let source = r#"
+(deftest "type-match" (throws? [TypeError] (panic "TypeError: boom")))
+"#;
+        let path = write_temp_file(source, "throws_type_pass");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "throws? with type hint should pass when message matches");
+    }
+
+    #[test]
+    fn throws_macro_with_type_hint_wrong_type_fails() {
+        let source = r#"
+(deftest "type-mismatch" (throws? [TypeError] (panic "OtherError: boom")))
+"#;
+        let path = write_temp_file(source, "throws_type_fail");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(!result.unwrap(), "throws? with type hint should fail when error message doesn't match");
+    }
+
+    // ── Phase 2: is-match macro ─────────────────────────────────────────────
+
+    #[test]
+    fn is_match_macro_passes_on_literal_match() {
+        let source = r#"
+(deftest "match-42" (is-match 42 42))
+"#;
+        let path = write_temp_file(source, "is_match_pass");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "is-match on matching literal should pass");
+    }
+
+    #[test]
+    fn is_match_macro_fails_on_mismatch() {
+        let source = r#"
+(deftest "no-match" (is-match 99 42))
+"#;
+        let path = write_temp_file(source, "is_match_fail");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(!result.unwrap(), "is-match on mismatched values should fail");
+    }
+
+    #[test]
+    fn is_match_macro_destructures_and_runs_body() {
+        let source = r#"
+(deftest "destructure" (is-match [a b] [1 2] (is (= a 1)) (is (= b 2))))
+"#;
+        let path = write_temp_file(source, "is_match_destruct");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "is-match should destructure and run body forms");
+    }
+
+    #[test]
+    fn is_match_macro_guard_passes() {
+        let source = r#"
+(deftest "guard-pass" (is-match x 5 :when (> x 0)))
+"#;
+        let path = write_temp_file(source, "is_match_guard_pass");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "is-match with satisfied guard should pass");
+    }
+
+    #[test]
+    fn is_match_macro_guard_fails() {
+        let source = r#"
+(deftest "guard-fail" (is-match x -1 :when (> x 0)))
+"#;
+        let path = write_temp_file(source, "is_match_guard_fail");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(!result.unwrap(), "is-match with failed guard should fail the test");
+    }
+
+    // ── Phase 3: describe macro ─────────────────────────────────────────────
+
+    #[test]
+    fn describe_macro_scopes_test_names() {
+        let source = r#"
+(describe "suite"
+  (deftest "t" (is (= 1 1))))
+"#;
+        let path = write_temp_file(source, "describe_scope");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "scoped test should pass");
+    }
+
+    #[test]
+    fn describe_macro_with_let_provides_fixture() {
+        let source = r#"
+(describe "d"
+  :let [x 42]
+  (deftest "t" (is (= x 42))))
+"#;
+        let path = write_temp_file(source, "describe_let");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), ":let fixture should be visible in deftest");
+    }
+
+    #[test]
+    fn describe_macro_cleans_up_setup_hooks() {
+        // setup hooks from inside describe should not affect tests outside
+        let source = r#"
+(describe "inner"
+  (setup (fn [] unit))
+  (deftest "t1" (is (= 1 1))))
+(deftest "t2" (is (= 2 2)))
+"#;
+        let path = write_temp_file(source, "describe_cleanup");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "both tests should pass, no hook leakage");
+    }
+
+    // ── Phase 5: is macro ────────────────────────────────────────────────────
+
+    #[test]
+    fn is_macro_simple_pass() {
+        let source = r#"(deftest "t" (is true))"#;
+        let path = write_temp_file(source, "is_pass");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok() && result.unwrap(), "is true should pass");
+    }
+
+    #[test]
+    fn is_macro_simple_fail() {
+        let source = r#"(deftest "t" (is false))"#;
+        let path = write_temp_file(source, "is_fail");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok() && !result.unwrap(), "is false should fail");
+    }
+
+    #[test]
+    fn is_macro_eq_pass() {
+        let source = r#"(deftest "t" (is (= 1 1)))"#;
+        let path = write_temp_file(source, "is_eq_pass");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok() && result.unwrap(), "is (= 1 1) should pass");
+    }
+
+    #[test]
+    fn is_macro_eq_fail() {
+        let source = r#"(deftest "t" (is (= 1 2)))"#;
+        let path = write_temp_file(source, "is_eq_fail");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok() && !result.unwrap(), "is (= 1 2) should fail");
+    }
+
+    #[test]
+    fn is_macro_neq_pass() {
+        let source = r#"(deftest "t" (is (not= 1 2)))"#;
+        let path = write_temp_file(source, "is_neq_pass");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok() && result.unwrap(), "is (not= 1 2) should pass");
+    }
+
+    #[test]
+    fn is_macro_predicate_pass() {
+        let source = r#"(deftest "t" (is (= (count []) 0)))"#;
+        let path = write_temp_file(source, "is_pred_pass");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok() && result.unwrap(), "is (odd? 3) should pass");
+    }
+
+    #[test]
+    fn is_macro_with_message() {
+        // (is expr "msg") — user message appears in failure
+        let source = r#"(deftest "t" (is (= 1 2) "one does not equal two"))"#;
+        let path = write_temp_file(source, "is_msg");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok() && !result.unwrap(), "is with message should fail");
+    }
+
+    // ── Phase 4: deftest macro ──────────────────────────────────────────────
+
+    #[test]
+    fn deftest_macro_simple() {
+        // (deftest "t" (is (= 1 1))) — registers a test that passes
+        let source = r#"(deftest "t" (is (= 1 1)))"#;
+        let path = write_temp_file(source, "deftest_simple");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "test should pass");
+    }
+
+    #[test]
+    fn deftest_macro_with_describe_prefix() {
+        // Inside describe, test gets prefixed name
+        let source = r#"
+(describe "Group"
+  (deftest "t" (is (= 1 1))))
+"#;
+        let path = write_temp_file(source, "deftest_prefix");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "test should pass with describe prefix");
+    }
+
+    #[test]
+    fn deftest_macro_skip() {
+        // (deftest "t" {:skip "reason"} (is false)) — test skips, body not evaluated
+        let source = r#"(deftest "skip-me" {:skip "not ready"} (is false))"#;
+        let path = write_temp_file(source, "deftest_skip");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+    }
+
+    #[test]
+    fn deftest_macro_focus() {
+        // (deftest "t" {:focus true} body) — focus registered
+        let source = r#"
+(deftest "focused" {:focus true} (is (= 1 1)))
+(deftest "not-focused" (is (= 2 2)))
+"#;
+        let path = write_temp_file(source, "deftest_focus");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "focused test should pass");
+    }
+
+    #[test]
+    fn deftest_macro_tags() {
+        // (deftest "t" {:tags [:db]} body) — tags registered (no filter, all run)
+        let source = r#"(deftest "tagged-db" {:tags [:db]} (is (= 2 2)))"#;
+        let path = write_temp_file(source, "deftest_tags");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "tagged test should pass");
+    }
+
+    #[test]
+    fn deftest_macro_flaky() {
+        // (deftest "t" {:flaky 5} body) — flaky registered, test still runs
+        let source = r#"(deftest "flaky-t" {:flaky 5} (is (= 1 1)))"#;
+        let path = write_temp_file(source, "deftest_flaky");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "flaky test should pass");
+    }
+
+    #[test]
+    fn deftest_macro_runs_setup_teardown() {
+        // setup hook runs before test body; teardown after
+        let source = r#"
+(def log (atom []))
+(describe "d"
+  (setup (fn [] (swap! log (fn [v] (append v "setup")))))
+  (deftest "t" (is (= 1 1))))
+"#;
+        let path = write_temp_file(source, "deftest_hooks");
+        let result = command_test(path.clone(), None, &[], "text");
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "command_test should succeed: {result:?}");
+        assert!(result.unwrap(), "test with setup should pass");
+    }
+
+    // ── Phase 3: bench macro ────────────────────────────────────────────────
+
+    #[test]
+    fn bench_macro_registers_in_bench_mode() {
+        // This is already tested by the existing bench test, but verify the macro version
+        let source = r#"(bench "perf" (+ 1 2))"#;
+        let path = write_temp_file(source, "bench_macro");
+        let result = command_bench(path.clone());
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "bench macro should work: {result:?}");
     }
 
     #[test]
@@ -2828,12 +3190,10 @@ mod tests {
 
     #[test]
     fn bench_form_no_op_outside_bench_mode() {
-        let source = "(bench \"perf\" (+ 1 2))";
+        // bench is now a macro; use command_run (non-bench mode) — body should eval without error
+        let source = r#"(bench "perf" (+ 1 2))"#;
         let path = write_temp_file(source, "bench_noop");
-        let result = nexl_eval::eval::eval(
-            &nexl_reader::read(source, meta::FileId::SYNTHETIC).unwrap().into_iter().next().unwrap(),
-            &nexl_eval::stdlib::standard_env(),
-        );
+        let result = command_run(path.clone());
         let _ = std::fs::remove_file(&path);
         assert!(result.is_ok(), "bench should be no-op outside bench mode: {result:?}");
     }

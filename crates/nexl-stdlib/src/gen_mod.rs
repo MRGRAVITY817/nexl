@@ -379,6 +379,14 @@ fn sample_gen(args: &[Value]) -> Result<Value, String> {
 // ---------------------------------------------------------------------------
 
 /// Return all entries in the `gen` module.
+/// `(gen/lcg-next seed)` — advance the LCG and return the next seed Int.
+fn lcg_next_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Int(seed)] => Ok(Value::Int(lcg_next(*seed))),
+        _ => Err(format!("`gen/lcg-next` expects 1 Int (seed), got {}", args.len())),
+    }
+}
+
 pub fn entries() -> Vec<StdlibEntry> {
     vec![
         ("int",         int_gen as fn(&[Value]) -> Result<Value, String>),
@@ -398,5 +406,6 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("fmap",        fmap_gen),
         ("such-that",   such_that_gen),
         ("sample",      sample_gen),
+        ("lcg-next",    lcg_next_fn),
     ]
 }

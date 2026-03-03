@@ -1584,6 +1584,7 @@ dependencies = [
  "nexl-infer",
  "nexl-ir",
  "nexl-lsp",
+ "nexl-macros",
  "nexl-modules",
  "nexl-native",
  "nexl-pkg",
@@ -1630,10 +1631,12 @@ name = "nexl-eval"
 version = "0.1.0"
 dependencies = [
  "nexl-ast",
+ "nexl-macros",
  "nexl-modules",
  "nexl-reader",
  "nexl-runtime",
  "nexl-stdlib",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 

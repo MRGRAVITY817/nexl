@@ -11,12 +11,13 @@ does. A language without JSON, HTTP, and database access is a language without
 production users.
 
 ```
-Stage 2: Real-World Readiness   M23–M27
+Stage 2: Real-World Readiness   M23–M28
   M23  WASI Integration & Interop
   M24  Hello Production Stack
   M25  Developer Experience & Toolchain Polish
   M26  nexl.test: Effect-Powered Testing Library
-  M27  Flagship Project & 1.0 Preparation
+  M27  nexl.test in Nexl (Macro Self-Hosting)
+  M28  Flagship Project & 1.0 Preparation
 ```
 
 ---
@@ -331,7 +332,22 @@ snapshot testing — all built into the language:
 
 ---
 
-## M27 — Flagship Project & 1.0
+## M27 — nexl.test in Nexl (Macro Self-Hosting)
+
+**Goal:** Move nexl.test from Rust special forms to Nexl macros. Proves the
+macro system is production-grade by dogfooding it. Zero nexl.test special forms
+in `eval.rs` when done.
+
+**Deliverables:**
+1. Expose ~15 new Nexl-callable Rust primitives in test.rs, gen_mod.rs, io.rs
+2. Integrate macro expansion into the eval pipeline
+3. Fix nested list patterns and `syntax-str` in defmacro-syntax
+4. Write all nexl.test forms as macros in test.nx
+5. Delete all eval_deftest/eval_describe/eval_is/etc. special forms
+
+---
+
+## M28 — Flagship Project & 1.0
 
 **Goal:** Prove Nexl's value proposition with a real project. Ship 1.0 with a
 stability guarantee. Make Nexl ready for early adopters.
@@ -428,7 +444,10 @@ M25 (DevEx + Toolchain) ←── depends on M24 for cookbook content / error au
 M26 (nexl.test) ←── depends on M25 for effect system maturity + defhandler
   │
   ▼
-M27 (Flagship + 1.0) ←── depends on everything above
+M27 (nexl.test in Nexl) ←── proves macro system is production-grade
+  │
+  ▼
+M28 (Flagship + 1.0) ←── depends on everything above
 ```
 
 Milestones are sequential. Each builds on the previous. No parallelism within
