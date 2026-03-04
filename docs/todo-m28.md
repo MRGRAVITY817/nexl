@@ -17,12 +17,12 @@ Reference: `docs/stdlib-spec.md`
 
 ## Builtins — Arithmetic & Comparison
 
-- [ ] **New arithmetic builtins** — `inc`, `dec`, `rem`, `quot`
+- [x] **New arithmetic builtins** — `inc`, `dec`, `rem`, `quot`
   - `inc`/`dec`: polymorphic over Numeric types
   - `rem`: sign of dividend (truncated division)
   - `quot`: truncated division quotient
 
-- [ ] **New comparison builtins** — `not=`, `compare`, `clamp`
+- [x] **New comparison builtins** — `not=`, `compare`, `clamp`
   - `not=`: complement of `=`
   - `compare`: returns `:lt`, `:eq`, `:gt` (matches Ord protocol, spec §5.11)
   - `clamp`: restrict value to [lo, hi] range

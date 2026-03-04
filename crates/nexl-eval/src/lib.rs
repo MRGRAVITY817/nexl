@@ -6246,6 +6246,112 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- Arithmetic builtins (M28) ---
+
+    #[test]
+    fn test_inc_int() {
+        assert_eq!(eval_str("(inc 5)").unwrap(), Value::Int(6));
+        assert_eq!(eval_str("(inc -1)").unwrap(), Value::Int(0));
+        assert_eq!(eval_str("(inc 0)").unwrap(), Value::Int(1));
+    }
+
+    #[test]
+    fn test_inc_float() {
+        assert_eq!(eval_str("(inc 1.5)").unwrap(), Value::Float(2.5));
+    }
+
+    #[test]
+    fn test_dec_int() {
+        assert_eq!(eval_str("(dec 5)").unwrap(), Value::Int(4));
+        assert_eq!(eval_str("(dec 0)").unwrap(), Value::Int(-1));
+    }
+
+    #[test]
+    fn test_dec_float() {
+        assert_eq!(eval_str("(dec 2.5)").unwrap(), Value::Float(1.5));
+    }
+
+    #[test]
+    fn test_rem_int() {
+        assert_eq!(eval_str("(rem 10 3)").unwrap(), Value::Int(1));
+        assert_eq!(eval_str("(rem -10 3)").unwrap(), Value::Int(-1)); // sign of dividend
+        assert_eq!(eval_str("(rem 10 -3)").unwrap(), Value::Int(1));
+    }
+
+    #[test]
+    fn test_rem_float() {
+        assert_eq!(eval_str("(rem 5.5 2.0)").unwrap(), Value::Float(1.5));
+    }
+
+    #[test]
+    fn test_rem_by_zero() {
+        assert!(eval_str("(rem 5 0)").is_err());
+    }
+
+    #[test]
+    fn test_quot_int() {
+        assert_eq!(eval_str("(quot 10 3)").unwrap(), Value::Int(3));
+        assert_eq!(eval_str("(quot -10 3)").unwrap(), Value::Int(-3)); // truncated
+        assert_eq!(eval_str("(quot 10 -3)").unwrap(), Value::Int(-3));
+    }
+
+    #[test]
+    fn test_quot_float() {
+        assert_eq!(eval_str("(quot 7.0 2.0)").unwrap(), Value::Float(3.0));
+    }
+
+    #[test]
+    fn test_quot_by_zero() {
+        assert!(eval_str("(quot 5 0)").is_err());
+    }
+
+    // --- Comparison builtins (M28) ---
+
+    #[test]
+    fn test_compare_int() {
+        assert_eq!(
+            eval_str("(compare 1 2)").unwrap(),
+            Value::Keyword { ns: None, name: Rc::from("lt") }
+        );
+        assert_eq!(
+            eval_str("(compare 2 2)").unwrap(),
+            Value::Keyword { ns: None, name: Rc::from("eq") }
+        );
+        assert_eq!(
+            eval_str("(compare 3 2)").unwrap(),
+            Value::Keyword { ns: None, name: Rc::from("gt") }
+        );
+    }
+
+    #[test]
+    fn test_compare_float() {
+        assert_eq!(
+            eval_str("(compare 1.0 2.0)").unwrap(),
+            Value::Keyword { ns: None, name: Rc::from("lt") }
+        );
+    }
+
+    #[test]
+    fn test_compare_str() {
+        assert_eq!(
+            eval_str(r#"(compare "apple" "banana")"#).unwrap(),
+            Value::Keyword { ns: None, name: Rc::from("lt") }
+        );
+    }
+
+    #[test]
+    fn test_clamp_int() {
+        assert_eq!(eval_str("(clamp 5 1 10)").unwrap(), Value::Int(5));
+        assert_eq!(eval_str("(clamp 0 1 10)").unwrap(), Value::Int(1));
+        assert_eq!(eval_str("(clamp 15 1 10)").unwrap(), Value::Int(10));
+    }
+
+    #[test]
+    fn test_clamp_float() {
+        assert_eq!(eval_str("(clamp 0.5 1.0 10.0)").unwrap(), Value::Float(1.0));
+        assert_eq!(eval_str("(clamp 5.0 1.0 10.0)").unwrap(), Value::Float(5.0));
+    }
+
     // --- Nexl-written stdlib loading (M28) ---
 
     #[test]

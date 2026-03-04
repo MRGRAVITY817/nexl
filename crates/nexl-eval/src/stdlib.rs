@@ -34,6 +34,10 @@ pub fn standard_env() -> Rc<Env> {
     env.define("*", native("*", mul));
     env.define("/", native("/", div));
     env.define("mod", native("mod", modulo));
+    env.define("inc", native("inc", inc));
+    env.define("dec", native("dec", dec));
+    env.define("rem", native("rem", rem_fn));
+    env.define("quot", native("quot", quot));
 
     // Comparison
     env.define("=", native("=", eq));
@@ -42,6 +46,8 @@ pub fn standard_env() -> Rc<Env> {
     env.define(">", native(">", gt));
     env.define("<=", native("<=", le));
     env.define(">=", native(">=", ge));
+    env.define("compare", native("compare", compare));
+    env.define("clamp", native("clamp", clamp));
 
     // Logic (and/or are special forms for short-circuit evaluation)
     env.define("not", native("not", not));
@@ -378,6 +384,62 @@ fn modulo(args: &[Value]) -> Result<Value, String> {
     }
 }
 
+/// `(inc x)` — increment by 1. Polymorphic over Int and Float.
+fn inc(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("inc", args)?;
+    match v {
+        Value::Int(n) => Ok(Value::Int(n + 1)),
+        Value::Float(n) => Ok(Value::Float(n + 1.0)),
+        other => Err(type_mismatch("inc", "Int or Float", other)),
+    }
+}
+
+/// `(dec x)` — decrement by 1. Polymorphic over Int and Float.
+fn dec(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("dec", args)?;
+    match v {
+        Value::Int(n) => Ok(Value::Int(n - 1)),
+        Value::Float(n) => Ok(Value::Float(n - 1.0)),
+        other => Err(type_mismatch("dec", "Int or Float", other)),
+    }
+}
+
+/// `(rem a b)` — remainder with sign of dividend (truncated division).
+fn rem_fn(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("rem", args)?;
+    match (a, b) {
+        (Value::Int(n), Value::Int(d)) => {
+            if *d == 0 {
+                Err("remainder by zero".into())
+            } else {
+                Ok(Value::Int(n % d))
+            }
+        }
+        (Value::Float(n), Value::Float(d)) => Ok(Value::Float(n % d)),
+        (Value::Int(_), other) => Err(type_mismatch("rem", "Int", other)),
+        (Value::Float(_), other) => Err(type_mismatch("rem", "Float", other)),
+        (other, _) => Err(type_mismatch("rem", "Int or Float", other)),
+    }
+}
+
+/// `(quot a b)` — truncated division quotient.
+fn quot(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("quot", args)?;
+    match (a, b) {
+        (Value::Int(n), Value::Int(d)) => {
+            if *d == 0 {
+                Err("division by zero".into())
+            } else {
+                Ok(Value::Int(n / d))
+            }
+        }
+        (Value::Float(n), Value::Float(d)) => Ok(Value::Float((n / d).trunc())),
+        (Value::Int(_), other) => Err(type_mismatch("quot", "Int", other)),
+        (Value::Float(_), other) => Err(type_mismatch("quot", "Float", other)),
+        (other, _) => Err(type_mismatch("quot", "Int or Float", other)),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Comparison
 // ---------------------------------------------------------------------------
@@ -416,6 +478,46 @@ fn le(args: &[Value]) -> Result<Value, String> {
 fn ge(args: &[Value]) -> Result<Value, String> {
     let (a, b) = two_args(">=", args)?;
     cmp_op(">=", a, b, |o| o.is_ge())
+}
+
+/// `(compare a b)` — returns `:lt`, `:eq`, or `:gt` keyword.
+fn compare(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("compare", args)?;
+    let ord = match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x
+            .partial_cmp(y)
+            .ok_or_else(|| "compare: NaN is not comparable".to_string())?,
+        (Value::Str(x), Value::Str(y)) => x.cmp(y),
+        (Value::Int(_), other) => return Err(type_mismatch("compare", "Int", other)),
+        (Value::Float(_), other) => return Err(type_mismatch("compare", "Float", other)),
+        (Value::Str(_), other) => return Err(type_mismatch("compare", "Str", other)),
+        (other, _) => return Err(type_mismatch("compare", "Int, Float, or Str", other)),
+    };
+    let kw = match ord {
+        std::cmp::Ordering::Less => "lt",
+        std::cmp::Ordering::Equal => "eq",
+        std::cmp::Ordering::Greater => "gt",
+    };
+    Ok(Value::Keyword {
+        ns: None,
+        name: Rc::from(kw),
+    })
+}
+
+/// `(clamp x lo hi)` — restrict value to [lo, hi] range.
+fn clamp(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Int(x), Value::Int(lo), Value::Int(hi)] => Ok(Value::Int((*x).clamp(*lo, *hi))),
+        [Value::Float(x), Value::Float(lo), Value::Float(hi)] => {
+            Ok(Value::Float(x.clamp(*lo, *hi)))
+        }
+        [_, _, _] => Err("clamp: all arguments must be the same numeric type".into()),
+        _ => Err(format!(
+            "`clamp` requires exactly 3 arguments, got {}",
+            args.len()
+        )),
+    }
 }
 
 fn cmp_op(
