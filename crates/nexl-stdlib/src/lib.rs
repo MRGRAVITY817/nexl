@@ -22,6 +22,7 @@ pub mod str;
 pub mod sys;
 pub mod test;
 pub mod time;
+pub mod vec;
 
 /// A single stdlib function entry: `(name, implementation)`.
 pub type StdlibEntry = (
@@ -59,6 +60,7 @@ pub fn nexl_declaration_sources() -> &'static [(&'static str, &'static str)] {
         ("sys",      include_str!("../nexl/sys.nx")),
         ("option",   include_str!("../nexl/option_impl.nx")),
         ("result",   include_str!("../nexl/result_impl.nx")),
+        ("vec",      include_str!("../nexl/vec.nx")),
     ]
 }
 
@@ -74,6 +76,7 @@ pub fn nexl_stdlib_sources() -> &'static [(&'static str, &'static str)] {
     &[
         ("option", include_str!("../nexl/option_impl.nx")),
         ("result", include_str!("../nexl/result_impl.nx")),
+        ("vec",    include_str!("../nexl/vec_impl.nx")),
     ]
 }
 
@@ -101,6 +104,7 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("async", async_mod::entries()),
         ("sys", sys::entries()),
         ("gen", gen_mod::entries()),
+        ("vec", vec::entries()),
     ]
 }
 
@@ -155,7 +159,7 @@ mod tests {
             names,
             vec![
                 "core", "str", "math", "conv", "io", "json", "http", "db", "env", "time",
-                "random", "crypto", "log", "test", "net", "async", "sys", "gen"
+                "random", "crypto", "log", "test", "net", "async", "sys", "gen", "vec"
             ]
         );
     }

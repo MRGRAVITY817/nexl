@@ -7397,4 +7397,286 @@ mod tests {
             ]))
         );
     }
+
+    // ── vec module ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_vec_of() {
+        let result = eval_str("(vec/of 1 2 3)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn test_vec_repeat() {
+        let result = eval_str("(vec/repeat 3 0)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(0), Value::Int(0), Value::Int(0)]))
+        );
+    }
+
+    #[test]
+    fn test_vec_init() {
+        let result = eval_str("(vec/init 4 (fn [i] (* i i)))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(0),
+                Value::Int(1),
+                Value::Int(4),
+                Value::Int(9)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_chunk() {
+        let result = eval_str("(vec/chunk [1 2 3 4 5] 2)").unwrap();
+        let Value::Vec(chunks) = result else {
+            panic!("expected Vec")
+        };
+        assert_eq!(chunks.len(), 3);
+    }
+
+    #[test]
+    fn test_vec_window() {
+        let result = eval_str("(vec/window [1 2 3 4] 3)").unwrap();
+        let Value::Vec(wins) = result else {
+            panic!("expected Vec")
+        };
+        assert_eq!(wins.len(), 2);
+    }
+
+    #[test]
+    fn test_vec_split_at() {
+        let result = eval_str("(vec/split-at [1 2 3 4] 2)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Int(4)])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_span() {
+        let result = eval_str("(vec/span [1 2 3 4] (fn [x] (< x 3)))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Int(4)])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_insert() {
+        let result = eval_str("(vec/insert [1 2 3] 1 99)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(1),
+                Value::Int(99),
+                Value::Int(2),
+                Value::Int(3)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_remove_at() {
+        let result = eval_str("(vec/remove-at [1 2 3] 1)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn test_vec_swap() {
+        let result = eval_str("(vec/swap [1 2 3] 0 2)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Int(2), Value::Int(1)]))
+        );
+    }
+
+    #[test]
+    fn test_vec_rotate_left() {
+        let result = eval_str("(vec/rotate-left [1 2 3 4] 1)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(2),
+                Value::Int(3),
+                Value::Int(4),
+                Value::Int(1)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_rotate_right() {
+        let result = eval_str("(vec/rotate-right [1 2 3 4] 1)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(4),
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_permutations() {
+        let result = eval_str("(count (vec/permutations [1 2 3]))").unwrap();
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_vec_combinations() {
+        let result = eval_str("(count (vec/combinations [1 2 3] 2))").unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_vec_binary_search_found() {
+        let result = eval_str("(vec/binary-search [1 3 5 7] 5)").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(2)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_vec_binary_search_not_found() {
+        let result = eval_str("(vec/binary-search [1 3 5 7] 4)").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Err"),
+                fields: std::rc::Rc::new(vec![Value::Int(2)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_vec_dedup() {
+        let result = eval_str("(vec/dedup [1 1 2 3 3 3 2])").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3),
+                Value::Int(2)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_intersperse() {
+        let result = eval_str("(vec/intersperse [1 2 3] 0)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(1),
+                Value::Int(0),
+                Value::Int(2),
+                Value::Int(0),
+                Value::Int(3)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_fold_right() {
+        let result = eval_str("(vec/fold-right [1 2 3] + 0)").unwrap();
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_vec_scan() {
+        let result = eval_str("(vec/scan [1 2 3 4] + 0)").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(0),
+                Value::Int(1),
+                Value::Int(3),
+                Value::Int(6),
+                Value::Int(10)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_vec_sum() {
+        let result = eval_str("(vec/sum [1 2 3 4])").unwrap();
+        assert_eq!(result, Value::Int(10));
+    }
+
+    #[test]
+    fn test_vec_product() {
+        let result = eval_str("(vec/product [1 2 3 4])").unwrap();
+        assert_eq!(result, Value::Int(24));
+    }
+
+    #[test]
+    fn test_vec_min_by() {
+        let result = eval_str(r#"(vec/min-by ["banana" "apple" "cherry"] count)"#).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Str(std::rc::Rc::from("apple"))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_vec_max_by() {
+        let result = eval_str(r#"(vec/max-by ["banana" "apple" "cherry"] count)"#).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Str(std::rc::Rc::from("banana"))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_vec_unzip() {
+        let result = eval_str("(vec/unzip [[1 :a] [2 :b] [3 :c]])").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Vec(std::rc::Rc::new(vec![
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3)
+                ])),
+                Value::Vec(std::rc::Rc::new(vec![
+                    Value::Keyword { ns: None, name: std::rc::Rc::from("a") },
+                    Value::Keyword { ns: None, name: std::rc::Rc::from("b") },
+                    Value::Keyword { ns: None, name: std::rc::Rc::from("c") },
+                ])),
+            ]))
+        );
+    }
 }

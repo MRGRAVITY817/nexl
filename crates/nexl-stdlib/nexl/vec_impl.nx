@@ -1,0 +1,94 @@
+;; stdlib/vec — Nexl-written vector combinators.
+;;
+;; These functions are evaluated at startup after Rust native modules are
+;; registered. Each `defn` uses a qualified name (vec/fn-name) to register
+;; into the `vec` module.
+;;
+;; Note: `get` and `last` return Option values in Nexl — unwrap with `match`.
+;; `map-indexed` calls f as (f index element) — index is first.
+
+(defn vec/dedup [xs]
+  (reduce (fn [acc x]
+            (match (last acc)
+              (Some prev) (if (= prev x) acc (append acc x))
+              None (append acc x)))
+          []
+          xs))
+
+(defn vec/dedup-by [xs eq-fn]
+  (reduce (fn [acc x]
+            (match (last acc)
+              (Some prev) (if (eq-fn prev x) acc (append acc x))
+              None (append acc x)))
+          []
+          xs))
+
+(defn vec/intersperse [xs sep]
+  (if (<= (count xs) 1)
+    xs
+    (flatten (map-indexed (fn [i x]
+                            (if (= i 0) [x] [sep x]))
+                          xs))))
+
+(defn vec/fold-right [xs f init]
+  (reduce (fn [acc x] (f x acc))
+          init
+          (reverse xs)))
+
+(defn vec/scan [xs f init]
+  (reduce (fn [acc x]
+            (match (last acc)
+              (Some prev) (append acc (f prev x))
+              None acc))
+          [init]
+          xs))
+
+(defn vec/sum [xs]
+  (reduce + 0 xs))
+
+(defn vec/product [xs]
+  (reduce * 1 xs))
+
+(defn vec/min-by [xs key-fn]
+  (if (empty? xs)
+    None
+    (match (first xs)
+      (Some head)
+      (Some (reduce (fn [best x]
+                      (if (= (compare (key-fn x) (key-fn best)) :lt)
+                        x
+                        best))
+                    head
+                    xs))
+      None None)))
+
+(defn vec/max-by [xs key-fn]
+  (if (empty? xs)
+    None
+    (match (first xs)
+      (Some head)
+      (Some (reduce (fn [best x]
+                      (if (= (compare (key-fn x) (key-fn best)) :gt)
+                        x
+                        best))
+                    head
+                    xs))
+      None None)))
+
+(defn vec/unzip [pairs]
+  (reduce (fn [acc pair]
+            (match (get pair 0)
+              (Some a)
+              (match (get pair 1)
+                (Some b)
+                (match (get acc 0)
+                  (Some firsts)
+                  (match (get acc 1)
+                    (Some seconds)
+                    [(append firsts a) (append seconds b)]
+                    None acc)
+                  None acc)
+                None acc)
+              None acc))
+          [[] []]
+          pairs))

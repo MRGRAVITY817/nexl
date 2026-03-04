@@ -1,0 +1,369 @@
+;; stdlib/vec — vector-specific operations.
+;;
+;; This file is the source of truth for `vec` module documentation.
+;; Rust implementations live in crates/nexl-stdlib/src/vec.rs.
+;; Nexl combinators live in crates/nexl-stdlib/nexl/vec_impl.nx.
+
+(defn vec/of
+  """
+  Construct a Vec from variadic arguments.
+
+  ## Examples
+
+  ```nexl
+  (vec/of 1 2 3)       ; => [1 2 3]
+  (vec/of)             ; => []
+  (vec/of :a :b :c)    ; => [:a :b :c]
+  ```
+  """
+  [& args]
+  (native "vec/of" args))
+
+(defn vec/repeat
+  """
+  Return a Vec of `n` copies of `val`.
+
+  ## Examples
+
+  ```nexl
+  (vec/repeat 3 0)      ; => [0 0 0]
+  (vec/repeat 0 :x)     ; => []
+  ```
+  """
+  [n val]
+  (native "vec/repeat" n val))
+
+(defn vec/init
+  """
+  Build a Vec of length `n` by calling `(f i)` for each index `i` in `[0, n)`.
+
+  ## Examples
+
+  ```nexl
+  (vec/init 4 (fn [i] (* i i)))   ; => [0 1 4 9]
+  (vec/init 3 identity)           ; => [0 1 2]
+  ```
+  """
+  [n f]
+  (native "vec/init" n f))
+
+(defn vec/chunk
+  """
+  Split `xs` into consecutive chunks of exactly `n` elements.
+  The last chunk may be shorter if `xs` length is not a multiple of `n`.
+
+  ## Examples
+
+  ```nexl
+  (vec/chunk [1 2 3 4 5] 2)   ; => [[1 2] [3 4] [5]]
+  (vec/chunk [1 2 3 4] 2)     ; => [[1 2] [3 4]]
+  ```
+  """
+  [xs n]
+  (native "vec/chunk" xs n))
+
+(defn vec/window
+  """
+  Return all contiguous sliding windows of size `n` from `xs`.
+
+  ## Examples
+
+  ```nexl
+  (vec/window [1 2 3 4] 3)   ; => [[1 2 3] [2 3 4]]
+  (vec/window [1 2] 3)       ; => []
+  ```
+  """
+  [xs n]
+  (native "vec/window" xs n))
+
+(defn vec/split-at
+  """
+  Split `xs` at index `n`, returning `[[before] [from-n-onward]]`.
+
+  ## Examples
+
+  ```nexl
+  (vec/split-at [1 2 3 4] 2)   ; => [[1 2] [3 4]]
+  (vec/split-at [1 2 3] 0)     ; => [[] [1 2 3]]
+  (vec/split-at [1 2 3] 10)    ; => [[1 2 3] []]
+  ```
+  """
+  [xs n]
+  (native "vec/split-at" xs n))
+
+(defn vec/span
+  """
+  Split `xs` at the first element where `(pred x)` returns false.
+  Returns `[[all-matching-prefix] [rest]]`.
+
+  ## Examples
+
+  ```nexl
+  (vec/span [1 2 3 4] (fn [x] (< x 3)))   ; => [[1 2] [3 4]]
+  (vec/span [1 2 3] (fn [x] true))         ; => [[1 2 3] []]
+  (vec/span [] pos?)                       ; => [[] []]
+  ```
+  """
+  [xs pred]
+  (native "vec/span" xs pred))
+
+(defn vec/insert
+  """
+  Return a new Vec with `val` inserted at index `i`.
+
+  ## Examples
+
+  ```nexl
+  (vec/insert [1 2 3] 1 99)    ; => [1 99 2 3]
+  (vec/insert [1 2 3] 0 99)    ; => [99 1 2 3]
+  (vec/insert [1 2 3] 3 99)    ; => [1 2 3 99]
+  ```
+  """
+  [xs i val]
+  (native "vec/insert" xs i val))
+
+(defn vec/remove-at
+  """
+  Return a new Vec with the element at index `i` removed.
+
+  ## Examples
+
+  ```nexl
+  (vec/remove-at [1 2 3] 1)    ; => [1 3]
+  (vec/remove-at [1 2 3] 0)    ; => [2 3]
+  ```
+  """
+  [xs i]
+  (native "vec/remove-at" xs i))
+
+(defn vec/swap
+  """
+  Return a new Vec with elements at indices `i` and `j` swapped.
+
+  ## Examples
+
+  ```nexl
+  (vec/swap [1 2 3] 0 2)   ; => [3 2 1]
+  (vec/swap [1 2 3] 1 1)   ; => [1 2 3]
+  ```
+  """
+  [xs i j]
+  (native "vec/swap" xs i j))
+
+(defn vec/rotate-left
+  """
+  Rotate `xs` left by `n` positions. Negative `n` rotates right.
+
+  ## Examples
+
+  ```nexl
+  (vec/rotate-left [1 2 3 4] 1)    ; => [2 3 4 1]
+  (vec/rotate-left [1 2 3 4] 2)    ; => [3 4 1 2]
+  ```
+  """
+  [xs n]
+  (native "vec/rotate-left" xs n))
+
+(defn vec/rotate-right
+  """
+  Rotate `xs` right by `n` positions. Negative `n` rotates left.
+
+  ## Examples
+
+  ```nexl
+  (vec/rotate-right [1 2 3 4] 1)   ; => [4 1 2 3]
+  (vec/rotate-right [1 2 3 4] 2)   ; => [3 4 1 2]
+  ```
+  """
+  [xs n]
+  (native "vec/rotate-right" xs n))
+
+(defn vec/permutations
+  """
+  Return all orderings of `xs` as a Vec of Vecs. O(n!) — avoid on large inputs.
+
+  ## Examples
+
+  ```nexl
+  (vec/permutations [1 2])       ; => [[1 2] [2 1]]
+  (vec/permutations [1 2 3])     ; => 6 permutations
+  (vec/permutations [])          ; => [[]]
+  ```
+  """
+  [xs]
+  (native "vec/permutations" xs))
+
+(defn vec/combinations
+  """
+  Return all ways to choose `k` elements from `xs` preserving order. O(C(n,k)).
+
+  ## Examples
+
+  ```nexl
+  (vec/combinations [1 2 3] 2)   ; => [[1 2] [1 3] [2 3]]
+  (vec/combinations [1 2 3] 0)   ; => [[]]
+  ```
+  """
+  [xs k]
+  (native "vec/combinations" xs k))
+
+(defn vec/binary-search
+  """
+  Binary-search a sorted Vec for `target`.
+
+  Returns `(Ok index)` if found, or `(Err insertion-point)` if not present.
+
+  ## Examples
+
+  ```nexl
+  (vec/binary-search [1 3 5 7] 5)   ; => (Ok 2)
+  (vec/binary-search [1 3 5 7] 4)   ; => (Err 2)
+  (vec/binary-search [1 3 5 7] 0)   ; => (Err 0)
+  ```
+  """
+  [xs target]
+  (native "vec/binary-search" xs target))
+
+(defn vec/dedup
+  """
+  Remove consecutive duplicate elements from `xs`.
+
+  ## Examples
+
+  ```nexl
+  (vec/dedup [1 1 2 3 3 3 2])   ; => [1 2 3 2]
+  (vec/dedup [])                ; => []
+  ```
+  """
+  [xs]
+  (native "vec/dedup" xs))
+
+(defn vec/dedup-by
+  """
+  Remove consecutive elements where `(eq-fn prev x)` returns true.
+
+  ## Examples
+
+  ```nexl
+  (vec/dedup-by ["a" "A" "b"] (fn [a b] (= (str/lower a) (str/lower b))))
+  ; => ["a" "b"]
+  ```
+  """
+  [xs eq-fn]
+  (native "vec/dedup-by" xs eq-fn))
+
+(defn vec/intersperse
+  """
+  Insert `sep` between every pair of adjacent elements.
+
+  ## Examples
+
+  ```nexl
+  (vec/intersperse [1 2 3] 0)   ; => [1 0 2 0 3]
+  (vec/intersperse [1] 0)       ; => [1]
+  (vec/intersperse [] 0)        ; => []
+  ```
+  """
+  [xs sep]
+  (native "vec/intersperse" xs sep))
+
+(defn vec/fold-right
+  """
+  Fold from the right. `f` is called as `(f element accumulator)`.
+
+  ## Examples
+
+  ```nexl
+  (vec/fold-right [1 2 3] (fn [x acc] (cons x acc)) [])
+  ; => [1 2 3]   (same as identity for lists)
+
+  (vec/fold-right [1 2 3] + 0)   ; => 6
+  ```
+  """
+  [xs f init]
+  (native "vec/fold-right" xs f init))
+
+(defn vec/scan
+  """
+  Running fold: return a Vec of all intermediate accumulator values, starting with `init`.
+  The result has `(+ 1 (count xs))` elements.
+
+  ## Examples
+
+  ```nexl
+  (vec/scan [1 2 3 4] + 0)   ; => [0 1 3 6 10]
+  ```
+  """
+  [xs f init]
+  (native "vec/scan" xs f init))
+
+(defn vec/sum
+  """
+  Sum all elements of a Vec of numbers.
+
+  ## Examples
+
+  ```nexl
+  (vec/sum [1 2 3 4])    ; => 10
+  (vec/sum [1.0 2.5])    ; => 3.5
+  (vec/sum [])           ; => 0
+  ```
+  """
+  [xs]
+  (native "vec/sum" xs))
+
+(defn vec/product
+  """
+  Multiply all elements of a Vec of numbers.
+
+  ## Examples
+
+  ```nexl
+  (vec/product [1 2 3 4])   ; => 24
+  (vec/product [])           ; => 1
+  ```
+  """
+  [xs]
+  (native "vec/product" xs))
+
+(defn vec/min-by
+  """
+  Return `(Some element)` with the smallest `(key-fn element)`, or `None` if `xs` is empty.
+
+  ## Examples
+
+  ```nexl
+  (vec/min-by ["banana" "apple" "cherry"] count)   ; => (Some "apple")
+  (vec/min-by [] count)                            ; => None
+  ```
+  """
+  [xs key-fn]
+  (native "vec/min-by" xs key-fn))
+
+(defn vec/max-by
+  """
+  Return `(Some element)` with the largest `(key-fn element)`, or `None` if `xs` is empty.
+
+  ## Examples
+
+  ```nexl
+  (vec/max-by ["banana" "apple" "cherry"] count)   ; => (Some "cherry")
+  (vec/max-by [] count)                            ; => None
+  ```
+  """
+  [xs key-fn]
+  (native "vec/max-by" xs key-fn))
+
+(defn vec/unzip
+  """
+  Convert a Vec of `[a b]` pairs into `[[all-a] [all-b]]`.
+
+  ## Examples
+
+  ```nexl
+  (vec/unzip [[1 :a] [2 :b] [3 :c]])
+  ; => [[1 2 3] [:a :b :c]]
+  ```
+  """
+  [pairs]
+  (native "vec/unzip" pairs))
