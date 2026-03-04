@@ -18,6 +18,8 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("->int", to_int as fn(&[Value]) -> Result<Value, String>),
         ("->float", to_float),
         ("->str", to_str),
+        ("->bool", to_bool),
+        ("->char", to_char),
     ]
 }
 
@@ -113,6 +115,47 @@ fn to_str(args: &[Value]) -> Result<Value, String> {
     match v {
         Value::Str(s) => Ok(Value::Str(s.clone())),
         other => Ok(Value::Str(Rc::from(other.to_string().as_str()))),
+    }
+}
+
+/// `(conv/->bool x)` — convert to Bool.
+///
+/// - Bool: identity.
+/// - Int: 0 → false, else true.
+/// - Float: 0.0 → false, else true.
+/// - Str: "" → false, else true.
+fn to_bool(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("->bool", args)?;
+    let result = match v {
+        Value::Bool(b) => *b,
+        Value::Int(n) => *n != 0,
+        Value::Float(f) => *f != 0.0,
+        Value::Str(s) => !s.is_empty(),
+        other => {
+            return Err(format!(
+                "`conv/->bool` cannot convert {} to Bool",
+                other.type_name()
+            ))
+        }
+    };
+    Ok(Value::Bool(result))
+}
+
+/// `(conv/->char x)` — convert codepoint Int to Char.
+///
+/// Returns `(Some Char)` if valid Unicode scalar value, else `None`.
+fn to_char(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("->char", args)?;
+    match v {
+        Value::Int(n) => match u32::try_from(*n).ok().and_then(char::from_u32) {
+            Some(c) => Ok(option_some(Value::Char(c))),
+            None => Ok(option_none()),
+        },
+        Value::Char(c) => Ok(option_some(Value::Char(*c))),
+        other => Err(format!(
+            "`conv/->char` cannot convert {} to Char",
+            other.type_name()
+        )),
     }
 }
 

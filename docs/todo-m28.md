@@ -84,7 +84,7 @@ Reference: `docs/stdlib-spec.md`
 
 ## `conv` Module Enrichment
 
-- [ ] **New conversions** — `->bool`, `->char`
+- [x] **New conversions** — `->bool`, `->char`
   - `->bool`: 0/0.0/""/false → false, all else → true
   - `->char`: codepoint Int to Char (None if invalid)
 
