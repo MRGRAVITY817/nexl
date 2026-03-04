@@ -62,7 +62,7 @@ Reference: `docs/stdlib-spec.md`
 
 ## `str` Module Enrichment
 
-- [ ] **String functions** — ~20 new functions (Rust)
+- [x] **String functions** — ~20 new functions (Rust)
   - `split-first`, `split-lines`: additional split variants
   - `capitalize`, `title`: case transforms
   - `replace-first`, `last-index-of`: search variants

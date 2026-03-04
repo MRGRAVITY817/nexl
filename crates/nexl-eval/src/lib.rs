@@ -6246,6 +6246,103 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- str module enrichment (M28) ---
+
+    #[test]
+    fn test_str_split_lines() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(r#"(count (str/split-lines "a\nb\nc"))"#, &env).unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_str_capitalize() {
+        assert_eq!(
+            eval_str(r#"(str/capitalize "hello world")"#).unwrap(),
+            Value::Str(Rc::from("Hello world"))
+        );
+    }
+
+    #[test]
+    fn test_str_title() {
+        assert_eq!(
+            eval_str(r#"(str/title "hello world")"#).unwrap(),
+            Value::Str(Rc::from("Hello World"))
+        );
+    }
+
+    #[test]
+    fn test_str_pad_start() {
+        assert_eq!(
+            eval_str(r#"(str/pad-start "5" 3 "0")"#).unwrap(),
+            Value::Str(Rc::from("005"))
+        );
+    }
+
+    #[test]
+    fn test_str_repeat() {
+        assert_eq!(
+            eval_str(r#"(str/repeat "ab" 3)"#).unwrap(),
+            Value::Str(Rc::from("ababab"))
+        );
+    }
+
+    #[test]
+    fn test_str_reverse() {
+        assert_eq!(
+            eval_str(r#"(str/reverse "hello")"#).unwrap(),
+            Value::Str(Rc::from("olleh"))
+        );
+    }
+
+    #[test]
+    fn test_str_byte_count() {
+        assert_eq!(
+            eval_str(r#"(str/byte-count "café")"#).unwrap(),
+            Value::Int(5) // é is 2 bytes in UTF-8
+        );
+    }
+
+    #[test]
+    fn test_str_char_count() {
+        assert_eq!(
+            eval_str(r#"(str/char-count "café")"#).unwrap(),
+            Value::Int(4)
+        );
+    }
+
+    #[test]
+    fn test_str_kebab_case() {
+        assert_eq!(
+            eval_str(r#"(str/kebab-case "helloWorld")"#).unwrap(),
+            Value::Str(Rc::from("hello-world"))
+        );
+    }
+
+    #[test]
+    fn test_str_snake_case() {
+        assert_eq!(
+            eval_str(r#"(str/snake-case "helloWorld")"#).unwrap(),
+            Value::Str(Rc::from("hello_world"))
+        );
+    }
+
+    #[test]
+    fn test_str_camel_case() {
+        assert_eq!(
+            eval_str(r#"(str/camel-case "hello-world")"#).unwrap(),
+            Value::Str(Rc::from("helloWorld"))
+        );
+    }
+
+    #[test]
+    fn test_str_substring() {
+        assert_eq!(
+            eval_str(r#"(str/substring "hello world" 0 5)"#).unwrap(),
+            Value::Str(Rc::from("hello"))
+        );
+    }
+
     // --- More HOFs (M28) ---
 
     #[test]

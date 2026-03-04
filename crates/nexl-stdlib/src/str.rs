@@ -29,6 +29,25 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("chars", chars),
         ("graphemes", graphemes),
         ("format", str_format),
+        ("split-first", split_first),
+        ("split-lines", split_lines),
+        ("capitalize", capitalize),
+        ("title", title),
+        ("replace-first", replace_first),
+        ("last-index-of", last_index_of),
+        ("pad-start", pad_start),
+        ("pad-end", pad_end),
+        ("repeat", str_repeat),
+        ("reverse", str_reverse),
+        ("byte-count", byte_count),
+        ("char-count", char_count),
+        ("from-chars", from_chars),
+        ("to-bytes", to_bytes),
+        ("from-bytes", from_bytes),
+        ("kebab-case", kebab_case),
+        ("snake-case", snake_case),
+        ("camel-case", camel_case),
+        ("substring", substring),
     ]
 }
 
@@ -268,6 +287,301 @@ fn display_value(v: &Value) -> String {
         Value::Unit => "()".to_string(),
         other => format!("{other}"),
     }
+}
+
+/// `(str/split-first s sep)` — split on first occurrence, return [before after].
+fn split_first(args: &[Value]) -> Result<Value, String> {
+    let (s, sep) = two_args("str/split-first", args)?;
+    let s = expect_str("str/split-first", s)?;
+    let sep = expect_str("str/split-first", sep)?;
+    match s.split_once(sep.as_ref()) {
+        Some((before, after)) => Ok(Value::Vec(Rc::new(vec![
+            Value::Str(Rc::from(before)),
+            Value::Str(Rc::from(after)),
+        ]))),
+        None => Ok(Value::Vec(Rc::new(vec![
+            Value::Str(Rc::clone(s)),
+            Value::Str(Rc::from("")),
+        ]))),
+    }
+}
+
+/// `(str/split-lines s)` — split string into lines.
+fn split_lines(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/split-lines", args)?;
+    let s = expect_str("str/split-lines", v)?;
+    let lines: Vec<Value> = s.lines().map(|l| Value::Str(Rc::from(l))).collect();
+    Ok(Value::Vec(Rc::new(lines)))
+}
+
+/// `(str/capitalize s)` — uppercase first char, lowercase rest.
+fn capitalize(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/capitalize", args)?;
+    let s = expect_str("str/capitalize", v)?;
+    if s.is_empty() {
+        return Ok(Value::Str(Rc::from("")));
+    }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap().to_uppercase().to_string();
+    let rest: String = chars.collect::<String>().to_lowercase();
+    Ok(Value::Str(Rc::from(format!("{first}{rest}").as_str())))
+}
+
+/// `(str/title s)` — capitalize first char of each word.
+fn title(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/title", args)?;
+    let s = expect_str("str/title", v)?;
+    let result: String = s
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(c) => format!("{}{}", c.to_uppercase(), chars.collect::<String>()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok(Value::Str(Rc::from(result.as_str())))
+}
+
+/// `(str/replace-first s from to)` — replace first occurrence only.
+fn replace_first(args: &[Value]) -> Result<Value, String> {
+    let (s, from, to) = three_args("str/replace-first", args)?;
+    let s = expect_str("str/replace-first", s)?;
+    let from = expect_str("str/replace-first", from)?;
+    let to = expect_str("str/replace-first", to)?;
+    Ok(Value::Str(Rc::from(
+        s.replacen(from.as_ref(), to.as_ref(), 1).as_str(),
+    )))
+}
+
+/// `(str/last-index-of s substr)` — return last occurrence index as Option.
+fn last_index_of(args: &[Value]) -> Result<Value, String> {
+    let (s, substr) = two_args("str/last-index-of", args)?;
+    let s = expect_str("str/last-index-of", s)?;
+    let substr = expect_str("str/last-index-of", substr)?;
+    match s.rfind(substr.as_ref()) {
+        Some(idx) => Ok(Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("Some"),
+            fields: Rc::new(vec![Value::Int(idx as i64)]),
+        }),
+        None => Ok(Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("None"),
+            fields: Rc::new(vec![]),
+        }),
+    }
+}
+
+/// `(str/pad-start s width ch)` — left-pad string to width with char.
+fn pad_start(args: &[Value]) -> Result<Value, String> {
+    let (s, width, ch) = three_args("str/pad-start", args)?;
+    let s = expect_str("str/pad-start", s)?;
+    let Value::Int(w) = width else {
+        return Err(format!("`str/pad-start` width must be Int, got {}", width.type_name()));
+    };
+    let pad_char = match ch {
+        Value::Str(c) => c.chars().next().unwrap_or(' '),
+        Value::Char(c) => *c,
+        _ => return Err(format!("`str/pad-start` padding must be Str or Char, got {}", ch.type_name())),
+    };
+    let w = *w as usize;
+    let s_len = s.chars().count();
+    if s_len >= w {
+        return Ok(Value::Str(Rc::clone(s)));
+    }
+    let padding: String = std::iter::repeat(pad_char).take(w - s_len).collect();
+    Ok(Value::Str(Rc::from(format!("{padding}{s}").as_str())))
+}
+
+/// `(str/pad-end s width ch)` — right-pad string to width with char.
+fn pad_end(args: &[Value]) -> Result<Value, String> {
+    let (s, width, ch) = three_args("str/pad-end", args)?;
+    let s = expect_str("str/pad-end", s)?;
+    let Value::Int(w) = width else {
+        return Err(format!("`str/pad-end` width must be Int, got {}", width.type_name()));
+    };
+    let pad_char = match ch {
+        Value::Str(c) => c.chars().next().unwrap_or(' '),
+        Value::Char(c) => *c,
+        _ => return Err(format!("`str/pad-end` padding must be Str or Char, got {}", ch.type_name())),
+    };
+    let w = *w as usize;
+    let s_len = s.chars().count();
+    if s_len >= w {
+        return Ok(Value::Str(Rc::clone(s)));
+    }
+    let padding: String = std::iter::repeat(pad_char).take(w - s_len).collect();
+    Ok(Value::Str(Rc::from(format!("{s}{padding}").as_str())))
+}
+
+/// `(str/repeat s n)` — repeat string n times.
+fn str_repeat(args: &[Value]) -> Result<Value, String> {
+    let (s, n) = two_args("str/repeat", args)?;
+    let s = expect_str("str/repeat", s)?;
+    let Value::Int(n) = n else {
+        return Err(format!("`str/repeat` n must be Int, got {}", n.type_name()));
+    };
+    Ok(Value::Str(Rc::from(s.repeat(*n as usize).as_str())))
+}
+
+/// `(str/reverse s)` — reverse the string (by Unicode scalar value).
+fn str_reverse(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/reverse", args)?;
+    let s = expect_str("str/reverse", v)?;
+    Ok(Value::Str(Rc::from(s.chars().rev().collect::<String>().as_str())))
+}
+
+/// `(str/byte-count s)` — number of bytes (UTF-8).
+fn byte_count(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/byte-count", args)?;
+    let s = expect_str("str/byte-count", v)?;
+    Ok(Value::Int(s.len() as i64))
+}
+
+/// `(str/char-count s)` — number of Unicode scalar values.
+fn char_count(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/char-count", args)?;
+    let s = expect_str("str/char-count", v)?;
+    Ok(Value::Int(s.chars().count() as i64))
+}
+
+/// `(str/from-chars chars)` — build string from Vec of Char.
+fn from_chars(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/from-chars", args)?;
+    let Value::Vec(items) = v else {
+        return Err(format!("`str/from-chars` expected Vec, got {}", v.type_name()));
+    };
+    let mut s = String::new();
+    for item in items.iter() {
+        match item {
+            Value::Char(c) => s.push(*c),
+            other => return Err(format!("`str/from-chars` expected Char, got {}", other.type_name())),
+        }
+    }
+    Ok(Value::Str(Rc::from(s.as_str())))
+}
+
+/// `(str/to-bytes s)` — return Vec of Int (UTF-8 bytes).
+fn to_bytes(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/to-bytes", args)?;
+    let s = expect_str("str/to-bytes", v)?;
+    let bytes: Vec<Value> = s.as_bytes().iter().map(|b| Value::Int(*b as i64)).collect();
+    Ok(Value::Vec(Rc::new(bytes)))
+}
+
+/// `(str/from-bytes bytes)` — build string from Vec of Int (UTF-8 bytes).
+fn from_bytes(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/from-bytes", args)?;
+    let Value::Vec(items) = v else {
+        return Err(format!("`str/from-bytes` expected Vec, got {}", v.type_name()));
+    };
+    let mut bytes = Vec::new();
+    for item in items.iter() {
+        match item {
+            Value::Int(n) => bytes.push(*n as u8),
+            other => return Err(format!("`str/from-bytes` expected Int, got {}", other.type_name())),
+        }
+    }
+    match String::from_utf8(bytes) {
+        Ok(s) => Ok(Value::Str(Rc::from(s.as_str()))),
+        Err(e) => Err(format!("`str/from-bytes` invalid UTF-8: {e}")),
+    }
+}
+
+/// `(str/kebab-case s)` — convert to kebab-case.
+fn kebab_case(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/kebab-case", args)?;
+    let s = expect_str("str/kebab-case", v)?;
+    Ok(Value::Str(Rc::from(to_case(s, '-').as_str())))
+}
+
+/// `(str/snake-case s)` — convert to snake_case.
+fn snake_case(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/snake-case", args)?;
+    let s = expect_str("str/snake-case", v)?;
+    Ok(Value::Str(Rc::from(to_case(s, '_').as_str())))
+}
+
+/// `(str/camel-case s)` — convert to camelCase.
+fn camel_case(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("str/camel-case", args)?;
+    let s = expect_str("str/camel-case", v)?;
+    let words = split_words(s);
+    let mut result = String::new();
+    for (i, word) in words.iter().enumerate() {
+        if i == 0 {
+            result.push_str(&word.to_lowercase());
+        } else {
+            let mut chars = word.chars();
+            if let Some(c) = chars.next() {
+                result.push_str(&c.to_uppercase().to_string());
+                result.push_str(&chars.collect::<String>().to_lowercase());
+            }
+        }
+    }
+    Ok(Value::Str(Rc::from(result.as_str())))
+}
+
+/// `(str/substring s start end)` — extract substring by char indices.
+fn substring(args: &[Value]) -> Result<Value, String> {
+    let (s, start, end) = three_args("str/substring", args)?;
+    let s = expect_str("str/substring", s)?;
+    let Value::Int(start) = start else {
+        return Err(format!("`str/substring` start must be Int, got {}", start.type_name()));
+    };
+    let Value::Int(end) = end else {
+        return Err(format!("`str/substring` end must be Int, got {}", end.type_name()));
+    };
+    let chars: Vec<char> = s.chars().collect();
+    let start = *start as usize;
+    let end = (*end as usize).min(chars.len());
+    if start > end || start > chars.len() {
+        return Ok(Value::Str(Rc::from("")));
+    }
+    let result: String = chars[start..end].iter().collect();
+    Ok(Value::Str(Rc::from(result.as_str())))
+}
+
+/// Split a string into words at case boundaries, hyphens, underscores, spaces.
+fn split_words(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut prev_lower = false;
+    for ch in s.chars() {
+        if ch == '-' || ch == '_' || ch == ' ' {
+            if !current.is_empty() {
+                words.push(current.clone());
+                current.clear();
+            }
+            prev_lower = false;
+        } else if ch.is_uppercase() && prev_lower {
+            if !current.is_empty() {
+                words.push(current.clone());
+                current.clear();
+            }
+            current.push(ch);
+            prev_lower = false;
+        } else {
+            current.push(ch);
+            prev_lower = ch.is_lowercase();
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
+/// Convert string to given separator case.
+fn to_case(s: &str, sep: char) -> String {
+    split_words(s)
+        .iter()
+        .map(|w| w.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(&sep.to_string())
 }
 
 #[cfg(test)]
