@@ -95,6 +95,20 @@ pub fn standard_env() -> Rc<Env> {
     env.define("into", native("into", into_fn));
     env.define("concat", native("concat", concat_fn));
     env.define("empty", native("empty", empty_fn));
+    env.define("merge", native("merge", merge_fn));
+    env.define("merge-with", native("merge-with", merge_with_fn));
+    env.define("select-keys", native("select-keys", select_keys_fn));
+    env.define("rename-keys", native("rename-keys", rename_keys_fn));
+    env.define("zipmap", native("zipmap", zipmap_fn));
+    env.define("dissoc", native("dissoc", dissoc_fn));
+    env.define("disj", native("disj", disj_fn));
+    env.define(
+        "symmetric-difference",
+        native("symmetric-difference", symmetric_difference_fn),
+    );
+    env.define("subset?", native("subset?", subset_pred));
+    env.define("superset?", native("superset?", superset_pred));
+    env.define("disjoint?", native("disjoint?", disjoint_pred));
 
     // Bitwise operations
     env.define("bit-and", native("bit-and", bit_and));
@@ -834,6 +848,194 @@ fn empty_fn(args: &[Value]) -> Result<Value, String> {
         Value::Set(_) => Ok(Value::Set(Rc::new(Default::default()))),
         Value::Str(_) => Ok(Value::Str(Rc::from(""))),
         other => Err(type_mismatch("empty", "Vec, Map, Set, or Str", other)),
+    }
+}
+
+/// `(merge & maps)` — merge maps, rightmost wins on conflict.
+fn merge_fn(args: &[Value]) -> Result<Value, String> {
+    let mut result = nexl_runtime::value::NexlMap::new();
+    for arg in args {
+        match arg {
+            Value::Map(m) => {
+                for (k, v) in m.iter() {
+                    result = result.put(k.clone(), v.clone());
+                }
+            }
+            other => return Err(type_mismatch("merge", "Map", other)),
+        }
+    }
+    Ok(Value::Map(Rc::new(result)))
+}
+
+/// `(merge-with f & maps)` — merge maps, resolve conflicts with f.
+fn merge_with_fn(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("`merge-with` requires at least 1 argument (a function)".into());
+    }
+    let f = &args[0];
+    let mut result = nexl_runtime::value::NexlMap::new();
+    for arg in &args[1..] {
+        match arg {
+            Value::Map(m) => {
+                for (k, v) in m.iter() {
+                    if let Some(existing) = result.get(k) {
+                        let merged = nexl_runtime::call_value(f, &[existing.clone(), v.clone()])?;
+                        result = result.put(k.clone(), merged);
+                    } else {
+                        result = result.put(k.clone(), v.clone());
+                    }
+                }
+            }
+            other => return Err(type_mismatch("merge-with", "Map", other)),
+        }
+    }
+    Ok(Value::Map(Rc::new(result)))
+}
+
+/// `(select-keys m ks)` — return submap with only the given keys.
+fn select_keys_fn(args: &[Value]) -> Result<Value, String> {
+    let (map_val, keys_val) = two_args("select-keys", args)?;
+    match (map_val, keys_val) {
+        (Value::Map(m), Value::Vec(keys)) => {
+            let mut result = nexl_runtime::value::NexlMap::new();
+            for k in keys.iter() {
+                if let Some(v) = m.get(k) {
+                    result = result.put(k.clone(), v.clone());
+                }
+            }
+            Ok(Value::Map(Rc::new(result)))
+        }
+        (Value::Map(_), other) => Err(type_mismatch("select-keys", "Vec", other)),
+        (other, _) => Err(type_mismatch("select-keys", "Map", other)),
+    }
+}
+
+/// `(rename-keys m kmap)` — rename keys in map using kmap as old→new mapping.
+fn rename_keys_fn(args: &[Value]) -> Result<Value, String> {
+    let (map_val, kmap_val) = two_args("rename-keys", args)?;
+    match (map_val, kmap_val) {
+        (Value::Map(m), Value::Map(kmap)) => {
+            let mut result = nexl_runtime::value::NexlMap::new();
+            for (k, v) in m.iter() {
+                let new_key = kmap.get(k).unwrap_or(k);
+                result = result.put(new_key.clone(), v.clone());
+            }
+            Ok(Value::Map(Rc::new(result)))
+        }
+        (Value::Map(_), other) => Err(type_mismatch("rename-keys", "Map", other)),
+        (other, _) => Err(type_mismatch("rename-keys", "Map", other)),
+    }
+}
+
+/// `(zipmap keys vals)` — create map from parallel key/value vectors.
+fn zipmap_fn(args: &[Value]) -> Result<Value, String> {
+    let (keys_val, vals_val) = two_args("zipmap", args)?;
+    match (keys_val, vals_val) {
+        (Value::Vec(keys), Value::Vec(vals)) => {
+            let mut result = nexl_runtime::value::NexlMap::new();
+            for (k, v) in keys.iter().zip(vals.iter()) {
+                result = result.put(k.clone(), v.clone());
+            }
+            Ok(Value::Map(Rc::new(result)))
+        }
+        (Value::Vec(_), other) => Err(type_mismatch("zipmap", "Vec", other)),
+        (other, _) => Err(type_mismatch("zipmap", "Vec", other)),
+    }
+}
+
+/// `(dissoc m & keys)` — remove key(s) from map.
+fn dissoc_fn(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("`dissoc` requires at least 1 argument".into());
+    }
+    let map_val = &args[0];
+    match map_val {
+        Value::Map(m) => {
+            let mut result = m.as_ref().clone();
+            for key in &args[1..] {
+                result = result.remove(key);
+            }
+            Ok(Value::Map(Rc::new(result)))
+        }
+        other => Err(type_mismatch("dissoc", "Map", other)),
+    }
+}
+
+/// `(disj s & elems)` — remove element(s) from set.
+fn disj_fn(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("`disj` requires at least 1 argument".into());
+    }
+    let set_val = &args[0];
+    match set_val {
+        Value::Set(items) => {
+            let next: Vec<Value> = items
+                .iter()
+                .filter(|item| !args[1..].contains(item))
+                .cloned()
+                .collect();
+            Ok(Value::Set(Rc::new(next)))
+        }
+        other => Err(type_mismatch("disj", "Set", other)),
+    }
+}
+
+/// `(symmetric-difference a b)` — elements in either set but not both.
+fn symmetric_difference_fn(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("symmetric-difference", args)?;
+    match (a, b) {
+        (Value::Set(x), Value::Set(y)) => {
+            let mut result = Vec::new();
+            for item in x.iter() {
+                if !y.contains(item) {
+                    result.push(item.clone());
+                }
+            }
+            for item in y.iter() {
+                if !x.contains(item) {
+                    result.push(item.clone());
+                }
+            }
+            Ok(Value::Set(Rc::new(result)))
+        }
+        (Value::Set(_), other) => Err(type_mismatch("symmetric-difference", "Set", other)),
+        (other, _) => Err(type_mismatch("symmetric-difference", "Set", other)),
+    }
+}
+
+/// `(subset? a b)` — true if every element of a is in b.
+fn subset_pred(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("subset?", args)?;
+    match (a, b) {
+        (Value::Set(x), Value::Set(y)) => {
+            Ok(Value::Bool(x.iter().all(|item| y.contains(item))))
+        }
+        (Value::Set(_), other) => Err(type_mismatch("subset?", "Set", other)),
+        (other, _) => Err(type_mismatch("subset?", "Set", other)),
+    }
+}
+
+/// `(superset? a b)` — true if every element of b is in a.
+fn superset_pred(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("superset?", args)?;
+    match (a, b) {
+        (Value::Set(x), Value::Set(y)) => {
+            Ok(Value::Bool(y.iter().all(|item| x.contains(item))))
+        }
+        (Value::Set(_), other) => Err(type_mismatch("superset?", "Set", other)),
+        (other, _) => Err(type_mismatch("superset?", "Set", other)),
+    }
+}
+
+/// `(disjoint? a b)` — true if a and b share no elements.
+fn disjoint_pred(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("disjoint?", args)?;
+    match (a, b) {
+        (Value::Set(x), Value::Set(y)) => {
+            Ok(Value::Bool(!x.iter().any(|item| y.contains(item))))
+        }
+        (Value::Set(_), other) => Err(type_mismatch("disjoint?", "Set", other)),
+        (other, _) => Err(type_mismatch("disjoint?", "Set", other)),
     }
 }
 

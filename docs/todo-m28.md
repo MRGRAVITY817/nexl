@@ -41,12 +41,12 @@ Reference: `docs/stdlib-spec.md`
   - `empty`: return empty collection of same type
   - `assoc-in`/`update`/`update-in`: nested path operations
 
-- [ ] **Map builtins** — `merge`, `merge-with`, `select-keys`, `rename-keys`, `zipmap`, `entries`
+- [x] **Map builtins** — `merge`, `merge-with`, `select-keys`, `rename-keys`, `zipmap`, `entries`
   - `merge`: variadic, rightmost wins
   - `merge-with`: conflict resolver function
   - `select-keys`/`rename-keys`: submap operations
 
-- [ ] **Set builtins** — `dissoc`, `disj`, `union`, `intersection`, `difference`, `symmetric-difference`, `subset?`, `superset?`, `disjoint?`
+- [x] **Set builtins** — `dissoc`, `disj`, `union`, `intersection`, `difference`, `symmetric-difference`, `subset?`, `superset?`, `disjoint?`
   - `dissoc`: remove key(s) from Map (variadic)
   - `disj`: remove element(s) from Set (variadic)
 

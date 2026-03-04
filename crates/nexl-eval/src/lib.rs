@@ -6246,6 +6246,108 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- Map/Set builtins (M28) ---
+
+    #[test]
+    fn test_merge_maps() {
+        let env = crate::stdlib::standard_env();
+        let a_val = eval_forms("(get (merge {:a 1} {:b 2} {:a 3}) :a)", &env).unwrap();
+        assert_eq!(a_val, option_some(Value::Int(3)));
+    }
+
+    #[test]
+    fn test_merge_with() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(get (merge-with + {:a 1 :b 2} {:a 10 :c 3}) :a)"#,
+            &env,
+        ).unwrap();
+        assert_eq!(result, option_some(Value::Int(11)));
+    }
+
+    #[test]
+    fn test_select_keys() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(count (select-keys {:a 1 :b 2 :c 3} [:a :c]))"#,
+            &env,
+        ).unwrap();
+        assert_eq!(result, Value::Int(2));
+    }
+
+    #[test]
+    fn test_rename_keys() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(get (rename-keys {:a 1 :b 2} {:a :x}) :x)"#,
+            &env,
+        ).unwrap();
+        assert_eq!(result, option_some(Value::Int(1)));
+    }
+
+    #[test]
+    fn test_zipmap() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(get (zipmap [:a :b :c] [1 2 3]) :b)"#,
+            &env,
+        ).unwrap();
+        assert_eq!(result, option_some(Value::Int(2)));
+    }
+
+    #[test]
+    fn test_dissoc() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            r#"(count (dissoc {:a 1 :b 2 :c 3} :a :c))"#,
+            &env,
+        ).unwrap();
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn test_disj() {
+        assert_eq!(eval_str("(count (disj #{1 2 3} 2))").unwrap(), Value::Int(2));
+    }
+
+    #[test]
+    fn test_symmetric_difference() {
+        let result = eval_str("(count (symmetric-difference #{1 2 3} #{2 3 4}))").unwrap();
+        assert_eq!(result, Value::Int(2)); // {1, 4}
+    }
+
+    #[test]
+    fn test_subset() {
+        assert_eq!(
+            eval_str("(subset? #{1 2} #{1 2 3})").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str("(subset? #{1 4} #{1 2 3})").unwrap(),
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn test_superset() {
+        assert_eq!(
+            eval_str("(superset? #{1 2 3} #{1 2})").unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn test_disjoint() {
+        assert_eq!(
+            eval_str("(disjoint? #{1 2} #{3 4})").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str("(disjoint? #{1 2} #{2 3})").unwrap(),
+            Value::Bool(false)
+        );
+    }
+
     // --- Structural transforms (M28) ---
 
     #[test]
