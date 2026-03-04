@@ -392,7 +392,7 @@ fn pad_start(args: &[Value]) -> Result<Value, String> {
     if s_len >= w {
         return Ok(Value::Str(Rc::clone(s)));
     }
-    let padding: String = std::iter::repeat(pad_char).take(w - s_len).collect();
+    let padding: String = std::iter::repeat_n(pad_char, w - s_len).collect();
     Ok(Value::Str(Rc::from(format!("{padding}{s}").as_str())))
 }
 
@@ -413,7 +413,7 @@ fn pad_end(args: &[Value]) -> Result<Value, String> {
     if s_len >= w {
         return Ok(Value::Str(Rc::clone(s)));
     }
-    let padding: String = std::iter::repeat(pad_char).take(w - s_len).collect();
+    let padding: String = std::iter::repeat_n(pad_char, w - s_len).collect();
     Ok(Value::Str(Rc::from(format!("{s}{padding}").as_str())))
 }
 

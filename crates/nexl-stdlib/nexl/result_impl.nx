@@ -1,0 +1,89 @@
+;; stdlib/result — Result combinators written in Nexl.
+;;
+;; These functions are evaluated at startup after Rust native modules are
+;; registered. Each `defn` uses a qualified name (result/fn-name) to register
+;; into the `result` module alias.
+
+(defn result/ok? [x]
+  (match x
+    (Ok _) true
+    _ false))
+
+(defn result/err? [x]
+  (match x
+    (Err _) true
+    _ false))
+
+(defn result/unwrap [x]
+  (match x
+    (Ok v) v
+    (Err e) (panic (str "called result/unwrap on Err: " e))))
+
+(defn result/unwrap-err [x]
+  (match x
+    (Err e) e
+    (Ok v) (panic (str "called result/unwrap-err on Ok: " v))))
+
+(defn result/unwrap-or [x default]
+  (match x
+    (Ok v) v
+    _ default))
+
+(defn result/unwrap-or-else [x f]
+  (match x
+    (Ok v) v
+    (Err e) (f e)))
+
+(defn result/map [x f]
+  (match x
+    (Ok v) (Ok (f v))
+    _ x))
+
+(defn result/map-err [x f]
+  (match x
+    (Err e) (Err (f e))
+    _ x))
+
+(defn result/flat-map [x f]
+  (match x
+    (Ok v) (f v)
+    _ x))
+
+(defn result/or-else [x f]
+  (match x
+    (Ok _) x
+    (Err e) (f e)))
+
+(defn result/to-option [x]
+  (match x
+    (Ok v) (Some v)
+    _ None))
+
+(defn result/from-option [opt err]
+  (match opt
+    (Some v) (Ok v)
+    _ (Err err)))
+
+(defn result/try-map [f xs]
+  (reduce (fn [acc x]
+            (match acc
+              (Err _) acc
+              (Ok results)
+                (match (f x)
+                  (Ok v) (Ok (append results v))
+                  (Err e) (Err e))))
+          (Ok [])
+          xs))
+
+(defn result/partition [xs]
+  (reduce (fn [acc x]
+            (let [oks (get acc 0)
+                  errs (get acc 1)]
+              (match x
+                (Ok v) [(match oks (Some o) (append o v) _ [v]) (match errs (Some e) e _ [])]
+                (Err e) [(match oks (Some o) o _ []) (match errs (Some es) (append es e) _ [e])])))
+          [[] []]
+          xs))
+
+(defn result/collect [xs]
+  (result/try-map (fn [x] x) xs))

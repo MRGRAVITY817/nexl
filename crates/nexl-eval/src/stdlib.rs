@@ -727,7 +727,7 @@ fn update_fn(args: &[Value]) -> Result<Value, String> {
                 Value::Adt { ref ctor, ref fields, .. } if ctor.as_ref() == "Some" => {
                     fields[0].clone()
                 }
-                _ => return Err(format!("`update`: key not found")),
+                _ => return Err("`update`: key not found".to_string()),
             };
             let new_val = nexl_runtime::call_value(f, &[inner])?;
             put(&[coll.clone(), key.clone(), new_val])
@@ -748,7 +748,7 @@ fn update_in_fn(args: &[Value]) -> Result<Value, String> {
                 other => return Err(type_mismatch("update-in", "Vec (key path)", other)),
             };
             if keys.is_empty() {
-                let new_val = nexl_runtime::call_value(f, &[coll.clone()])?;
+                let new_val = nexl_runtime::call_value(f, std::slice::from_ref(coll))?;
                 return Ok(new_val);
             }
             update_in_recursive(coll, keys.as_ref(), f)

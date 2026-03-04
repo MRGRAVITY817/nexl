@@ -7148,4 +7148,253 @@ mod tests {
             Value::Int(0)
         );
     }
+
+    // --- Result combinators (M28) ---
+
+    #[test]
+    fn test_nexl_stdlib_result_ok_predicate() {
+        assert_eq!(eval_str("(result/ok? (Ok 1))").unwrap(), Value::Bool(true));
+        assert_eq!(
+            eval_str("(result/ok? (Err \"e\"))").unwrap(),
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_err_predicate() {
+        assert_eq!(
+            eval_str("(result/err? (Err \"e\"))").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(eval_str("(result/err? (Ok 1))").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_unwrap_ok() {
+        assert_eq!(eval_str("(result/unwrap (Ok 42))").unwrap(), Value::Int(42));
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_unwrap_err_panics() {
+        assert!(eval_str("(result/unwrap (Err \"oops\"))").is_err());
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_unwrap_err_extracts() {
+        assert_eq!(
+            eval_str("(result/unwrap-err (Err \"oops\"))").unwrap(),
+            Value::Str(std::rc::Rc::from("oops"))
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_unwrap_or() {
+        assert_eq!(
+            eval_str("(result/unwrap-or (Ok 42) 0)").unwrap(),
+            Value::Int(42)
+        );
+        assert_eq!(
+            eval_str("(result/unwrap-or (Err \"e\") 0)").unwrap(),
+            Value::Int(0)
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_unwrap_or_else() {
+        assert_eq!(
+            eval_str("(result/unwrap-or-else (Ok 42) (fn [e] 0))").unwrap(),
+            Value::Int(42)
+        );
+        assert_eq!(
+            eval_str("(result/unwrap-or-else (Err \"e\") (fn [e] 99))").unwrap(),
+            Value::Int(99)
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_map() {
+        assert_eq!(
+            eval_str("(result/map (Ok 1) (fn [x] (+ x 1)))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(2)]),
+            }
+        );
+        // Err passes through unchanged
+        assert_eq!(
+            eval_str("(result/map (Err \"e\") (fn [x] (+ x 1)))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Err"),
+                fields: std::rc::Rc::new(vec![Value::Str(std::rc::Rc::from("e"))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_map_err() {
+        assert_eq!(
+            eval_str("(result/map-err (Err \"e\") (fn [e] (str/upper e)))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Err"),
+                fields: std::rc::Rc::new(vec![Value::Str(std::rc::Rc::from("E"))]),
+            }
+        );
+        // Ok passes through unchanged
+        assert_eq!(
+            eval_str("(result/map-err (Ok 42) (fn [e] \"nope\"))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(42)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_flat_map() {
+        assert_eq!(
+            eval_str("(result/flat-map (Ok 1) (fn [x] (Ok (+ x 1))))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(2)]),
+            }
+        );
+        assert_eq!(
+            eval_str("(result/flat-map (Ok 1) (fn [x] (Err \"fail\")))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Err"),
+                fields: std::rc::Rc::new(vec![Value::Str(std::rc::Rc::from("fail"))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_or_else() {
+        assert_eq!(
+            eval_str("(result/or-else (Ok 42) (fn [e] (Ok 0)))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(42)]),
+            }
+        );
+        assert_eq!(
+            eval_str("(result/or-else (Err \"e\") (fn [e] (Ok 99)))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(99)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_to_option() {
+        assert_eq!(
+            eval_str("(result/to-option (Ok 42))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Int(42)]),
+            }
+        );
+        assert_eq!(
+            eval_str("(result/to-option (Err \"e\"))").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("None"),
+                fields: std::rc::Rc::new(vec![]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_from_option() {
+        assert_eq!(
+            eval_str("(result/from-option (Some 42) \"missing\")").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(42)]),
+            }
+        );
+        assert_eq!(
+            eval_str("(result/from-option None \"missing\")").unwrap(),
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Err"),
+                fields: std::rc::Rc::new(vec![Value::Str(std::rc::Rc::from("missing"))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_try_map_all_ok() {
+        let result = eval_str("(result/try-map (fn [x] (Ok (* x 2))) [1 2 3])").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Vec(std::rc::Rc::new(vec![
+                    Value::Int(2),
+                    Value::Int(4),
+                    Value::Int(6),
+                ]))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_try_map_first_err() {
+        let result =
+            eval_str("(result/try-map (fn [x] (if (= x 2) (Err \"bad\") (Ok x))) [1 2 3])")
+                .unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Err"),
+                fields: std::rc::Rc::new(vec![Value::Str(std::rc::Rc::from("bad"))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_collect_all_ok() {
+        let result = eval_str("(result/collect [(Ok 1) (Ok 2) (Ok 3)])").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Vec(std::rc::Rc::new(vec![
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                ]))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_result_partition() {
+        let result = eval_str("(result/partition [(Ok 1) (Err \"a\") (Ok 2) (Err \"b\")])").unwrap();
+        // Returns [oks errs] — both as plain vecs
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)])),
+                Value::Vec(std::rc::Rc::new(vec![
+                    Value::Str(std::rc::Rc::from("a")),
+                    Value::Str(std::rc::Rc::from("b")),
+                ])),
+            ]))
+        );
+    }
 }

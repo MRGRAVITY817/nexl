@@ -109,7 +109,7 @@ Reference: `docs/stdlib-spec.md`
 
 ## `result` Module (New — Nexl)
 
-- [ ] **Result combinators** — ~15 functions (written in Nexl)
+- [x] **Result combinators** — ~15 functions (written in Nexl)
   - Predicates: `ok?`, `err?`
   - Extraction: `unwrap`, `unwrap-err`, `unwrap-or`, `unwrap-or-else`
   - Transforms: `map`, `map-err`, `flat-map` (all subject-first for `->`)

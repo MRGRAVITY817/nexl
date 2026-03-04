@@ -184,7 +184,7 @@ fn pipe(args: &[Value]) -> Result<Value, String> {
 fn tap(args: &[Value]) -> Result<Value, String> {
     match args {
         [x, f] => {
-            let _ = call_value(f, &[x.clone()])?;
+            let _ = call_value(f, std::slice::from_ref(x))?;
             Ok(x.clone())
         }
         _ => Err(format!(
@@ -195,12 +195,13 @@ fn tap(args: &[Value]) -> Result<Value, String> {
 }
 
 /// `(memoize f)` — returns a memoized version of f.
+type MemoCache = Rc<std::cell::RefCell<Vec<(Vec<Value>, Value)>>>;
+
 fn memoize(args: &[Value]) -> Result<Value, String> {
     match args {
         [f] => {
             let f = f.clone();
-            let cache: Rc<std::cell::RefCell<Vec<(Vec<Value>, Value)>>> =
-                Rc::new(std::cell::RefCell::new(Vec::new()));
+            let cache: MemoCache = Rc::new(std::cell::RefCell::new(Vec::new()));
             Ok(Value::NativeClosure {
                 name: Rc::from("memoize"),
                 f: Rc::new(move |inner_args: &[Value]| {

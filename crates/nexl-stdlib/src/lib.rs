@@ -58,6 +58,7 @@ pub fn nexl_declaration_sources() -> &'static [(&'static str, &'static str)] {
         ("async",    include_str!("../nexl/async.nx")),
         ("sys",      include_str!("../nexl/sys.nx")),
         ("option",   include_str!("../nexl/option_impl.nx")),
+        ("result",   include_str!("../nexl/result_impl.nx")),
     ]
 }
 
@@ -72,6 +73,7 @@ pub fn nexl_declaration_sources() -> &'static [(&'static str, &'static str)] {
 pub fn nexl_stdlib_sources() -> &'static [(&'static str, &'static str)] {
     &[
         ("option", include_str!("../nexl/option_impl.nx")),
+        ("result", include_str!("../nexl/result_impl.nx")),
     ]
 }
 
@@ -132,9 +134,17 @@ mod tests {
         let sources = nexl_stdlib_sources();
         let names: Vec<&str> = sources.iter().map(|(name, _)| *name).collect();
         assert!(names.contains(&"option"), "should have option module");
-        // Verify source is non-empty
         let (_, src) = sources.iter().find(|(n, _)| *n == "option").unwrap();
         assert!(src.contains("option/some?"), "option source should define some?");
+    }
+
+    #[test]
+    fn test_nexl_stdlib_sources_has_result() {
+        let sources = nexl_stdlib_sources();
+        let names: Vec<&str> = sources.iter().map(|(name, _)| *name).collect();
+        assert!(names.contains(&"result"), "should have result module");
+        let (_, src) = sources.iter().find(|(n, _)| *n == "result").unwrap();
+        assert!(src.contains("result/ok?"), "result source should define ok?");
     }
 
     #[test]

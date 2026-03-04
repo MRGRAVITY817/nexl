@@ -614,14 +614,7 @@ fn eval_cond<'a>(
     Ok(EvalReturn::Value(Value::Unit))
 }
 
-/// `(is expr)` or `(is expr "message")` — power-assert assertion.
-///
-/// Evaluates `expr`. On success (Bool true), returns Unit. On failure, produces
-/// Generate a diff hint for two values when they differ.
-///
-/// Returns an extra annotation string (prefixed with `\n`) for string, Vec, and Map comparisons,
-/// showing where the values diverge to aid debugging.
-// diff_hint + eval_is deleted in M27 Phase 5 — is is now a defmacro-syntax in test.nx
+// eval_is + diff_hint deleted in M27 Phase 5 — is is now a defmacro-syntax in test.nx
 
 // eval_deftest deleted in M27 Phase 4 — now a defmacro-syntax in test.nx
 
