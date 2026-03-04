@@ -7679,4 +7679,121 @@ mod tests {
             ]))
         );
     }
+
+    // ── map module ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_map_of() {
+        let result = eval_str("(map/of [:a 1] [:b 2])").unwrap();
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn test_map_from_entries() {
+        let result = eval_str("(map/from-entries [[:a 1] [:b 2]])").unwrap();
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn test_map_get_or_found() {
+        let result = eval_str("(map/get-or {:a 1} :a 99)").unwrap();
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn test_map_get_or_default() {
+        let result = eval_str("(map/get-or {:a 1} :z 99)").unwrap();
+        assert_eq!(result, Value::Int(99));
+    }
+
+    #[test]
+    fn test_map_map_vals() {
+        let result = eval_str("(map/map-vals {:a 1 :b 2} (fn [v] (* v 2)))").unwrap();
+        let Value::Map(m) = result else { panic!("expected Map") };
+        let kw_a = Value::Keyword { ns: None, name: std::rc::Rc::from("a") };
+        let kw_b = Value::Keyword { ns: None, name: std::rc::Rc::from("b") };
+        assert_eq!(m.get(&kw_a), Some(&Value::Int(2)));
+        assert_eq!(m.get(&kw_b), Some(&Value::Int(4)));
+    }
+
+    #[test]
+    fn test_map_map_keys() {
+        let result = eval_str("(count (map/map-keys {:a 1 :b 2} str))").unwrap();
+        assert_eq!(result, Value::Int(2));
+    }
+
+    #[test]
+    fn test_map_filter_vals() {
+        let result = eval_str("(map/filter-vals {:a 1 :b 2 :c 3} (fn [v] (> v 1)))").unwrap();
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn test_map_filter_keys() {
+        let result = eval_str(r#"(map/filter-keys {"a" 1 "b" 2} (fn [k] (= k "a")))"#).unwrap();
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn test_map_invert() {
+        let result = eval_str("(map/invert {:a 1 :b 2})").unwrap();
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.len(), 2);
+        let one = Value::Int(1);
+        let kw_a = Value::Keyword { ns: None, name: std::rc::Rc::from("a") };
+        assert_eq!(m.get(&one), Some(&kw_a));
+    }
+
+    #[test]
+    fn test_map_group_vals() {
+        let result = eval_str("(map/group-vals {:a 1 :b 1 :c 2})").unwrap();
+        let Value::Map(m) = result else { panic!("expected Map") };
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn test_map_reduce_kv() {
+        let result = eval_str("(map/reduce-kv {:a 1 :b 2 :c 3} (fn [acc k v] (+ acc v)) 0)").unwrap();
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_map_find() {
+        let result = eval_str("(map/find {:a 1 :b 2} (fn [k v] (> v 1)))").unwrap();
+        assert!(matches!(result, Value::Adt { ctor, .. } if ctor.as_ref() == "Some"));
+    }
+
+    #[test]
+    fn test_map_find_none() {
+        let result = eval_str("(map/find {:a 1 :b 2} (fn [k v] (> v 10)))").unwrap();
+        assert!(matches!(result, Value::Adt { ctor, .. } if ctor.as_ref() == "None"));
+    }
+
+    #[test]
+    fn test_map_every_true() {
+        let result = eval_str("(map/every? {:a 1 :b 2} (fn [k v] (> v 0)))").unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_map_every_false() {
+        let result = eval_str("(map/every? {:a 1 :b 0} (fn [k v] (> v 0)))").unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_map_any_true() {
+        let result = eval_str("(map/any? {:a 1 :b 2} (fn [k v] (> v 1)))").unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_map_any_false() {
+        let result = eval_str("(map/any? {:a 1 :b 2} (fn [k v] (> v 10)))").unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
 }

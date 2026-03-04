@@ -1,0 +1,102 @@
+;; stdlib/map — Nexl-written map combinators.
+;;
+;; These functions are evaluated at startup after Rust native modules are
+;; registered. Each `defn` uses a qualified name (map/fn-name) to register
+;; into the `map` module.
+;;
+;; Note: `get entry 0` and `get entry 1` return Options — unwrap with match.
+;; `put m k v` adds a key-value pair to a map.
+
+(defn map/get-or [m k default]
+  (match (get m k)
+    (Some v) v
+    None default))
+
+(defn map/reduce-kv [m f init]
+  (reduce (fn [acc entry]
+            (let [k (match (get entry 0) (Some x) x _ None)
+                  v (match (get entry 1) (Some x) x _ None)]
+              (f acc k v)))
+          init
+          (entries m)))
+
+(defn map/map-keys [m f]
+  (reduce (fn [acc entry]
+            (let [k (match (get entry 0) (Some x) x _ None)
+                  v (match (get entry 1) (Some x) x _ None)]
+              (put acc (f k) v)))
+          {}
+          (entries m)))
+
+(defn map/map-vals [m f]
+  (reduce (fn [acc entry]
+            (let [k (match (get entry 0) (Some x) x _ None)
+                  v (match (get entry 1) (Some x) x _ None)]
+              (put acc k (f v))))
+          {}
+          (entries m)))
+
+(defn map/filter-keys [m f]
+  (reduce (fn [acc entry]
+            (let [k (match (get entry 0) (Some x) x _ None)
+                  v (match (get entry 1) (Some x) x _ None)]
+              (if (f k) (put acc k v) acc)))
+          {}
+          (entries m)))
+
+(defn map/filter-vals [m f]
+  (reduce (fn [acc entry]
+            (let [k (match (get entry 0) (Some x) x _ None)
+                  v (match (get entry 1) (Some x) x _ None)]
+              (if (f v) (put acc k v) acc)))
+          {}
+          (entries m)))
+
+(defn map/invert [m]
+  (reduce (fn [acc entry]
+            (let [k (match (get entry 0) (Some x) x _ None)
+                  v (match (get entry 1) (Some x) x _ None)]
+              (put acc v k)))
+          {}
+          (entries m)))
+
+(defn map/group-vals [m]
+  (reduce (fn [acc entry]
+            (let [k (match (get entry 0) (Some x) x _ None)
+                  v (match (get entry 1) (Some x) x _ None)]
+              (match (get acc v)
+                (Some existing) (put acc v (append existing k))
+                None (put acc v [k]))))
+          {}
+          (entries m)))
+
+(defn map/find [m f]
+  (reduce (fn [acc entry]
+            (match acc
+              (Some _) acc
+              None
+              (let [k (match (get entry 0) (Some x) x _ None)
+                    v (match (get entry 1) (Some x) x _ None)]
+                (if (f k v) (Some entry) None))))
+          None
+          (entries m)))
+
+(defn map/every? [m f]
+  (reduce (fn [acc entry]
+            (if (not acc)
+              false
+              (let [k (match (get entry 0) (Some x) x _ None)
+                    v (match (get entry 1) (Some x) x _ None)]
+                (f k v))))
+          true
+          (entries m)))
+
+(defn map/any? [m f]
+  (reduce (fn [acc entry]
+            (if acc
+              true
+              (let [k (match (get entry 0) (Some x) x _ None)
+                    v (match (get entry 1) (Some x) x _ None)]
+                (f k v))))
+          false
+          (entries m)))
