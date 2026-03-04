@@ -109,6 +109,13 @@ pub fn standard_env() -> Rc<Env> {
     env.define("subset?", native("subset?", subset_pred));
     env.define("superset?", native("superset?", superset_pred));
     env.define("disjoint?", native("disjoint?", disjoint_pred));
+    env.define("reject", native("reject", reject_fn));
+    env.define("keep", native("keep", keep_fn));
+    env.define("some", native("some", some_fn));
+    env.define("every?", native("every?", every_pred));
+    env.define("any?", native("any?", any_pred));
+    env.define("not-any?", native("not-any?", not_any_pred));
+    env.define("not-every?", native("not-every?", not_every_pred));
 
     // Bitwise operations
     env.define("bit-and", native("bit-and", bit_and));
@@ -1674,6 +1681,117 @@ fn drop_while_fn(args: &[Value]) -> Result<Value, String> {
         result.push(item.clone());
     }
     Ok(Value::Vec(Rc::new(result)))
+}
+
+/// `(reject pred coll)` — complement of filter: keep where pred is false.
+fn reject_fn(args: &[Value]) -> Result<Value, String> {
+    let (pred, coll) = two_args("reject", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut out = Vec::new();
+            for item in items.iter() {
+                let keep = expect_bool("reject", call1(pred, item.clone())?)?;
+                if !keep {
+                    out.push(item.clone());
+                }
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        other => Err(type_mismatch("reject", "Vec", other)),
+    }
+}
+
+/// `(keep f coll)` — map + filter-None in one pass.
+fn keep_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, coll) = two_args("keep", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut out = Vec::new();
+            for item in items.iter() {
+                let result = call1(func, item.clone())?;
+                match &result {
+                    Value::Adt { ctor, fields, .. } if ctor.as_ref() == "Some" => {
+                        out.push(fields[0].clone());
+                    }
+                    Value::Adt { ctor, .. } if ctor.as_ref() == "None" => {}
+                    _ => out.push(result),
+                }
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        other => Err(type_mismatch("keep", "Vec", other)),
+    }
+}
+
+/// `(some f coll)` — first non-None result of applying f.
+fn some_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, coll) = two_args("some", args)?;
+    match coll {
+        Value::Vec(items) => {
+            for item in items.iter() {
+                let result = call1(func, item.clone())?;
+                match &result {
+                    Value::Adt { ctor, .. } if ctor.as_ref() == "None" => {}
+                    Value::Bool(false) => {}
+                    _ => return Ok(result),
+                }
+            }
+            Ok(option_none())
+        }
+        other => Err(type_mismatch("some", "Vec", other)),
+    }
+}
+
+/// `(every? pred coll)` — true if pred is true for all elements.
+fn every_pred(args: &[Value]) -> Result<Value, String> {
+    let (pred, coll) = two_args("every?", args)?;
+    match coll {
+        Value::Vec(items) => {
+            for item in items.iter() {
+                let v = expect_bool("every?", call1(pred, item.clone())?)?;
+                if !v {
+                    return Ok(Value::Bool(false));
+                }
+            }
+            Ok(Value::Bool(true))
+        }
+        other => Err(type_mismatch("every?", "Vec", other)),
+    }
+}
+
+/// `(any? pred coll)` — true if pred is true for any element.
+fn any_pred(args: &[Value]) -> Result<Value, String> {
+    let (pred, coll) = two_args("any?", args)?;
+    match coll {
+        Value::Vec(items) => {
+            for item in items.iter() {
+                let v = expect_bool("any?", call1(pred, item.clone())?)?;
+                if v {
+                    return Ok(Value::Bool(true));
+                }
+            }
+            Ok(Value::Bool(false))
+        }
+        other => Err(type_mismatch("any?", "Vec", other)),
+    }
+}
+
+/// `(not-any? pred coll)` — true if pred is false for all elements.
+fn not_any_pred(args: &[Value]) -> Result<Value, String> {
+    let result = any_pred(args)?;
+    match result {
+        Value::Bool(b) => Ok(Value::Bool(!b)),
+        _ => Ok(result),
+    }
+}
+
+/// `(not-every? pred coll)` — true if pred is false for any element.
+fn not_every_pred(args: &[Value]) -> Result<Value, String> {
+    let result = every_pred(args)?;
+    match result {
+        Value::Bool(b) => Ok(Value::Bool(!b)),
+        _ => Ok(result),
+    }
 }
 
 // ---------------------------------------------------------------------------

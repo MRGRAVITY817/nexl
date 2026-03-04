@@ -50,7 +50,7 @@ Reference: `docs/stdlib-spec.md`
   - `dissoc`: remove key(s) from Map (variadic)
   - `disj`: remove element(s) from Set (variadic)
 
-- [ ] **Higher-order sequence functions** — `remove`, `keep`, `some`, `every?`, `any?`, `not-any?`, `not-every?`
+- [x] **Higher-order sequence functions** — `reject`, `keep`, `some`, `every?`, `any?`, `not-any?`, `not-every?`
   - `remove`: complement of filter (keep where pred is false)
   - `keep`: map + filter-None in one pass
   - `some`: first non-None result of applying f

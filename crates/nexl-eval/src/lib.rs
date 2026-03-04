@@ -6246,6 +6246,84 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- Higher-order sequence functions (M28) ---
+
+    #[test]
+    fn test_reject() {
+        assert_eq!(
+            eval_str("(reject (fn [x] (> x 2)) [1 2 3 4])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        );
+    }
+
+    #[test]
+    fn test_keep() {
+        assert_eq!(
+            eval_str("(keep (fn [x] (if (> x 2) (Some x) None)) [1 2 3 4])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(3), Value::Int(4)]))
+        );
+    }
+
+    #[test]
+    fn test_some_found() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(some (fn [x] (if (> x 3) (Some x) None)) [1 2 3 4 5])",
+            &env,
+        ).unwrap();
+        assert_eq!(result, option_some(Value::Int(4)));
+    }
+
+    #[test]
+    fn test_some_not_found() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(some (fn [x] (if (> x 10) (Some x) None)) [1 2 3])",
+            &env,
+        ).unwrap();
+        assert_eq!(result, option_none());
+    }
+
+    #[test]
+    fn test_every_pred() {
+        assert_eq!(
+            eval_str("(every? (fn [x] (> x 0)) [1 2 3])").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str("(every? (fn [x] (> x 2)) [1 2 3])").unwrap(),
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn test_any_pred() {
+        assert_eq!(
+            eval_str("(any? (fn [x] (> x 2)) [1 2 3])").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str("(any? (fn [x] (> x 5)) [1 2 3])").unwrap(),
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn test_not_any_pred() {
+        assert_eq!(
+            eval_str("(not-any? (fn [x] (> x 5)) [1 2 3])").unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn test_not_every_pred() {
+        assert_eq!(
+            eval_str("(not-every? (fn [x] (> x 2)) [1 2 3])").unwrap(),
+            Value::Bool(true)
+        );
+    }
+
     // --- Map/Set builtins (M28) ---
 
     #[test]
