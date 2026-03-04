@@ -73,9 +73,9 @@ Reference: `docs/stdlib-spec.md`
 
 ## `math` Module Enrichment
 
-- [ ] **Math constants** — `tau`, `inf`, `neg-inf`, `nan`
+- [x] **Math constants** — `tau`, `inf`, `neg-inf`, `nan`
 
-- [ ] **Math functions** — ~15 new functions (Rust)
+- [x] **Math functions** — ~15 new functions (Rust)
   - `sign`, `truncate`, `cbrt`: basic operations
   - `log2`, `log10`, `exp2`: logarithms
   - `sinh`, `cosh`, `tanh`: hyperbolic functions

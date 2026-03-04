@@ -6246,6 +6246,38 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- math module enrichment (M28) ---
+
+    #[test]
+    fn test_math_tau() {
+        assert_eq!(eval_str("(math/tau)").unwrap(), Value::Float(std::f64::consts::TAU));
+    }
+
+    #[test]
+    fn test_math_sign() {
+        assert_eq!(eval_str("(math/sign -5)").unwrap(), Value::Int(-1));
+        assert_eq!(eval_str("(math/sign 0)").unwrap(), Value::Int(0));
+        assert_eq!(eval_str("(math/sign 5)").unwrap(), Value::Int(1));
+    }
+
+    #[test]
+    fn test_math_gcd() {
+        assert_eq!(eval_str("(math/gcd 12 8)").unwrap(), Value::Int(4));
+    }
+
+    #[test]
+    fn test_math_lcm() {
+        assert_eq!(eval_str("(math/lcm 4 6)").unwrap(), Value::Int(12));
+    }
+
+    #[test]
+    fn test_math_divmod() {
+        assert_eq!(
+            eval_str("(math/divmod 10 3)").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(3), Value::Int(1)]))
+        );
+    }
+
     // --- str module enrichment (M28) ---
 
     #[test]

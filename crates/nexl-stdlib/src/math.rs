@@ -31,6 +31,25 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("clamp", clamp),
         ("pi", pi),
         ("e", euler),
+        ("tau", tau),
+        ("inf", inf),
+        ("neg-inf", neg_inf),
+        ("nan", nan_const),
+        ("sign", sign),
+        ("truncate", truncate),
+        ("cbrt", cbrt),
+        ("log2", log2),
+        ("log10", log10),
+        ("exp2", exp2),
+        ("sinh", sinh),
+        ("cosh", cosh),
+        ("tanh", tanh),
+        ("nan?", nan_pred),
+        ("infinite?", infinite_pred),
+        ("finite?", finite_pred),
+        ("gcd", gcd),
+        ("lcm", lcm),
+        ("divmod", divmod),
     ]
 }
 
@@ -243,6 +262,191 @@ fn euler(args: &[Value]) -> Result<Value, String> {
         return Err(format!("`math/e` takes no arguments, got {}", args.len()));
     }
     Ok(Value::Float(std::f64::consts::E))
+}
+
+/// `(math/tau)` — 2π.
+fn tau(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`math/tau` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Float(std::f64::consts::TAU))
+}
+
+/// `(math/inf)` — positive infinity.
+fn inf(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`math/inf` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Float(f64::INFINITY))
+}
+
+/// `(math/neg-inf)` — negative infinity.
+fn neg_inf(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`math/neg-inf` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Float(f64::NEG_INFINITY))
+}
+
+/// `(math/nan)` — NaN.
+fn nan_const(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`math/nan` takes no arguments, got {}", args.len()));
+    }
+    Ok(Value::Float(f64::NAN))
+}
+
+/// `(math/sign x)` — return -1, 0, or 1.
+fn sign(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("sign", args)?;
+    match v {
+        Value::Int(n) => Ok(Value::Int(n.signum())),
+        Value::Float(n) => {
+            if n.is_nan() {
+                Ok(Value::Float(f64::NAN))
+            } else {
+                Ok(Value::Float(n.signum()))
+            }
+        }
+        other => Err(format!("`math/sign` expected Int or Float, got {}", other.type_name())),
+    }
+}
+
+/// `(math/truncate x)` — truncate toward zero.
+fn truncate(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("truncate", args)?;
+    Ok(Value::Float(as_float("truncate", v)?.trunc()))
+}
+
+/// `(math/cbrt x)` — cube root.
+fn cbrt(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("cbrt", args)?;
+    Ok(Value::Float(as_float("cbrt", v)?.cbrt()))
+}
+
+/// `(math/log2 x)` — base-2 logarithm.
+fn log2(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("log2", args)?;
+    Ok(Value::Float(as_float("log2", v)?.log2()))
+}
+
+/// `(math/log10 x)` — base-10 logarithm.
+fn log10(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("log10", args)?;
+    Ok(Value::Float(as_float("log10", v)?.log10()))
+}
+
+/// `(math/exp2 x)` — 2^x.
+fn exp2(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("exp2", args)?;
+    Ok(Value::Float(as_float("exp2", v)?.exp2()))
+}
+
+/// `(math/sinh x)` — hyperbolic sine.
+fn sinh(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("sinh", args)?;
+    Ok(Value::Float(as_float("sinh", v)?.sinh()))
+}
+
+/// `(math/cosh x)` — hyperbolic cosine.
+fn cosh(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("cosh", args)?;
+    Ok(Value::Float(as_float("cosh", v)?.cosh()))
+}
+
+/// `(math/tanh x)` — hyperbolic tangent.
+fn tanh(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("tanh", args)?;
+    Ok(Value::Float(as_float("tanh", v)?.tanh()))
+}
+
+/// `(math/nan? x)` — true if x is NaN.
+fn nan_pred(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("nan?", args)?;
+    match v {
+        Value::Float(n) => Ok(Value::Bool(n.is_nan())),
+        Value::Int(_) => Ok(Value::Bool(false)),
+        other => Err(format!("`math/nan?` expected Float or Int, got {}", other.type_name())),
+    }
+}
+
+/// `(math/infinite? x)` — true if x is ±infinity.
+fn infinite_pred(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("infinite?", args)?;
+    match v {
+        Value::Float(n) => Ok(Value::Bool(n.is_infinite())),
+        Value::Int(_) => Ok(Value::Bool(false)),
+        other => Err(format!("`math/infinite?` expected Float or Int, got {}", other.type_name())),
+    }
+}
+
+/// `(math/finite? x)` — true if x is a finite number (not NaN or ±infinity).
+fn finite_pred(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("finite?", args)?;
+    match v {
+        Value::Float(n) => Ok(Value::Bool(n.is_finite())),
+        Value::Int(_) => Ok(Value::Bool(true)),
+        other => Err(format!("`math/finite?` expected Float or Int, got {}", other.type_name())),
+    }
+}
+
+/// `(math/gcd a b)` — greatest common divisor.
+fn gcd(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("gcd", args)?;
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => {
+            let mut a = x.unsigned_abs();
+            let mut b = y.unsigned_abs();
+            while b != 0 {
+                let t = b;
+                b = a % b;
+                a = t;
+            }
+            Ok(Value::Int(a as i64))
+        }
+        _ => Err("`math/gcd` requires two Int arguments".into()),
+    }
+}
+
+/// `(math/lcm a b)` — least common multiple.
+fn lcm(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("lcm", args)?;
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => {
+            if *x == 0 || *y == 0 {
+                return Ok(Value::Int(0));
+            }
+            let g = {
+                let mut a = x.unsigned_abs();
+                let mut b = y.unsigned_abs();
+                while b != 0 {
+                    let t = b;
+                    b = a % b;
+                    a = t;
+                }
+                a as i64
+            };
+            Ok(Value::Int((x / g * y).abs()))
+        }
+        _ => Err("`math/lcm` requires two Int arguments".into()),
+    }
+}
+
+/// `(math/divmod a b)` — return [quotient remainder] as a Vec.
+fn divmod(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("divmod", args)?;
+    match (a, b) {
+        (Value::Int(n), Value::Int(d)) => {
+            if *d == 0 {
+                return Err("division by zero".into());
+            }
+            Ok(Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(n / d),
+                Value::Int(n % d),
+            ])))
+        }
+        _ => Err("`math/divmod` requires two Int arguments".into()),
+    }
 }
 
 #[cfg(test)]
