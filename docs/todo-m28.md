@@ -29,7 +29,7 @@ Reference: `docs/stdlib-spec.md`
 
 ## Builtins — Collections
 
-- [ ] **Polymorphic accessors** — `empty?`, `nth`, `get-in`
+- [x] **Polymorphic accessors** — `empty?`, `nth`, `get-in`
   - `empty?`: O(1) for Vec/Map/Set, O(1) for Str (check byte length)
   - `nth`: alias for `get` on indexed collections
   - `get-in`: nested access via key path vector

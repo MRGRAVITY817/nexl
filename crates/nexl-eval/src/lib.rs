@@ -6246,6 +6246,65 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- Polymorphic accessors (M28) ---
+
+    #[test]
+    fn test_empty_pred_vec() {
+        assert_eq!(eval_str("(empty? [])").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str("(empty? [1])").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_empty_pred_map() {
+        assert_eq!(eval_str("(empty? {})").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str("(empty? {:a 1})").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_empty_pred_set() {
+        assert_eq!(eval_str("(empty? #{})").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str("(empty? #{1})").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_empty_pred_str() {
+        assert_eq!(eval_str(r#"(empty? "")"#).unwrap(), Value::Bool(true));
+        assert_eq!(eval_str(r#"(empty? "a")"#).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_nth_vec() {
+        assert_eq!(
+            eval_str("(nth [10 20 30] 1)").unwrap(),
+            option_some(Value::Int(20))
+        );
+        assert_eq!(eval_str("(nth [10 20 30] 5)").unwrap(), option_none());
+    }
+
+    #[test]
+    fn test_get_in_nested_map() {
+        assert_eq!(
+            eval_str("(get-in {:a {:b 42}} [:a :b])").unwrap(),
+            option_some(Value::Int(42))
+        );
+    }
+
+    #[test]
+    fn test_get_in_missing_key() {
+        assert_eq!(
+            eval_str("(get-in {:a {:b 42}} [:a :c])").unwrap(),
+            option_none()
+        );
+    }
+
+    #[test]
+    fn test_get_in_vec_index() {
+        assert_eq!(
+            eval_str("(get-in [[1 2] [3 4]] [1 0])").unwrap(),
+            option_some(Value::Int(3))
+        );
+    }
+
     // --- Arithmetic builtins (M28) ---
 
     #[test]

@@ -85,6 +85,9 @@ pub fn standard_env() -> Rc<Env> {
     env.define("drop", native("drop", drop_fn));
     env.define("take-while", native("take-while", take_while_fn));
     env.define("drop-while", native("drop-while", drop_while_fn));
+    env.define("empty?", native("empty?", empty_pred));
+    env.define("nth", native("nth", nth_fn));
+    env.define("get-in", native("get-in", get_in_fn));
 
     // Bitwise operations
     env.define("bit-and", native("bit-and", bit_and));
@@ -610,6 +613,43 @@ fn get(args: &[Value]) -> Result<Value, String> {
         },
         other => Err(type_mismatch("get", "Vec or Map", other)),
     }
+}
+
+/// `(empty? coll)` — true if collection or string is empty.
+fn empty_pred(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("empty?", args)?;
+    match v {
+        Value::Vec(items) => Ok(Value::Bool(items.is_empty())),
+        Value::Map(entries) => Ok(Value::Bool(entries.is_empty())),
+        Value::Set(items) => Ok(Value::Bool(items.is_empty())),
+        Value::Str(s) => Ok(Value::Bool(s.is_empty())),
+        other => Err(type_mismatch("empty?", "Vec, Map, Set, or Str", other)),
+    }
+}
+
+/// `(nth coll i)` — alias for `get` on indexed collections.
+fn nth_fn(args: &[Value]) -> Result<Value, String> {
+    get(args)
+}
+
+/// `(get-in coll path)` — nested access via key path vector.
+fn get_in_fn(args: &[Value]) -> Result<Value, String> {
+    let (coll, path) = two_args("get-in", args)?;
+    let keys = match path {
+        Value::Vec(items) => items,
+        other => return Err(type_mismatch("get-in", "Vec (key path)", other)),
+    };
+    let mut current = coll.clone();
+    for key in keys.iter() {
+        let result = get(&[current, key.clone()])?;
+        match result {
+            Value::Adt { ref ctor, ref fields, .. } if ctor.as_ref() == "Some" => {
+                current = fields[0].clone();
+            }
+            _ => return Ok(option_none()),
+        }
+    }
+    Ok(option_some(current))
 }
 
 /// `(put v i x)` — update the value at index `i`.
