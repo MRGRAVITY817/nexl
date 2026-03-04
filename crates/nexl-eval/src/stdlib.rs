@@ -88,6 +88,13 @@ pub fn standard_env() -> Rc<Env> {
     env.define("empty?", native("empty?", empty_pred));
     env.define("nth", native("nth", nth_fn));
     env.define("get-in", native("get-in", get_in_fn));
+    env.define("assoc-in", native("assoc-in", assoc_in_fn));
+    env.define("update", native("update", update_fn));
+    env.define("update-in", native("update-in", update_in_fn));
+    env.define("conj", native("conj", conj_fn));
+    env.define("into", native("into", into_fn));
+    env.define("concat", native("concat", concat_fn));
+    env.define("empty", native("empty", empty_fn));
 
     // Bitwise operations
     env.define("bit-and", native("bit-and", bit_and));
@@ -650,6 +657,184 @@ fn get_in_fn(args: &[Value]) -> Result<Value, String> {
         }
     }
     Ok(option_some(current))
+}
+
+/// `(assoc-in coll path value)` — nested put via key path.
+fn assoc_in_fn(args: &[Value]) -> Result<Value, String> {
+    let (coll, path, value) = three_args("assoc-in", args)?;
+    let keys = match path {
+        Value::Vec(items) => items,
+        other => return Err(type_mismatch("assoc-in", "Vec (key path)", other)),
+    };
+    if keys.is_empty() {
+        return Ok(value.clone());
+    }
+    assoc_in_recursive(coll, keys.as_ref(), value)
+}
+
+fn assoc_in_recursive(coll: &Value, keys: &[Value], value: &Value) -> Result<Value, String> {
+    if keys.len() == 1 {
+        return put(&[coll.clone(), keys[0].clone(), value.clone()]);
+    }
+    let inner = match get(&[coll.clone(), keys[0].clone()])? {
+        Value::Adt { ref ctor, ref fields, .. } if ctor.as_ref() == "Some" => fields[0].clone(),
+        _ => Value::Map(Rc::new(nexl_runtime::value::NexlMap::new())),
+    };
+    let updated = assoc_in_recursive(&inner, &keys[1..], value)?;
+    put(&[coll.clone(), keys[0].clone(), updated])
+}
+
+/// `(update coll key f)` — apply f to the value at key.
+fn update_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [coll, key, f] => {
+            let current = get(&[coll.clone(), key.clone()])?;
+            let inner = match current {
+                Value::Adt { ref ctor, ref fields, .. } if ctor.as_ref() == "Some" => {
+                    fields[0].clone()
+                }
+                _ => return Err(format!("`update`: key not found")),
+            };
+            let new_val = nexl_runtime::call_value(f, &[inner])?;
+            put(&[coll.clone(), key.clone(), new_val])
+        }
+        _ => Err(format!(
+            "`update` requires exactly 3 arguments, got {}",
+            args.len()
+        )),
+    }
+}
+
+/// `(update-in coll path f)` — apply f to the value at nested path.
+fn update_in_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [coll, path, f] => {
+            let keys = match path {
+                Value::Vec(items) => items,
+                other => return Err(type_mismatch("update-in", "Vec (key path)", other)),
+            };
+            if keys.is_empty() {
+                let new_val = nexl_runtime::call_value(f, &[coll.clone()])?;
+                return Ok(new_val);
+            }
+            update_in_recursive(coll, keys.as_ref(), f)
+        }
+        _ => Err(format!(
+            "`update-in` requires exactly 3 arguments, got {}",
+            args.len()
+        )),
+    }
+}
+
+fn update_in_recursive(coll: &Value, keys: &[Value], f: &Value) -> Result<Value, String> {
+    if keys.len() == 1 {
+        return update_fn(&[coll.clone(), keys[0].clone(), f.clone()]);
+    }
+    let inner = match get(&[coll.clone(), keys[0].clone()])? {
+        Value::Adt { ref ctor, ref fields, .. } if ctor.as_ref() == "Some" => fields[0].clone(),
+        _ => return Err("`update-in`: key not found in path".into()),
+    };
+    let updated = update_in_recursive(&inner, &keys[1..], f)?;
+    put(&[coll.clone(), keys[0].clone(), updated])
+}
+
+/// `(conj coll elem)` — polymorphic append: Vec end, Set add, Map takes [k v].
+fn conj_fn(args: &[Value]) -> Result<Value, String> {
+    let (coll, elem) = two_args("conj", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut next = items.as_ref().clone();
+            next.push(elem.clone());
+            Ok(Value::Vec(Rc::new(next)))
+        }
+        Value::Set(items) => {
+            let mut next = items.as_ref().clone();
+            if !next.contains(elem) {
+                next.push(elem.clone());
+            }
+            Ok(Value::Set(Rc::new(next)))
+        }
+        Value::Map(_) => match elem {
+            Value::Vec(pair) if pair.len() == 2 => {
+                put(&[coll.clone(), pair[0].clone(), pair[1].clone()])
+            }
+            _ => Err("`conj` on Map requires a [key value] pair".into()),
+        },
+        other => Err(type_mismatch("conj", "Vec, Set, or Map", other)),
+    }
+}
+
+/// `(into dest src)` — pour elements from src into dest.
+fn into_fn(args: &[Value]) -> Result<Value, String> {
+    let (dest, src) = two_args("into", args)?;
+    match (dest, src) {
+        (Value::Vec(d), Value::Vec(s)) => {
+            let mut next = d.as_ref().clone();
+            next.extend(s.iter().cloned());
+            Ok(Value::Vec(Rc::new(next)))
+        }
+        (Value::Set(d), Value::Vec(s)) => {
+            let mut next = d.as_ref().clone();
+            for item in s.iter() {
+                if !next.contains(item) {
+                    next.push(item.clone());
+                }
+            }
+            Ok(Value::Set(Rc::new(next)))
+        }
+        (Value::Set(d), Value::Set(s)) => {
+            let mut next = d.as_ref().clone();
+            for item in s.iter() {
+                if !next.contains(item) {
+                    next.push(item.clone());
+                }
+            }
+            Ok(Value::Set(Rc::new(next)))
+        }
+        (Value::Map(d), Value::Map(s)) => {
+            let mut next = d.as_ref().clone();
+            for (k, v) in s.iter() {
+                next = next.put(k.clone(), v.clone());
+            }
+            Ok(Value::Map(Rc::new(next)))
+        }
+        (Value::Vec(d), Value::Set(s)) => {
+            let mut next = d.as_ref().clone();
+            for item in s.iter() {
+                next.push(item.clone());
+            }
+            Ok(Value::Vec(Rc::new(next)))
+        }
+        (other, _) => Err(type_mismatch("into", "Vec, Set, or Map", other)),
+    }
+}
+
+/// `(concat a b)` — concatenate two collections of same type.
+fn concat_fn(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("concat", args)?;
+    match (a, b) {
+        (Value::Vec(x), Value::Vec(y)) => {
+            let mut next = x.as_ref().clone();
+            next.extend(y.iter().cloned());
+            Ok(Value::Vec(Rc::new(next)))
+        }
+        (Value::Str(x), Value::Str(y)) => {
+            Ok(Value::Str(Rc::from(format!("{x}{y}").as_str())))
+        }
+        (other, _) => Err(type_mismatch("concat", "Vec or Str", other)),
+    }
+}
+
+/// `(empty coll)` — return empty collection of same type.
+fn empty_fn(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("empty", args)?;
+    match v {
+        Value::Vec(_) => Ok(Value::Vec(Rc::new(vec![]))),
+        Value::Map(_) => Ok(Value::Map(Rc::new(nexl_runtime::value::NexlMap::new()))),
+        Value::Set(_) => Ok(Value::Set(Rc::new(Default::default()))),
+        Value::Str(_) => Ok(Value::Str(Rc::from(""))),
+        other => Err(type_mismatch("empty", "Vec, Map, Set, or Str", other)),
+    }
 }
 
 /// `(put v i x)` — update the value at index `i`.

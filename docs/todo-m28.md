@@ -34,7 +34,7 @@ Reference: `docs/stdlib-spec.md`
   - `nth`: alias for `get` on indexed collections
   - `get-in`: nested access via key path vector
 
-- [ ] **Structural transforms** — `assoc-in`, `update`, `update-in`, `conj`, `into`, `concat`, `empty`
+- [x] **Structural transforms** — `assoc-in`, `update`, `update-in`, `conj`, `into`, `concat`, `empty`
   - `conj`: polymorphic append (Vec end, Set add, Map takes [k v] pair)
   - `into`: pour elements from source into destination collection
   - `concat`: concatenate two collections of same type

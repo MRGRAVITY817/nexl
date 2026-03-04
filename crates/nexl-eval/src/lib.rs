@@ -6246,6 +6246,87 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- Structural transforms (M28) ---
+
+    #[test]
+    fn test_conj_vec() {
+        assert_eq!(
+            eval_str("(conj [1 2] 3)").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn test_conj_set() {
+        let result = eval_str("(conj #{1 2} 3)").unwrap();
+        match result {
+            Value::Set(items) => assert_eq!(items.len(), 3),
+            other => panic!("expected Set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_conj_map() {
+        let result = eval_str("(conj {:a 1} [:b 2])").unwrap();
+        match result {
+            Value::Map(m) => assert_eq!(m.len(), 2),
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_concat_vec() {
+        assert_eq!(
+            eval_str("(concat [1 2] [3 4])").unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_concat_str() {
+        assert_eq!(
+            eval_str(r#"(concat "hello" " world")"#).unwrap(),
+            Value::Str(Rc::from("hello world"))
+        );
+    }
+
+    #[test]
+    fn test_into_vec_vec() {
+        assert_eq!(
+            eval_str("(into [1] [2 3])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn test_empty_returns_same_type() {
+        assert_eq!(eval_str("(empty [1 2 3])").unwrap(), Value::Vec(Rc::new(vec![])));
+        assert_eq!(eval_str(r#"(empty "hello")"#).unwrap(), Value::Str(Rc::from("")));
+    }
+
+    #[test]
+    fn test_assoc_in_nested() {
+        let _result = eval_str("(assoc-in {:a {:b 1}} [:a :b] 42)").unwrap();
+        let inner = eval_str("(get-in (assoc-in {:a {:b 1}} [:a :b] 42) [:a :b])").unwrap();
+        assert_eq!(inner, option_some(Value::Int(42)));
+    }
+
+    #[test]
+    fn test_update_map() {
+        let result = eval_str("(get (update {:a 1 :b 2} :a (fn [x] (+ x 10))) :a)").unwrap();
+        assert_eq!(result, option_some(Value::Int(11)));
+    }
+
+    #[test]
+    fn test_update_in_nested() {
+        let result = eval_str(
+            "(get-in (update-in {:a {:b 1}} [:a :b] (fn [x] (+ x 10))) [:a :b])"
+        ).unwrap();
+        assert_eq!(result, option_some(Value::Int(11)));
+    }
+
     // --- Polymorphic accessors (M28) ---
 
     #[test]
