@@ -1,58 +1,118 @@
-# M28 — Flagship Project & 1.0 Preparation
+# M28 — Stdlib Core & Enrichment
 
 ## Goal
-Build a substantial real-world Nexl project that exercises the full language,
-then harden the language and toolchain for a 1.0 release.
+Enrich existing Rust stdlib modules with missing essentials, add the `option`,
+`result`, and `core` modules, and build the infrastructure for writing stdlib
+modules in Nexl. This milestone lays the foundation for all subsequent stdlib work.
 
-## Tasks
+Reference: `docs/stdlib-spec.md`
 
-- [x] **Triple-quoted and raw string literals** — `"""..."""` auto-dedent, `r"..."` / `r#"..."#` verbatim
-  - `StringKind` enum (Regular, Triple, Raw) in nexl-reader; `dedent_triple` in reader
-  - 18 new tests (6 triple, 6 raw, 6 dedent); all existing tests green
-  - 18 stdlib `.nx` docstrings converted to triple-quoted (section headers flush-left in hover)
-  - nexl-spec §2.4 + Appendix D updated; tree-sitter `raw_string_literal` rule added
+## Infrastructure
 
-- [x] **nexl-market** — Multi-vendor marketplace (DDD) at `/Users/tripboi/Projects/nexl-market/`
-  - 5 bounded contexts: Catalog, Orders, Payments, Delivery, Accounts
-  - deftype records + sum types, `:requires`/`:ensures` contracts
-  - SQLite CRUD across all contexts
-  - `log/with` structured logging, `env/load-dotenv`, `json/pretty`
-  - 14 tests across 3 test files (all green)
-  - `nexl doc` generates HTML API docs
-  - Full order lifecycle integration demo in `src/main.nx`
+- [ ] **Nexl-written stdlib loading** — evaluator can load `.nx` files as stdlib modules
+  - Stdlib `.nx` files embedded via `include_str!` or loaded from a `stdlib/` directory
+  - Evaluated after Rust NativeFn registration, before user code
+  - Module-qualified names (`option/map`, `result/flat-map`) work from `.nx` definitions
+  - Test: a simple `.nx` stdlib function is callable from user code
 
-- [ ] **nexl-functions** — Effect-sandboxed WASM plugin host (flagship)
-  - HTTP trigger: incoming request → run function → return response
-  - Capability levels: pure / read-only / full
-  - `nexl functions deploy` command
-  - Dashboard: deployed functions, capabilities, invocation logs
-  - Runs locally via Wasmtime
+## Builtins — Arithmetic & Comparison
 
-- [ ] **1.0 stability contract** — define stable vs experimental surface
-  - Stable: syntax, core forms, type system, effect system, stdlib, CLI, WIT interop
-  - Experimental: WASI 0.3 async, native backend, specific optimizations
-  - Backward compatibility promise
-  - Edition mechanism design
+- [ ] **New arithmetic builtins** — `inc`, `dec`, `rem`, `quot`
+  - `inc`/`dec`: polymorphic over Numeric types
+  - `rem`: sign of dividend (truncated division)
+  - `quot`: truncated division quotient
 
-- [ ] **Migration guide & changelog** — pre-1.0 → 1.0
-  - Document every breaking change
-  - `nexl migrate` tool for automated fixups
-  - Stage 0 → Stage 1 → Stage 2 changelog
+- [ ] **New comparison builtins** — `not=`, `compare`, `clamp`
+  - `not=`: complement of `=`
+  - `compare`: returns `:lt`, `:eq`, `:gt` (matches Ord protocol, spec §5.11)
+  - `clamp`: restrict value to [lo, hi] range
 
-- [ ] **Public documentation site**
-  - Language guide (tutorial progression)
-  - Standard library API reference (auto-generated)
-  - Effect system guide
-  - WASM interop guide
-  - Cookbook integration
+## Builtins — Collections
 
-- [ ] **Community infrastructure**
-  - GitHub Discussions or Discord
-  - Good-first-issue labels
-  - Contributing guide
-  - Code of conduct
+- [ ] **Polymorphic accessors** — `empty?`, `nth`, `get-in`
+  - `empty?`: O(1) for Vec/Map/Set, O(1) for Str (check byte length)
+  - `nth`: alias for `get` on indexed collections
+  - `get-in`: nested access via key path vector
 
-- [ ] **AI/LLM readiness**
-  - Context files for AI coding assistants
-  - Canonical example corpus (50+ programs)
-  - Verify Claude can write basic Nexl from documentation context
+- [ ] **Structural transforms** — `assoc-in`, `update`, `update-in`, `conj`, `into`, `concat`, `empty`
+  - `conj`: polymorphic append (Vec end, Set add, Map takes [k v] pair)
+  - `into`: pour elements from source into destination collection
+  - `concat`: concatenate two collections of same type
+  - `empty`: return empty collection of same type
+  - `assoc-in`/`update`/`update-in`: nested path operations
+
+- [ ] **Map builtins** — `merge`, `merge-with`, `select-keys`, `rename-keys`, `zipmap`, `entries`
+  - `merge`: variadic, rightmost wins
+  - `merge-with`: conflict resolver function
+  - `select-keys`/`rename-keys`: submap operations
+
+- [ ] **Set builtins** — `dissoc`, `disj`, `union`, `intersection`, `difference`, `symmetric-difference`, `subset?`, `superset?`, `disjoint?`
+  - `dissoc`: remove key(s) from Map (variadic)
+  - `disj`: remove element(s) from Set (variadic)
+
+- [ ] **Higher-order sequence functions** — `remove`, `keep`, `some`, `every?`, `any?`, `not-any?`, `not-every?`
+  - `remove`: complement of filter (keep where pred is false)
+  - `keep`: map + filter-None in one pass
+  - `some`: first non-None result of applying f
+
+- [ ] **More HOFs** — `find`, `find-index`, `map-indexed`, `reduce-indexed`, `sort-with`, `distinct`, `flatten`, `frequencies`, `partition-by`, `interleave`, `interpose`, `zip`, `zip-with`
+
+- [ ] **String builtins** — `pr-str`
+  - Readable representation with quotes, escapes
+
+## `str` Module Enrichment
+
+- [ ] **String functions** — ~20 new functions (Rust)
+  - `split-first`, `split-lines`: additional split variants
+  - `capitalize`, `title`: case transforms
+  - `replace-first`, `last-index-of`: search variants
+  - `pad-start`, `pad-end`, `repeat`, `reverse`: formatting
+  - `byte-count`, `char-count`, `grapheme-count`: explicit cost model
+  - `from-chars`, `from-code-points`, `to-bytes`, `from-bytes`: conversions
+  - `kebab-case`, `snake-case`, `camel-case`: code generation helpers
+
+## `math` Module Enrichment
+
+- [ ] **Math constants** — `tau`, `inf`, `neg-inf`, `nan`
+
+- [ ] **Math functions** — ~15 new functions (Rust)
+  - `sign`, `truncate`, `cbrt`: basic operations
+  - `log2`, `log10`, `exp2`: logarithms
+  - `sinh`, `cosh`, `tanh`: hyperbolic functions
+  - `nan?`, `infinite?`, `finite?`: float classification
+  - `gcd`, `lcm`, `divmod`: integer math
+
+## `conv` Module Enrichment
+
+- [ ] **New conversions** — `->bool`, `->char`
+  - `->bool`: 0/0.0/""/false → false, all else → true
+  - `->char`: codepoint Int to Char (None if invalid)
+
+## `core` Module (New — Nexl)
+
+- [ ] **Higher-order utilities** — ~12 functions (written in Nexl)
+  - `identity`, `comp`, `comp*`, `pipe`: function composition
+  - `partial`, `constantly`, `complement`: function builders
+  - `juxt`, `apply`: function application
+  - `memoize`, `trampoline`: advanced patterns
+  - `tap`: debug logging in pipelines (subject-first)
+
+## `option` Module (New — Nexl)
+
+- [ ] **Option combinators** — ~13 functions (written in Nexl)
+  - Predicates: `some?`, `none?`
+  - Extraction: `unwrap`, `unwrap-or`, `unwrap-or-else`
+  - Transforms: `map`, `flat-map`, `filter` (all subject-first for `->`)
+  - Chaining: `or-else`, `zip`
+  - Conversion: `to-result`, `from-result`
+  - Collection: `values` (filter None from Vec of Options)
+
+## `result` Module (New — Nexl)
+
+- [ ] **Result combinators** — ~15 functions (written in Nexl)
+  - Predicates: `ok?`, `err?`
+  - Extraction: `unwrap`, `unwrap-err`, `unwrap-or`, `unwrap-or-else`
+  - Transforms: `map`, `map-err`, `flat-map` (all subject-first for `->`)
+  - Chaining: `or-else`
+  - Conversion: `to-option`, `from-option`
+  - Batch: `try-map`, `partition`, `collect`

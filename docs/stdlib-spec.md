@@ -308,6 +308,11 @@ Functions not yet implementable (e.g., requiring WASI 0.3) belong in an `experim
 
 These are available without any import. They form the vocabulary of the language.
 
+**Signature shorthand**: In the tables below, `Num` stands for `a :where [(Numeric a)]`,
+`Ord` stands for `a :where [(Ord a)]`, and `Coll` stands for any of Vec/Map/Set/Str
+(resolved by compiler-dispatched overloads per spec §5.11). These are documentation
+conveniences, not actual types in the Nexl type system.
+
 #### Arithmetic
 | Function | Signature | Description | Complexity |
 |----------|-----------|-------------|------------|
@@ -315,8 +320,8 @@ These are available without any import. They form the vocabulary of the language
 | `-` | `(Fn [Num & Num] -> Num)` | Subtract or negate | O(n) |
 | `*` | `(Fn [& Num] -> Num)` | Multiply; 0 args → 1 | O(n) |
 | `/` | `(Fn [Num Num] -> Num)` | Divide; Int/Int → truncate | O(1) |
-| `mod` | `(Fn [Int Int] -> Int)` | Remainder (sign of dividend) | O(1) |
-| `rem` | `(Fn [Int Int] -> Int)` | **New.** Remainder (sign of divisor, Euclidean) | O(1) |
+| `mod` | `(Fn [Int Int] -> Int)` | Modulo (sign of divisor, Euclidean) | O(1) |
+| `rem` | `(Fn [Int Int] -> Int)` | **New.** Remainder (sign of dividend, truncated) | O(1) |
 | `quot` | `(Fn [Int Int] -> Int)` | **New.** Truncated division | O(1) |
 | `inc` | `(Fn [Num] -> Num)` | **New.** Increment by 1 | O(1) |
 | `dec` | `(Fn [Num] -> Num)` | **New.** Decrement by 1 | O(1) |
@@ -330,7 +335,7 @@ These are available without any import. They form the vocabulary of the language
 | `>` | `(Fn [Ord Ord] -> Bool)` | Greater than |
 | `<=` | `(Fn [Ord Ord] -> Bool)` | Less than or equal |
 | `>=` | `(Fn [Ord Ord] -> Bool)` | Greater than or equal |
-| `compare` | `(Fn [Ord Ord] -> Int)` | **New.** Three-way comparison: -1, 0, or 1 |
+| `compare` | `(Fn [Ord Ord] -> (| :lt :eq :gt))` | **New.** Three-way comparison (spec §5.11) |
 | `min` | `(Fn [Ord Ord] -> Ord)` | Minimum of two values |
 | `max` | `(Fn [Ord Ord] -> Ord)` | Maximum of two values |
 | `clamp` | `(Fn [Ord Ord Ord] -> Ord)` | Restrict to [lo, hi] |
@@ -422,7 +427,7 @@ following Clojure's sequence function convention for `->>` threading.
 | `reduce` | `(Fn [(Fn [acc a] -> acc) acc Coll] -> acc)` | Fold left | O(n) |
 | `flat-map` | `(Fn [(Fn [a] -> (Vec b)) (Vec a)] -> (Vec b))` | Map then flatten one level | O(n*m) |
 | `mapcat` | `(Fn [(Fn [a] -> (Vec b)) (Vec a)] -> (Vec b))` | **New.** Alias for flat-map (Clojure name) | O(n*m) |
-| `each` | Special form | Side-effecting iteration | O(n) |
+| `each` | Special form: `(each [x coll] body)` | Side-effecting iteration (spec §4.15, NOT a HOF) | O(n) |
 | `map-indexed` | `(Fn [(Fn [Int a] -> b) Coll] -> Coll)` | **New.** Map with index | O(n) |
 | `reduce-indexed` | `(Fn [(Fn [acc Int a] -> acc) acc Coll] -> acc)` | **New.** Fold with index | O(n) |
 | `sort` | `(Fn [Coll] -> Coll)` | Stable sort (natural order) | O(n log n) |
@@ -457,7 +462,7 @@ following Clojure's sequence function convention for `->>` threading.
 (->> users (remove active?))  ;; keep INactive users (complement of filter)
 ```
 
-**`keep`** combines map + filter-nil in one pass (Clojure):
+**`keep`** combines map + filter-None in one pass (Clojure):
 ```nexl
 (->> items (keep (fn [x] (some-> x :email))))  ;; only non-None results
 ```
@@ -535,13 +540,15 @@ Functional programming combinators. Pure, composable, essential.
 | `apply` | `(Fn [(Fn [& a] -> b) (Vec a)] -> b)` | Spread args from vector |
 | `memoize` | `(Fn [(Fn [a] -> b)] -> (Fn [a] -> b))` | **New.** Cache results by argument |
 | `trampoline` | `(Fn [(Fn [] -> a)] -> a)` | **New.** Bounce thunks until non-fn result |
-| `tap` | `(Fn [(Fn [a] -> Any) a] -> a)` | **New.** Apply side-effect fn, return original value |
-| `when-let` | `(Fn [(Option a) (Fn [a] -> b)] -> (Option b))` | **New.** Apply fn if Some |
-| `if-let` | `(Fn [(Option a) (Fn [a] -> b) (Fn [] -> b)] -> b)` | **New.** Branch on Option |
+| `tap` | `(Fn [a (Fn [a] -> Any)] -> a)` | **New.** Apply side-effect fn, return original value (subject-first for `->`) |
 
 **Design rationale**: `tap` enables debug logging in pipelines without breaking the chain.
 `complement` avoids inline lambdas for negated predicates (e.g., `(filter (complement empty?) xs)`).
 `memoize` uses an internal atom — the caching itself is not effect-tracked since the wrapped function's effects are already declared.
+
+**Note**: `if-let` and `when-let` are **language special forms** (spec §4.12) for conditional
+destructuring, not library functions. They are always available and work with any refutable pattern,
+not just Options.
 
 ---
 
@@ -685,7 +692,7 @@ Explicit conversions between primitive types. Returns `Option` for narrowing con
 | `->int` | `(Fn [Any] -> (Option Int))` | To integer (truncates floats, parses strings) |
 | `->float` | `(Fn [Any] -> (Option Float))` | To float (widens ints, parses strings) |
 | `->str` | `(Fn [Any] -> Str)` | To string representation |
-| `->bool` | `(Fn [Any] -> Bool)` | **New.** Truthy conversion (false/nil → false, all else → true) |
+| `->bool` | `(Fn [Any] -> Bool)` | **New.** Explicit Bool conversion (0/0.0/"" → false, all else → true) |
 | `->char` | `(Fn [Int] -> (Option Char))` | **New.** Codepoint to Char (None if invalid) |
 
 ---
@@ -699,28 +706,28 @@ Vector-specific operations beyond what builtins provide.
 | `of` | `(Fn [& a] -> (Vec a))` | Construct from args | O(n) |
 | `repeat` | `(Fn [Int a] -> (Vec a))` | N copies of value | O(n) |
 | `init` | `(Fn [Int (Fn [Int] -> a)] -> (Vec a))` | Build via index function | O(n) |
-| `chunk` | `(Fn [Int (Vec a)] -> (Vec (Vec a)))` | Split into fixed-size chunks | O(n) |
-| `window` | `(Fn [Int (Vec a)] -> (Vec (Vec a)))` | Sliding window of size n | O(n*k) |
-| `intersperse` | `(Fn [a (Vec a)] -> (Vec a))` | Insert between elements | O(n) |
-| `split-at` | `(Fn [Int (Vec a)] -> (Tuple (Vec a) (Vec a)))` | Split at index | O(n) |
-| `span` | `(Fn [(Fn [a] -> Bool) (Vec a)] -> (Tuple (Vec a) (Vec a)))` | Split at first false | O(n) |
+| `chunk` | `(Fn [(Vec a) Int] -> (Vec (Vec a)))` | Split into fixed-size chunks | O(n) |
+| `window` | `(Fn [(Vec a) Int] -> (Vec (Vec a)))` | Sliding window of size n | O(n*k) |
+| `intersperse` | `(Fn [(Vec a) a] -> (Vec a))` | Insert between elements | O(n) |
+| `split-at` | `(Fn [(Vec a) Int] -> (Tuple (Vec a) (Vec a)))` | Split at index | O(n) |
+| `span` | `(Fn [(Vec a) (Fn [a] -> Bool)] -> (Tuple (Vec a) (Vec a)))` | Split at first false | O(n) |
 | `dedup` | `(Fn [(Vec a)] -> (Vec a))` | Remove consecutive duplicates | O(n) |
-| `dedup-by` | `(Fn [(Fn [a a] -> Bool) (Vec a)] -> (Vec a))` | Dedup with equality fn | O(n) |
-| `rotate-left` | `(Fn [Int (Vec a)] -> (Vec a))` | Rotate left by n positions | O(n) |
-| `rotate-right` | `(Fn [Int (Vec a)] -> (Vec a))` | Rotate right by n positions | O(n) |
-| `swap` | `(Fn [Int Int (Vec a)] -> (Vec a))` | Swap elements at two indices | O(n) |
-| `insert` | `(Fn [Int a (Vec a)] -> (Vec a))` | Insert at index | O(n) |
-| `remove-at` | `(Fn [Int (Vec a)] -> (Vec a))` | Remove at index | O(n) |
-| `scan` | `(Fn [(Fn [acc a] -> acc) acc (Vec a)] -> (Vec acc))` | Running fold (all intermediates) | O(n) |
-| `fold-right` | `(Fn [(Fn [a acc] -> acc) acc (Vec a)] -> acc)` | Fold from the right | O(n) |
+| `dedup-by` | `(Fn [(Vec a) (Fn [a a] -> Bool)] -> (Vec a))` | Dedup with equality fn | O(n) |
+| `rotate-left` | `(Fn [(Vec a) Int] -> (Vec a))` | Rotate left by n positions | O(n) |
+| `rotate-right` | `(Fn [(Vec a) Int] -> (Vec a))` | Rotate right by n positions | O(n) |
+| `swap` | `(Fn [(Vec a) Int Int] -> (Vec a))` | Swap elements at two indices | O(n) |
+| `insert` | `(Fn [(Vec a) Int a] -> (Vec a))` | Insert at index | O(n) |
+| `remove-at` | `(Fn [(Vec a) Int] -> (Vec a))` | Remove at index | O(n) |
+| `scan` | `(Fn [(Vec a) (Fn [acc a] -> acc) acc] -> (Vec acc))` | Running fold (all intermediates) | O(n) |
+| `fold-right` | `(Fn [(Vec a) (Fn [a acc] -> acc) acc] -> acc)` | Fold from the right | O(n) |
 | `sum` | `(Fn [(Vec Num)] -> Num)` | Sum all elements | O(n) |
 | `product` | `(Fn [(Vec Num)] -> Num)` | Multiply all elements | O(n) |
-| `min-by` | `(Fn [(Fn [a] -> Ord) (Vec a)] -> (Option a))` | Minimum by key function | O(n) |
-| `max-by` | `(Fn [(Fn [a] -> Ord) (Vec a)] -> (Option a))` | Maximum by key function | O(n) |
+| `min-by` | `(Fn [(Vec a) (Fn [a] -> Ord)] -> (Option a))` | Minimum by key function | O(n) |
+| `max-by` | `(Fn [(Vec a) (Fn [a] -> Ord)] -> (Option a))` | Maximum by key function | O(n) |
 | `unzip` | `(Fn [(Vec (Tuple a b))] -> (Tuple (Vec a) (Vec b)))` | Inverse of zip | O(n) |
 | `permutations` | `(Fn [(Vec a)] -> (Vec (Vec a)))` | All orderings | O(n!) |
-| `combinations` | `(Fn [Int (Vec a)] -> (Vec (Vec a)))` | Choose k from n | O(C(n,k)) |
-| `binary-search` | `(Fn [Ord (Vec Ord)] -> (Result Int Int))` | Sorted vec lookup | O(log n) |
+| `combinations` | `(Fn [(Vec a) Int] -> (Vec (Vec a)))` | Choose k from n | O(C(n,k)) |
+| `binary-search` | `(Fn [(Vec Ord) Ord] -> (Result Int Int))` | Sorted vec lookup | O(log n) |
 
 **Design rationale**: `chunk`/`window` are essential for batch processing and sliding aggregations.
 `scan` (running fold) is needed for cumulative sums, running averages, etc.
@@ -737,16 +744,16 @@ Map-specific operations beyond what builtins provide.
 | `of` | `(Fn [& (Tuple k v)] -> (Map k v))` | Construct from key-value pairs | O(n) |
 | `from-entries` | `(Fn [(Vec (Tuple k v))] -> (Map k v))` | Build from pairs | O(n) |
 | `get-or` | `(Fn [(Map k v) k v] -> v)` | Get with default value | O(1) |
-| `map-keys` | `(Fn [(Fn [k] -> k2) (Map k v)] -> (Map k2 v))` | Transform keys | O(n) |
-| `map-vals` | `(Fn [(Fn [v] -> v2) (Map k v)] -> (Map k v2))` | Transform values | O(n) |
-| `filter-keys` | `(Fn [(Fn [k] -> Bool) (Map k v)] -> (Map k v))` | Keep entries by key | O(n) |
-| `filter-vals` | `(Fn [(Fn [v] -> Bool) (Map k v)] -> (Map k v))` | Keep entries by value | O(n) |
+| `map-keys` | `(Fn [(Map k v) (Fn [k] -> k2)] -> (Map k2 v))` | Transform keys | O(n) |
+| `map-vals` | `(Fn [(Map k v) (Fn [v] -> v2)] -> (Map k v2))` | Transform values | O(n) |
+| `filter-keys` | `(Fn [(Map k v) (Fn [k] -> Bool)] -> (Map k v))` | Keep entries by key | O(n) |
+| `filter-vals` | `(Fn [(Map k v) (Fn [v] -> Bool)] -> (Map k v))` | Keep entries by value | O(n) |
 | `invert` | `(Fn [(Map k v)] -> (Map v k))` | Swap keys and values | O(n) |
 | `group-vals` | `(Fn [(Map k v)] -> (Map v (Vec k)))` | Group keys by value | O(n) |
-| `reduce-kv` | `(Fn [(Fn [acc k v] -> acc) acc (Map k v)] -> acc)` | Fold over key-value pairs | O(n) |
-| `find` | `(Fn [(Fn [k v] -> Bool) (Map k v)] -> (Option (Tuple k v)))` | First matching entry | O(n) |
-| `every?` | `(Fn [(Fn [k v] -> Bool) (Map k v)] -> Bool)` | All entries match | O(n) |
-| `some?` | `(Fn [(Fn [k v] -> Bool) (Map k v)] -> Bool)` | Any entry matches | O(n) |
+| `reduce-kv` | `(Fn [(Map k v) (Fn [acc k v] -> acc) acc] -> acc)` | Fold over key-value pairs | O(n) |
+| `find` | `(Fn [(Map k v) (Fn [k v] -> Bool)] -> (Option (Tuple k v)))` | First matching entry | O(n) |
+| `every?` | `(Fn [(Map k v) (Fn [k v] -> Bool)] -> Bool)` | All entries match | O(n) |
+| `any?` | `(Fn [(Map k v) (Fn [k v] -> Bool)] -> Bool)` | Any entry matches | O(n) |
 
 **Design rationale**: `map-keys`/`map-vals`/`filter-keys`/`filter-vals` avoid destructuring
 in lambdas. `reduce-kv` gives direct access to both key and value. `invert` is a common
@@ -764,13 +771,13 @@ Set-specific operations beyond what builtins provide.
 | `of` | `(Fn [& a] -> (Set a))` | Construct from elements |
 | `from-vec` | `(Fn [(Vec a)] -> (Set a))` | Build from vector (deduplicates) |
 | `to-vec` | `(Fn [(Set a)] -> (Vec a))` | Convert to vector |
-| `map` | `(Fn [(Fn [a] -> b) (Set a)] -> (Set b))` | Transform elements |
-| `filter` | `(Fn [(Fn [a] -> Bool) (Set a)] -> (Set a))` | Keep matching elements |
-| `reduce` | `(Fn [(Fn [acc a] -> acc) acc (Set a)] -> acc)` | Fold over elements |
-| `every?` | `(Fn [(Fn [a] -> Bool) (Set a)] -> Bool)` | All elements match |
-| `some?` | `(Fn [(Fn [a] -> Bool) (Set a)] -> Bool)` | Any element matches |
-| `flat-map` | `(Fn [(Fn [a] -> (Set b)) (Set a)] -> (Set b))` | Map and flatten |
-| `partition` | `(Fn [(Fn [a] -> Bool) (Set a)] -> (Tuple (Set a) (Set a)))` | Split by predicate |
+| `map` | `(Fn [(Set a) (Fn [a] -> b)] -> (Set b))` | Transform elements |
+| `filter` | `(Fn [(Set a) (Fn [a] -> Bool)] -> (Set a))` | Keep matching elements |
+| `reduce` | `(Fn [(Set a) (Fn [acc a] -> acc) acc] -> acc)` | Fold over elements |
+| `every?` | `(Fn [(Set a) (Fn [a] -> Bool)] -> Bool)` | All elements match |
+| `any?` | `(Fn [(Set a) (Fn [a] -> Bool)] -> Bool)` | Any element matches |
+| `flat-map` | `(Fn [(Set a) (Fn [a] -> (Set b))] -> (Set b))` | Map and flatten |
+| `partition` | `(Fn [(Set a) (Fn [a] -> Bool)] -> (Tuple (Set a) (Set a)))` | Split by predicate |
 | `product` | `(Fn [(Set a) (Set b)] -> (Set (Tuple a b)))` | Cartesian product |
 
 ---
@@ -779,6 +786,28 @@ Set-specific operations beyond what builtins provide.
 
 Rich operations on `(Option a)`. Inspired by Rust's `Option` methods and Gleam's `result` module.
 
+**Relationship with builtin `map`/`filter`**: The builtin `map` and `filter` are
+compiler-dispatched overloads that already work on Option (spec §5.11):
+
+```nexl
+(map inc (Some 1))           ;; => (Some 2) — builtin, collection-last
+(filter pos? (Some -3))      ;; => None     — builtin, collection-last
+```
+
+The `option/*` module provides the same operations with **subject-first** ordering,
+plus Option-specific combinators (`unwrap-or`, `flat-map`, `or-else`, etc.) that
+have no builtin equivalent. Use builtins for one-off transforms; use `option/*`
+when chaining multiple operations in a `->` pipeline.
+
+All functions take the **Option as the first argument** (subject-first, for `->` threading):
+
+```nexl
+(-> (find-user id)
+    (option/map :name)
+    (option/filter (fn [n] (not (str/blank? n))))
+    (option/unwrap-or "Anonymous"))
+```
+
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `some?` | `(Fn [(Option a)] -> Bool)` | Is Some |
@@ -786,10 +815,10 @@ Rich operations on `(Option a)`. Inspired by Rust's `Option` methods and Gleam's
 | `unwrap` | `(Fn [(Option a)] -> a)` | Extract or panic |
 | `unwrap-or` | `(Fn [(Option a) a] -> a)` | Extract or default |
 | `unwrap-or-else` | `(Fn [(Option a) (Fn [] -> a)] -> a)` | Extract or compute default |
-| `map` | `(Fn [(Fn [a] -> b) (Option a)] -> (Option b))` | Transform inner value |
-| `flat-map` | `(Fn [(Fn [a] -> (Option b)) (Option a)] -> (Option b))` | Chain fallible operations |
-| `filter` | `(Fn [(Fn [a] -> Bool) (Option a)] -> (Option a))` | Keep if predicate matches |
-| `or-else` | `(Fn [(Fn [] -> (Option a)) (Option a)] -> (Option a))` | Fallback Option |
+| `map` | `(Fn [(Option a) (Fn [a] -> b)] -> (Option b))` | Transform inner value |
+| `flat-map` | `(Fn [(Option a) (Fn [a] -> (Option b))] -> (Option b))` | Chain fallible operations |
+| `filter` | `(Fn [(Option a) (Fn [a] -> Bool)] -> (Option a))` | Keep if predicate matches |
+| `or-else` | `(Fn [(Option a) (Fn [] -> (Option a))] -> (Option a))` | Fallback Option |
 | `to-result` | `(Fn [(Option a) e] -> (Result a e))` | Convert to Result with error |
 | `from-result` | `(Fn [(Result a e)] -> (Option a))` | Discard error info |
 | `zip` | `(Fn [(Option a) (Option b)] -> (Option (Tuple a b)))` | Combine two Options |
@@ -805,6 +834,26 @@ enables chaining fallible lookups.
 
 Rich operations on `(Result a e)`. Mirrors Option combinators where applicable.
 
+**Relationship with builtin `map`**: Like Option, the builtin `map` already works
+on Result via compiler-dispatched overloads (spec §5.11):
+
+```nexl
+(map inc (Ok 1))             ;; => (Ok 2) — builtin, collection-last
+```
+
+The `result/*` module provides subject-first ordering for `->` pipelines,
+plus Result-specific operations (`map-err`, `unwrap-or-else`, `flat-map`,
+`try-map`, `collect`, etc.) that have no builtin equivalent.
+
+All functions take the **Result as the first argument** (subject-first, for `->` threading):
+
+```nexl
+(-> (io/read-file "config.toml")
+    (result/map toml/parse)
+    (result/map-err (fn [e] (str "config error: " e)))
+    (result/unwrap-or default-config))
+```
+
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `ok?` | `(Fn [(Result a e)] -> Bool)` | Is Ok |
@@ -813,13 +862,13 @@ Rich operations on `(Result a e)`. Mirrors Option combinators where applicable.
 | `unwrap-err` | `(Fn [(Result a e)] -> e)` | Extract error or panic |
 | `unwrap-or` | `(Fn [(Result a e) a] -> a)` | Extract or default |
 | `unwrap-or-else` | `(Fn [(Result a e) (Fn [e] -> a)] -> a)` | Extract or recover |
-| `map` | `(Fn [(Fn [a] -> b) (Result a e)] -> (Result b e))` | Transform Ok value |
-| `map-err` | `(Fn [(Fn [e] -> e2) (Result a e)] -> (Result a e2))` | Transform Err value |
-| `flat-map` | `(Fn [(Fn [a] -> (Result b e)) (Result a e)] -> (Result b e))` | Chain fallible ops |
-| `or-else` | `(Fn [(Fn [e] -> (Result a e2)) (Result a e)] -> (Result a e2))` | Recovery chain |
+| `map` | `(Fn [(Result a e) (Fn [a] -> b)] -> (Result b e))` | Transform Ok value |
+| `map-err` | `(Fn [(Result a e) (Fn [e] -> e2)] -> (Result a e2))` | Transform Err value |
+| `flat-map` | `(Fn [(Result a e) (Fn [a] -> (Result b e))] -> (Result b e))` | Chain fallible ops |
+| `or-else` | `(Fn [(Result a e) (Fn [e] -> (Result a e2))] -> (Result a e2))` | Recovery chain |
 | `to-option` | `(Fn [(Result a e)] -> (Option a))` | Discard error info |
 | `from-option` | `(Fn [(Option a) e] -> (Result a e))` | Add error context |
-| `try-map` | `(Fn [(Fn [a] -> (Result b e)) (Vec a)] -> (Result (Vec b) e))` | Map, fail on first error |
+| `try-map` | `(Fn [(Vec a) (Fn [a] -> (Result b e))] -> (Result (Vec b) e))` | Map, fail on first error |
 | `partition` | `(Fn [(Vec (Result a e))] -> (Tuple (Vec a) (Vec e)))` | Split Oks from Errs |
 | `collect` | `(Fn [(Vec (Result a e))] -> (Result (Vec a) e))` | All Ok or first Err |
 
@@ -832,12 +881,18 @@ failures. These patterns appear in virtually every real-world application.
 ### 3.12 `iter` — Lazy Iteration (New)
 
 Lazy sequences for composable, memory-efficient data processing.
-An `Iter` is a thunk-based lazy sequence — it produces values one at a time.
+`Iter` is a concrete ADT (not a protocol) defined in the language spec §5.12:
 
 ```nexl
-;; Type: (Iter a) = (Fn [] -> (Option (Tuple a (Iter a))))
-;; Calling an iter returns (Some [value next-iter]) or None when exhausted.
+(deftype Iter [a]
+  | Done
+  | (Yield a (Fn [] -> (Iter a))))
 ```
+
+`Yield` carries the current value and a thunk that produces the next step.
+`Done` signals the end of the sequence. All `Foldable` types can produce
+an `(Iter a)` via the `iter` function; all `Buildable` types can be
+constructed from one via `collect`.
 
 Any type that implements the `Iterable` protocol can be used with `iter/*`
 functions. Vec, Map, Set, Str, and Channel implement it out of the box.
@@ -855,7 +910,7 @@ See §7.2 for protocol details.
 | `iterate` | `(Fn [(Fn [a] -> a) a] -> (Iter a))` | Infinite unfolding |
 | `unfold` | `(Fn [(Fn [s] -> (Option (Tuple a s))) s] -> (Iter a))` | General unfold |
 | `map` | `(Fn [(Fn [a] -> b) (Iter a)] -> (Iter b))` | Lazy map |
-| `filter` | `(Fn [(Fn [a] -> Bool) (Iter a)] -> (Iter b))` | Lazy filter |
+| `filter` | `(Fn [(Fn [a] -> Bool) (Iter a)] -> (Iter a))` | Lazy filter |
 | `take` | `(Fn [Int (Iter a)] -> (Iter a))` | Lazy take |
 | `drop` | `(Fn [Int (Iter a)] -> (Iter a))` | Lazy drop |
 | `take-while` | `(Fn [(Fn [a] -> Bool) (Iter a)] -> (Iter a))` | Lazy take-while |
@@ -978,9 +1033,10 @@ and Clojure's eager (`mapv`, `filterv`) vs lazy (`map`, `filter`) split.
 - Random access (`get`, `nth` is O(n) on Iter)
 - `count` on Iter consumes it (you can't use the iter after counting)
 
-**Implementation**: The thunk representation `(Fn [] -> (Option (Tuple a (Iter a))))`
-is simple, requires no runtime support beyond closures, and works naturally with
-Nexl's existing function types. No special `Iterator` trait or protocol needed.
+**Implementation**: `Iter` is a concrete ADT `| Done | (Yield a (Fn [] -> (Iter a)))` (spec §5.12).
+This representation is simple, requires no runtime support beyond closures, and works naturally
+with Nexl's existing type system. No special `Iterator` trait needed — `Foldable` and `Buildable`
+protocols (spec §5.12) handle the conversion between concrete collections and lazy Iter.
 
 ---
 
@@ -1460,7 +1516,41 @@ See §1.1 for the full threading convention. The summary:
   (map :email $))
 ```
 
-### 4.2 Collection Return Type Preservation
+### 4.2 Builtin Overloads vs Module Functions
+
+The builtin `map`, `filter`, and `reduce` are **compiler-dispatched overloads** (spec §5.11)
+that work polymorphically across Vec, Map, Set, List, Option, and Result:
+
+```nexl
+(map inc [1 2 3])        ;; => [2 3 4]   — Vec
+(map inc (Some 1))       ;; => (Some 2)  — Option
+(map inc (Ok 1))         ;; => (Ok 2)    — Result
+(filter even? [1 2 3])   ;; => [2 4]     — Vec
+(filter pos? (Some -3))  ;; => None      — Option
+```
+
+These builtins use **collection-last** ordering (for `->>` threading). The `option/*`,
+`result/*`, `vec/*`, `map/*`, and `set/*` modules provide the same core operations
+with **subject-first** ordering (for `->` threading), plus type-specific combinators
+that have no builtin equivalent:
+
+```nexl
+;; Builtin: good for one-off transforms in ->> pipelines
+(->> items (map :price) (filter pos?) (reduce + 0))
+
+;; Module: good for -> pipelines chaining type-specific operations
+(-> (find-user id)
+    (option/map :name)
+    (option/flat-map validate-name)   ;; no builtin equivalent
+    (option/unwrap-or "Anonymous"))   ;; no builtin equivalent
+```
+
+**Rule**: Use builtins for quick transforms and `->>` pipelines. Use module-qualified
+versions when chaining multiple operations on a specific type in a `->` pipeline,
+or when you need type-specific operations like `result/map-err`, `option/flat-map`,
+`vec/chunk`, etc.
+
+### 4.3 Collection Return Type Preservation
 
 When you `map` a Vec, you get a Vec. When you `filter` a Map, you get a Map.
 When you `map` a Set, you get a Set. The operation preserves the container type.
@@ -1468,7 +1558,7 @@ When you `map` a Set, you get a Set. The operation preserves the container type.
 **Exception**: Operations that change the structure (e.g., `group-by` on a Vec returns a Map)
 clearly document the return type.
 
-### 4.3 Nil Safety
+### 4.4 Nil Safety
 
 Nexl has no null/nil. Every function that might not return a value uses `Option`.
 Every function that might fail uses `Result`. This is non-negotiable.
@@ -1480,7 +1570,7 @@ Every function that might fail uses `Result`. This is non-negotiable.
 | Sentinel value (-1, "") | Return `(Option a)` |
 | Panic | Reserve for programmer errors only |
 
-### 4.4 String Representation
+### 4.5 String Representation
 
 All strings are UTF-8. The stdlib provides three levels of string inspection:
 
@@ -1493,7 +1583,7 @@ All strings are UTF-8. The stdlib provides three levels of string inspection:
 The unqualified `count` on strings returns **codepoint count** (most intuitive).
 The unqualified `get` on strings returns **the nth codepoint as Char**.
 
-### 4.5 Numeric Tower
+### 4.6 Numeric Tower
 
 ```
 Int ──→ Float (widening, lossless for small values)
@@ -1505,7 +1595,7 @@ Cross-type arithmetic between `Int` and `Float` produces `Float`.
 Cross-type arithmetic between fixed-width types (`Int32`, `U8`, etc.) is a **compile error**.
 Use explicit `conv/->int` or `conv/->float` for conversions.
 
-### 4.6 Structured Error Types
+### 4.7 Structured Error Types
 
 Every stdlib module that can fail defines a **module-specific error ADT** (see §7.3
 for the full list). This enables pattern matching on specific failure modes:
@@ -1524,7 +1614,7 @@ still works without knowing the specific error type:
 ;; Generic — works with any stdlib error
 (match (json/decode input)
   (Ok val) val
-  (Err e)  (log/error (message e)))
+  (Err e)  (log/error (:message e)))
 ```
 
 Application code may define its own error ADTs following the same pattern,
@@ -1761,13 +1851,13 @@ Each stdlib module that can fail defines a specific error ADT:
   (Err (PermissionDenied info)) (panic (str "cannot read " (:path info))))
 ```
 
-**Every error type has a `:message` field** accessible via the `message` function,
+**Every error type has a `:message` field** accessible via keyword access `(:message e)`,
 so generic error logging still works without pattern matching:
 
 ```nexl
 (match (json/decode input)
   (Ok val) val
-  (Err e)  (do (log/error (str "JSON parse failed: " (message e)))
+  (Err e)  (do (log/error (str "JSON parse failed: " (:message e)))
                default-value))
 ```
 
