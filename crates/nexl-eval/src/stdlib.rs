@@ -116,6 +116,19 @@ pub fn standard_env() -> Rc<Env> {
     env.define("any?", native("any?", any_pred));
     env.define("not-any?", native("not-any?", not_any_pred));
     env.define("not-every?", native("not-every?", not_every_pred));
+    env.define("find", native("find", find_fn));
+    env.define("find-index", native("find-index", find_index_fn));
+    env.define("map-indexed", native("map-indexed", map_indexed_fn));
+    env.define("reduce-indexed", native("reduce-indexed", reduce_indexed_fn));
+    env.define("sort-with", native("sort-with", sort_with_fn));
+    env.define("distinct", native("distinct", distinct_fn));
+    env.define("flatten", native("flatten", flatten_fn));
+    env.define("frequencies", native("frequencies", frequencies_fn));
+    env.define("partition-by", native("partition-by", partition_by_fn));
+    env.define("interleave", native("interleave", interleave_fn));
+    env.define("interpose", native("interpose", interpose_fn));
+    env.define("zip-with", native("zip-with", zip_with_fn));
+    env.define("pr-str", native("pr-str", pr_str_fn));
 
     // Bitwise operations
     env.define("bit-and", native("bit-and", bit_and));
@@ -1792,6 +1805,261 @@ fn not_every_pred(args: &[Value]) -> Result<Value, String> {
         Value::Bool(b) => Ok(Value::Bool(!b)),
         _ => Ok(result),
     }
+}
+
+/// `(find pred coll)` — return first element where pred is true, as Option.
+fn find_fn(args: &[Value]) -> Result<Value, String> {
+    let (pred, coll) = two_args("find", args)?;
+    match coll {
+        Value::Vec(items) => {
+            for item in items.iter() {
+                let v = expect_bool("find", call1(pred, item.clone())?)?;
+                if v {
+                    return Ok(option_some(item.clone()));
+                }
+            }
+            Ok(option_none())
+        }
+        other => Err(type_mismatch("find", "Vec", other)),
+    }
+}
+
+/// `(find-index pred coll)` — return index of first matching element, as Option.
+fn find_index_fn(args: &[Value]) -> Result<Value, String> {
+    let (pred, coll) = two_args("find-index", args)?;
+    match coll {
+        Value::Vec(items) => {
+            for (i, item) in items.iter().enumerate() {
+                let v = expect_bool("find-index", call1(pred, item.clone())?)?;
+                if v {
+                    return Ok(option_some(Value::Int(i as i64)));
+                }
+            }
+            Ok(option_none())
+        }
+        other => Err(type_mismatch("find-index", "Vec", other)),
+    }
+}
+
+/// `(map-indexed f coll)` — like map but f receives (index, element).
+fn map_indexed_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, coll) = two_args("map-indexed", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut out = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                out.push(call2(func, Value::Int(i as i64), item.clone())?);
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        other => Err(type_mismatch("map-indexed", "Vec", other)),
+    }
+}
+
+/// `(reduce-indexed f init coll)` — like reduce but f receives (acc, index, element).
+fn reduce_indexed_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, init, coll) = three_args("reduce-indexed", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut acc = init.clone();
+            for (i, item) in items.iter().enumerate() {
+                let args = [acc, Value::Int(i as i64), item.clone()];
+                acc = apply_value(func, &args).map_err(|e| e.to_string())?;
+            }
+            Ok(acc)
+        }
+        other => Err(type_mismatch("reduce-indexed", "Vec", other)),
+    }
+}
+
+/// `(sort-with comparator coll)` — sort using a custom comparator function.
+fn sort_with_fn(args: &[Value]) -> Result<Value, String> {
+    let (cmp_fn, coll) = two_args("sort-with", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut out = items.as_ref().clone();
+            let mut error: Option<String> = None;
+            out.sort_by(|a, b| {
+                if error.is_some() {
+                    return std::cmp::Ordering::Equal;
+                }
+                match call2(cmp_fn, a.clone(), b.clone()) {
+                    Ok(Value::Int(n)) => {
+                        if n < 0 {
+                            std::cmp::Ordering::Less
+                        } else if n > 0 {
+                            std::cmp::Ordering::Greater
+                        } else {
+                            std::cmp::Ordering::Equal
+                        }
+                    }
+                    Ok(other) => {
+                        error = Some(format!(
+                            "`sort-with` comparator must return Int, got {}",
+                            other.type_name()
+                        ));
+                        std::cmp::Ordering::Equal
+                    }
+                    Err(e) => {
+                        error = Some(e);
+                        std::cmp::Ordering::Equal
+                    }
+                }
+            });
+            if let Some(e) = error {
+                return Err(e);
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        other => Err(type_mismatch("sort-with", "Vec", other)),
+    }
+}
+
+/// `(distinct coll)` — remove duplicates, preserving first occurrence order.
+fn distinct_fn(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("distinct", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut seen = Vec::new();
+            let mut out = Vec::new();
+            for item in items.iter() {
+                if !seen.contains(item) {
+                    seen.push(item.clone());
+                    out.push(item.clone());
+                }
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        other => Err(type_mismatch("distinct", "Vec", other)),
+    }
+}
+
+/// `(flatten coll)` — flatten one level of nesting.
+fn flatten_fn(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("flatten", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut out = Vec::new();
+            for item in items.iter() {
+                match item {
+                    Value::Vec(inner) => out.extend(inner.iter().cloned()),
+                    other => out.push(other.clone()),
+                }
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        other => Err(type_mismatch("flatten", "Vec", other)),
+    }
+}
+
+/// `(frequencies coll)` — count occurrences of each element.
+fn frequencies_fn(args: &[Value]) -> Result<Value, String> {
+    let coll = one_arg("frequencies", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut result = nexl_runtime::value::NexlMap::new();
+            for item in items.iter() {
+                let count = result
+                    .get(item)
+                    .map(|v| match v {
+                        Value::Int(n) => *n,
+                        _ => 0,
+                    })
+                    .unwrap_or(0);
+                result = result.put(item.clone(), Value::Int(count + 1));
+            }
+            Ok(Value::Map(Rc::new(result)))
+        }
+        other => Err(type_mismatch("frequencies", "Vec", other)),
+    }
+}
+
+/// `(partition-by f coll)` — split into groups when f's return value changes.
+fn partition_by_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, coll) = two_args("partition-by", args)?;
+    match coll {
+        Value::Vec(items) => {
+            if items.is_empty() {
+                return Ok(Value::Vec(Rc::new(vec![])));
+            }
+            let mut groups: Vec<Value> = Vec::new();
+            let mut current_group: Vec<Value> = Vec::new();
+            let mut current_key = call1(func, items[0].clone())?;
+            current_group.push(items[0].clone());
+            for item in items.iter().skip(1) {
+                let key = call1(func, item.clone())?;
+                if key == current_key {
+                    current_group.push(item.clone());
+                } else {
+                    groups.push(Value::Vec(Rc::new(current_group)));
+                    current_group = vec![item.clone()];
+                    current_key = key;
+                }
+            }
+            groups.push(Value::Vec(Rc::new(current_group)));
+            Ok(Value::Vec(Rc::new(groups)))
+        }
+        other => Err(type_mismatch("partition-by", "Vec", other)),
+    }
+}
+
+/// `(interleave a b)` — interleave elements from two vectors.
+fn interleave_fn(args: &[Value]) -> Result<Value, String> {
+    let (a, b) = two_args("interleave", args)?;
+    match (a, b) {
+        (Value::Vec(x), Value::Vec(y)) => {
+            let mut out = Vec::new();
+            let len = x.len().min(y.len());
+            for i in 0..len {
+                out.push(x[i].clone());
+                out.push(y[i].clone());
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        (Value::Vec(_), other) => Err(type_mismatch("interleave", "Vec", other)),
+        (other, _) => Err(type_mismatch("interleave", "Vec", other)),
+    }
+}
+
+/// `(interpose sep coll)` — insert sep between each element.
+fn interpose_fn(args: &[Value]) -> Result<Value, String> {
+    let (sep, coll) = two_args("interpose", args)?;
+    match coll {
+        Value::Vec(items) => {
+            let mut out = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(sep.clone());
+                }
+                out.push(item.clone());
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        other => Err(type_mismatch("interpose", "Vec", other)),
+    }
+}
+
+/// `(zip-with f a b)` — zip two vectors applying f to each pair.
+fn zip_with_fn(args: &[Value]) -> Result<Value, String> {
+    let (func, a, b) = three_args("zip-with", args)?;
+    match (a, b) {
+        (Value::Vec(x), Value::Vec(y)) => {
+            let mut out = Vec::new();
+            let len = x.len().min(y.len());
+            for i in 0..len {
+                out.push(call2(func, x[i].clone(), y[i].clone())?);
+            }
+            Ok(Value::Vec(Rc::new(out)))
+        }
+        (Value::Vec(_), other) => Err(type_mismatch("zip-with", "Vec", other)),
+        (other, _) => Err(type_mismatch("zip-with", "Vec", other)),
+    }
+}
+
+/// `(pr-str v)` — readable string representation with quotes and escapes.
+fn pr_str_fn(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("pr-str", args)?;
+    Ok(Value::Str(Rc::from(format!("{v}").as_str())))
 }
 
 // ---------------------------------------------------------------------------

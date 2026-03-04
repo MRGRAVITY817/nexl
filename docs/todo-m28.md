@@ -55,9 +55,9 @@ Reference: `docs/stdlib-spec.md`
   - `keep`: map + filter-None in one pass
   - `some`: first non-None result of applying f
 
-- [ ] **More HOFs** — `find`, `find-index`, `map-indexed`, `reduce-indexed`, `sort-with`, `distinct`, `flatten`, `frequencies`, `partition-by`, `interleave`, `interpose`, `zip`, `zip-with`
+- [x] **More HOFs** — `find`, `find-index`, `map-indexed`, `reduce-indexed`, `sort-with`, `distinct`, `flatten`, `frequencies`, `partition-by`, `interleave`, `interpose`, `zip`, `zip-with`
 
-- [ ] **String builtins** — `pr-str`
+- [x] **String builtins** — `pr-str`
   - Readable representation with quotes, escapes
 
 ## `str` Module Enrichment

@@ -6246,6 +6246,137 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- More HOFs (M28) ---
+
+    #[test]
+    fn test_find() {
+        assert_eq!(
+            eval_str("(find (fn [x] (> x 2)) [1 2 3 4])").unwrap(),
+            option_some(Value::Int(3))
+        );
+        assert_eq!(
+            eval_str("(find (fn [x] (> x 10)) [1 2 3])").unwrap(),
+            option_none()
+        );
+    }
+
+    #[test]
+    fn test_find_index() {
+        assert_eq!(
+            eval_str("(find-index (fn [x] (> x 2)) [1 2 3 4])").unwrap(),
+            option_some(Value::Int(2))
+        );
+    }
+
+    #[test]
+    fn test_map_indexed() {
+        assert_eq!(
+            eval_str("(map-indexed (fn [i x] [i x]) [10 20 30])").unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Vec(Rc::new(vec![Value::Int(0), Value::Int(10)])),
+                Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(20)])),
+                Value::Vec(Rc::new(vec![Value::Int(2), Value::Int(30)])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_reduce_indexed() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms(
+            "(reduce-indexed (fn [acc i x] (+ acc (* i x))) 0 [10 20 30])",
+            &env,
+        ).unwrap();
+        assert_eq!(result, Value::Int(80));
+    }
+
+    #[test]
+    fn test_sort_with() {
+        assert_eq!(
+            eval_str("(sort-with (fn [a b] (- b a)) [3 1 2])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(3), Value::Int(2), Value::Int(1)]))
+        );
+    }
+
+    #[test]
+    fn test_distinct() {
+        assert_eq!(
+            eval_str("(distinct [1 2 1 3 2 4])").unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_flatten() {
+        assert_eq!(
+            eval_str("(flatten [[1 2] [3] [4 5]])").unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4), Value::Int(5)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_frequencies() {
+        let env = crate::stdlib::standard_env();
+        let result = eval_forms("(get (frequencies [1 2 1 3 2 1]) 1)", &env).unwrap();
+        assert_eq!(result, option_some(Value::Int(3)));
+    }
+
+    #[test]
+    fn test_partition_by() {
+        assert_eq!(
+            eval_str("(count (partition-by (fn [x] (> x 2)) [1 2 3 4 1]))").unwrap(),
+            Value::Int(3)
+        );
+    }
+
+    #[test]
+    fn test_interleave() {
+        assert_eq!(
+            eval_str("(interleave [1 2 3] [10 20 30])").unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Int(1), Value::Int(10),
+                Value::Int(2), Value::Int(20),
+                Value::Int(3), Value::Int(30),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_interpose() {
+        assert_eq!(
+            eval_str("(interpose 0 [1 2 3])").unwrap(),
+            Value::Vec(Rc::new(vec![
+                Value::Int(1), Value::Int(0),
+                Value::Int(2), Value::Int(0),
+                Value::Int(3),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_zip_with() {
+        assert_eq!(
+            eval_str("(zip-with + [1 2 3] [10 20 30])").unwrap(),
+            Value::Vec(Rc::new(vec![Value::Int(11), Value::Int(22), Value::Int(33)]))
+        );
+    }
+
+    #[test]
+    fn test_pr_str() {
+        assert_eq!(
+            eval_str(r#"(pr-str "hello")"#).unwrap(),
+            Value::Str(Rc::from("\"hello\""))
+        );
+        assert_eq!(
+            eval_str("(pr-str 42)").unwrap(),
+            Value::Str(Rc::from("42"))
+        );
+    }
+
     // --- Higher-order sequence functions (M28) ---
 
     #[test]
