@@ -57,6 +57,21 @@ pub fn nexl_declaration_sources() -> &'static [(&'static str, &'static str)] {
         ("net",      include_str!("../nexl/net.nx")),
         ("async",    include_str!("../nexl/async.nx")),
         ("sys",      include_str!("../nexl/sys.nx")),
+        ("option",   include_str!("../nexl/option_impl.nx")),
+    ]
+}
+
+/// Return Nexl-written stdlib sources to be evaluated at startup.
+///
+/// These `.nx` files contain real Nexl code (not documentation stubs) that
+/// define combinator functions using `defn module/name` qualified names.
+/// They are evaluated after Rust native modules are registered, so they can
+/// reference builtins and other stdlib modules freely.
+///
+/// Each entry is `(module_name, nexl_source_code)`.
+pub fn nexl_stdlib_sources() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("option", include_str!("../nexl/option_impl.nx")),
     ]
 }
 
@@ -110,6 +125,16 @@ mod tests {
         let entries = math::entries();
         assert!(!entries.is_empty(), "math should have entries");
         assert_eq!(entries[0].0, "abs");
+    }
+
+    #[test]
+    fn test_nexl_stdlib_sources_has_option() {
+        let sources = nexl_stdlib_sources();
+        let names: Vec<&str> = sources.iter().map(|(name, _)| *name).collect();
+        assert!(names.contains(&"option"), "should have option module");
+        // Verify source is non-empty
+        let (_, src) = sources.iter().find(|(n, _)| *n == "option").unwrap();
+        assert!(src.contains("option/some?"), "option source should define some?");
     }
 
     #[test]

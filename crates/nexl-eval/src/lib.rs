@@ -6245,4 +6245,181 @@ mod tests {
 
     #[test]
     fn flaky_annotation_body_still_runs() {}
+
+    // --- Nexl-written stdlib loading (M28) ---
+
+    #[test]
+    fn test_nexl_stdlib_option_some_predicate() {
+        assert_eq!(
+            eval_str("(option/some? (Some 1))").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str("(option/some? None)").unwrap(),
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_none_predicate() {
+        assert_eq!(
+            eval_str("(option/none? None)").unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval_str("(option/none? (Some 42))").unwrap(),
+            Value::Bool(false)
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_unwrap() {
+        assert_eq!(
+            eval_str("(option/unwrap (Some 42))").unwrap(),
+            Value::Int(42)
+        );
+        assert!(eval_str("(option/unwrap None)").is_err());
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_unwrap_or() {
+        assert_eq!(
+            eval_str("(option/unwrap-or (Some 42) 0)").unwrap(),
+            Value::Int(42)
+        );
+        assert_eq!(
+            eval_str("(option/unwrap-or None 0)").unwrap(),
+            Value::Int(0)
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_map() {
+        assert_eq!(
+            eval_str("(option/map (Some 1) (fn [x] (+ x 1)))").unwrap(),
+            option_some(Value::Int(2))
+        );
+        assert_eq!(
+            eval_str("(option/map None (fn [x] (+ x 1)))").unwrap(),
+            option_none()
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_flat_map() {
+        assert_eq!(
+            eval_str("(option/flat-map (Some 1) (fn [x] (Some (+ x 1))))").unwrap(),
+            option_some(Value::Int(2))
+        );
+        assert_eq!(
+            eval_str("(option/flat-map (Some 1) (fn [x] None))").unwrap(),
+            option_none()
+        );
+        assert_eq!(
+            eval_str("(option/flat-map None (fn [x] (Some x)))").unwrap(),
+            option_none()
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_filter() {
+        assert_eq!(
+            eval_str("(option/filter (Some 5) (fn [x] (> x 3)))").unwrap(),
+            option_some(Value::Int(5))
+        );
+        assert_eq!(
+            eval_str("(option/filter (Some 1) (fn [x] (> x 3)))").unwrap(),
+            option_none()
+        );
+        assert_eq!(
+            eval_str("(option/filter None (fn [x] (> x 3)))").unwrap(),
+            option_none()
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_zip() {
+        let result = eval_str("(option/zip (Some 1) (Some 2))").unwrap();
+        assert_eq!(
+            result,
+            option_some(Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(2)])))
+        );
+        assert_eq!(
+            eval_str("(option/zip (Some 1) None)").unwrap(),
+            option_none()
+        );
+        assert_eq!(
+            eval_str("(option/zip None (Some 2))").unwrap(),
+            option_none()
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_to_result() {
+        let result = eval_str(r#"(option/to-result (Some 42) "not found")"#).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: Rc::from("Result"),
+                ctor: Rc::from("Ok"),
+                fields: Rc::new(vec![Value::Int(42)]),
+            }
+        );
+        let result = eval_str(r#"(option/to-result None "not found")"#).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: Rc::from("Result"),
+                ctor: Rc::from("Err"),
+                fields: Rc::new(vec![Value::Str(Rc::from("not found"))]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_values() {
+        let result = eval_str("(option/values [(Some 1) None (Some 3) None (Some 5)])").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(Rc::new(vec![Value::Int(1), Value::Int(3), Value::Int(5)]))
+        );
+        let result = eval_str("(option/values [])").unwrap();
+        assert_eq!(result, Value::Vec(Rc::new(vec![])));
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_or_else() {
+        assert_eq!(
+            eval_str("(option/or-else (Some 1) (fn [] (Some 99)))").unwrap(),
+            option_some(Value::Int(1))
+        );
+        assert_eq!(
+            eval_str("(option/or-else None (fn [] (Some 99)))").unwrap(),
+            option_some(Value::Int(99))
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_from_result() {
+        assert_eq!(
+            eval_str("(option/from-result (Ok 42))").unwrap(),
+            option_some(Value::Int(42))
+        );
+        assert_eq!(
+            eval_str(r#"(option/from-result (Err "oops"))"#).unwrap(),
+            option_none()
+        );
+    }
+
+    #[test]
+    fn test_nexl_stdlib_option_unwrap_or_else() {
+        assert_eq!(
+            eval_str("(option/unwrap-or-else (Some 42) (fn [] 0))").unwrap(),
+            Value::Int(42)
+        );
+        assert_eq!(
+            eval_str("(option/unwrap-or-else None (fn [] 0))").unwrap(),
+            Value::Int(0)
+        );
+    }
 }

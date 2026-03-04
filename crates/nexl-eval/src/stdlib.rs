@@ -103,6 +103,9 @@ pub fn standard_env() -> Rc<Env> {
     // Register §11.1 stdlib modules as qualified module aliases
     register_stdlib_modules(&env);
 
+    // Evaluate Nexl-written stdlib modules (option, result, core combinators)
+    eval_nexl_stdlib_sources(&env);
+
     env
 }
 
@@ -116,6 +119,28 @@ fn register_stdlib_modules(env: &Env) {
             exports.insert(Rc::from(fn_name), value);
         }
         env.define_module_alias(Rc::from(module_name), Rc::new(exports));
+    }
+}
+
+/// Evaluate Nexl-written stdlib sources against the environment.
+///
+/// These `.nx` files define combinator functions (e.g. `option/some?`,
+/// `result/map`) using qualified `defn` names. They run after Rust natives
+/// are registered, so they can reference builtins and other modules freely.
+fn eval_nexl_stdlib_sources(env: &Rc<Env>) {
+    for (module_name, source) in nexl_stdlib::nexl_stdlib_sources() {
+        let nodes = match nexl_reader::read(source, meta::FileId::SYNTHETIC) {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                eprintln!("nexl stdlib parse error in `{module_name}`: {e:?}");
+                continue;
+            }
+        };
+        for node in &nodes {
+            if let Err(e) = crate::eval::eval(node, env) {
+                eprintln!("nexl stdlib eval error in `{module_name}`: {e}");
+            }
+        }
     }
 }
 

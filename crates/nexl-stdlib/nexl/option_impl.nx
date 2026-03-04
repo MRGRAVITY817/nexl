@@ -1,0 +1,75 @@
+;; stdlib/option — Option combinators written in Nexl.
+;;
+;; These functions are evaluated at startup after Rust native modules are
+;; registered. Each `defn` uses a qualified name (option/fn-name) to register
+;; into the `option` module alias.
+
+(defn option/some? [x]
+  (match x
+    (Some _) true
+    _ false))
+
+(defn option/none? [x]
+  (match x
+    (Some _) false
+    _ true))
+
+(defn option/unwrap [x]
+  (match x
+    (Some v) v
+    _ (panic "called option/unwrap on None")))
+
+(defn option/unwrap-or [x default]
+  (match x
+    (Some v) v
+    _ default))
+
+(defn option/unwrap-or-else [x f]
+  (match x
+    (Some v) v
+    _ (f)))
+
+(defn option/map [x f]
+  (match x
+    (Some v) (Some (f v))
+    _ None))
+
+(defn option/flat-map [x f]
+  (match x
+    (Some v) (f v)
+    _ None))
+
+(defn option/filter [x pred]
+  (match x
+    (Some v) (if (pred v) (Some v) None)
+    _ None))
+
+(defn option/or-else [x f]
+  (match x
+    (Some _) x
+    _ (f)))
+
+(defn option/zip [a b]
+  (match a
+    (Some va) (match b
+                (Some vb) (Some [va vb])
+                _ None)
+    _ None))
+
+(defn option/to-result [x err]
+  (match x
+    (Some v) (Ok v)
+    _ (Err err)))
+
+(defn option/from-result [r]
+  (match r
+    (Ok v) (Some v)
+    _ None))
+
+(defn option/values [xs]
+  (reduce (fn [acc x]
+            (match x
+              (Some v) (append acc v)
+              _ acc))
+          []
+          xs))

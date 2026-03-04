@@ -9,7 +9,7 @@ Reference: `docs/stdlib-spec.md`
 
 ## Infrastructure
 
-- [ ] **Nexl-written stdlib loading** — evaluator can load `.nx` files as stdlib modules
+- [x] **Nexl-written stdlib loading** — evaluator can load `.nx` files as stdlib modules
   - Stdlib `.nx` files embedded via `include_str!` or loaded from a `stdlib/` directory
   - Evaluated after Rust NativeFn registration, before user code
   - Module-qualified names (`option/map`, `result/flat-map`) work from `.nx` definitions
@@ -99,7 +99,7 @@ Reference: `docs/stdlib-spec.md`
 
 ## `option` Module (New — Nexl)
 
-- [ ] **Option combinators** — ~13 functions (written in Nexl)
+- [x] **Option combinators** — ~13 functions (written in Nexl)
   - Predicates: `some?`, `none?`
   - Extraction: `unwrap`, `unwrap-or`, `unwrap-or-else`
   - Transforms: `map`, `flat-map`, `filter` (all subject-first for `->`)

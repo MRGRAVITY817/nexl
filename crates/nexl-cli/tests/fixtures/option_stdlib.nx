@@ -1,0 +1,11 @@
+;; E2E test: option module functions from Nexl-written stdlib
+(io/println (option/some? (Some 42)))
+(io/println (option/none? None))
+(io/println (option/unwrap (Some 99)))
+(io/println (option/unwrap-or None 0))
+(io/println (option/map (Some 5) (fn [x] (* x 2))))
+(io/println (option/flat-map (Some 3) (fn [x] (Some (+ x 1)))))
+(io/println (option/filter (Some 10) (fn [x] (> x 5))))
+(io/println (option/filter (Some 1) (fn [x] (> x 5))))
+(io/println (option/zip (Some 1) (Some 2)))
+(io/println (option/values [(Some 1) None (Some 3)]))
