@@ -19,6 +19,7 @@ pub mod map;
 pub mod math;
 pub mod net;
 pub mod random;
+pub mod set;
 pub mod str;
 pub mod sys;
 pub mod test;
@@ -79,6 +80,7 @@ pub fn nexl_stdlib_sources() -> &'static [(&'static str, &'static str)] {
         ("result", include_str!("../nexl/result_impl.nx")),
         ("vec",    include_str!("../nexl/vec_impl.nx")),
         ("map",    include_str!("../nexl/map_impl.nx")),
+        ("set",    include_str!("../nexl/set_impl.nx")),
     ]
 }
 
@@ -108,6 +110,7 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("gen", gen_mod::entries()),
         ("vec", vec::entries()),
         ("map", map::entries()),
+        ("set", set::entries()),
     ]
 }
 
@@ -162,7 +165,8 @@ mod tests {
             names,
             vec![
                 "core", "str", "math", "conv", "io", "json", "http", "db", "env", "time",
-                "random", "crypto", "log", "test", "net", "async", "sys", "gen", "vec", "map"
+                "random", "crypto", "log", "test", "net", "async", "sys", "gen", "vec", "map",
+                "set"
             ]
         );
     }

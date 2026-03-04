@@ -7796,4 +7796,98 @@ mod tests {
         let result = eval_str("(map/any? {:a 1 :b 2} (fn [k v] (> v 10)))").unwrap();
         assert_eq!(result, Value::Bool(false));
     }
+
+    // ── set module ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_of() {
+        let result = eval_str("(set/of 1 2 3 2)").unwrap();
+        match result {
+            Value::Set(items) => assert_eq!(items.len(), 3),
+            _ => panic!("expected Set"),
+        }
+    }
+
+    #[test]
+    fn test_set_from_vec() {
+        let result = eval_str("(set/from-vec [1 2 2 3])").unwrap();
+        match result {
+            Value::Set(items) => assert_eq!(items.len(), 3),
+            _ => panic!("expected Set"),
+        }
+    }
+
+    #[test]
+    fn test_set_to_vec() {
+        let result = eval_str("(count (set/to-vec #{1 2 3}))").unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_set_map() {
+        let result = eval_str("(set/map #{1 2 3} (fn [x] (* x 2)))").unwrap();
+        match result {
+            Value::Set(items) => assert_eq!(items.len(), 3),
+            _ => panic!("expected Set"),
+        }
+    }
+
+    #[test]
+    fn test_set_filter() {
+        let result = eval_str("(count (set/filter #{1 2 3 4} (fn [x] (> x 2))))").unwrap();
+        assert_eq!(result, Value::Int(2));
+    }
+
+    #[test]
+    fn test_set_reduce() {
+        let result = eval_str("(set/reduce #{1 2 3} + 0)").unwrap();
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_set_every_true() {
+        let result = eval_str("(set/every? #{1 2 3} (fn [x] (> x 0)))").unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_set_every_false() {
+        let result = eval_str("(set/every? #{1 2 3} (fn [x] (> x 1)))").unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_set_any_true() {
+        let result = eval_str("(set/any? #{1 2 3} (fn [x] (> x 2)))").unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_set_any_false() {
+        let result = eval_str("(set/any? #{1 2 3} (fn [x] (> x 10)))").unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_set_flat_map() {
+        let result = eval_str("(count (set/flat-map #{1 2} (fn [x] #{x (* x 10)})))").unwrap();
+        assert_eq!(result, Value::Int(4)); // #{1 10 2 20}
+    }
+
+    #[test]
+    fn test_set_partition() {
+        let result = eval_str("(set/partition #{1 2 3 4} (fn [x] (> x 2)))").unwrap();
+        let Value::Vec(parts) = result else { panic!("expected Vec") };
+        assert_eq!(parts.len(), 2);
+        let Value::Set(yes) = &parts[0] else { panic!("expected Set") };
+        let Value::Set(no) = &parts[1] else { panic!("expected Set") };
+        assert_eq!(yes.len(), 2);
+        assert_eq!(no.len(), 2);
+    }
+
+    #[test]
+    fn test_set_product() {
+        let result = eval_str("(count (set/product #{1 2} #{:a :b}))").unwrap();
+        assert_eq!(result, Value::Int(4)); // 2×2 = 4 pairs
+    }
 }

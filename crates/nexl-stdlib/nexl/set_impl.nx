@@ -1,0 +1,73 @@
+;; stdlib/set — Nexl-written set combinators.
+;;
+;; These functions are evaluated at startup after Rust native modules are
+;; registered. Each `defn` uses a qualified name (set/fn-name) to register
+;; into the `set` module.
+;;
+;; Sets iterate via `reduce`. Use `conj` to add to a set (deduplicates).
+;; `set/of` constructs a set from individual elements.
+
+(defn set/map [s f]
+  ;; Apply f to each element and build a new set.
+  (reduce (fn [acc x] (conj acc (f x)))
+          #{}
+          s))
+
+(defn set/filter [s pred]
+  ;; Keep elements matching pred.
+  (reduce (fn [acc x]
+            (if (pred x) (conj acc x) acc))
+          #{}
+          s))
+
+(defn set/reduce [s f init]
+  ;; Fold over set elements.
+  (reduce f init s))
+
+(defn set/every? [s pred]
+  ;; Return true if all elements satisfy pred.
+  (reduce (fn [acc x]
+            (if (not acc) false (pred x)))
+          true
+          s))
+
+(defn set/any? [s pred]
+  ;; Return true if any element satisfies pred.
+  (reduce (fn [acc x]
+            (if acc true (pred x)))
+          false
+          s))
+
+(defn set/flat-map [s f]
+  ;; Map f over s (each call returns a Set), flatten into one Set.
+  (reduce (fn [acc x]
+            (reduce (fn [inner-acc y] (conj inner-acc y))
+                    acc
+                    (f x)))
+          #{}
+          s))
+
+(defn set/partition [s pred]
+  ;; Split into [matching-set non-matching-set].
+  (reduce (fn [acc x]
+            (match (get acc 0)
+              (Some yes)
+              (match (get acc 1)
+                (Some no)
+                (if (pred x)
+                  [(conj yes x) no]
+                  [yes (conj no x)])
+                None acc)
+              None acc))
+          [#{} #{}]
+          s))
+
+(defn set/product [s1 s2]
+  ;; Cartesian product: all [a b] pairs where a ∈ s1 and b ∈ s2.
+  (reduce (fn [acc a]
+            (reduce (fn [inner-acc b]
+                      (conj inner-acc [a b]))
+                    acc
+                    s2))
+          #{}
+          s1))
