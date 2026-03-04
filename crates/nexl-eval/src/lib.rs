@@ -7890,4 +7890,70 @@ mod tests {
         let result = eval_str("(count (set/product #{1 2} #{:a :b}))").unwrap();
         assert_eq!(result, Value::Int(4)); // 2×2 = 4 pairs
     }
+
+    // ── char module ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_char_alpha() {
+        assert_eq!(eval_str(r"(char/alpha? \a)").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str(r"(char/alpha? \1)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_char_digit() {
+        assert_eq!(eval_str(r"(char/digit? \5)").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str(r"(char/digit? \a)").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_char_upper_lower() {
+        assert_eq!(eval_str(r"(char/upper? \A)").unwrap(), Value::Bool(true));
+        assert_eq!(eval_str(r"(char/lower? \a)").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn test_char_to_upper() {
+        assert_eq!(eval_str(r"(char/to-upper \a)").unwrap(), Value::Char('A'));
+    }
+
+    #[test]
+    fn test_char_to_lower() {
+        assert_eq!(eval_str(r"(char/to-lower \A)").unwrap(), Value::Char('a'));
+    }
+
+    #[test]
+    fn test_char_to_int() {
+        assert_eq!(eval_str(r"(char/to-int \A)").unwrap(), Value::Int(65));
+    }
+
+    #[test]
+    fn test_char_from_int() {
+        let result = eval_str("(char/from-int 65)").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Char('A')]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_char_to_str() {
+        assert_eq!(
+            eval_str(r"(char/to-str \Z)").unwrap(),
+            Value::Str(std::rc::Rc::from("Z"))
+        );
+    }
+
+    #[test]
+    fn test_char_whitespace() {
+        assert_eq!(eval_str(r"(char/whitespace? \space)").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn test_char_ascii() {
+        assert_eq!(eval_str(r"(char/ascii? \~)").unwrap(), Value::Bool(true));
+    }
 }

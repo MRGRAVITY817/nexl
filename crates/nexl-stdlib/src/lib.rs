@@ -5,6 +5,7 @@
 //! environment as qualified module functions.
 
 pub mod async_mod;
+pub mod char;
 pub mod conv;
 pub mod core;
 pub mod crypto;
@@ -63,6 +64,7 @@ pub fn nexl_declaration_sources() -> &'static [(&'static str, &'static str)] {
         ("option",   include_str!("../nexl/option_impl.nx")),
         ("result",   include_str!("../nexl/result_impl.nx")),
         ("vec",      include_str!("../nexl/vec.nx")),
+        ("char",     include_str!("../nexl/char.nx")),
     ]
 }
 
@@ -111,6 +113,7 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("vec", vec::entries()),
         ("map", map::entries()),
         ("set", set::entries()),
+        ("char", char::entries()),
     ]
 }
 
@@ -166,7 +169,7 @@ mod tests {
             vec![
                 "core", "str", "math", "conv", "io", "json", "http", "db", "env", "time",
                 "random", "crypto", "log", "test", "net", "async", "sys", "gen", "vec", "map",
-                "set"
+                "set", "char"
             ]
         );
     }

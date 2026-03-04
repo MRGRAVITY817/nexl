@@ -1,0 +1,202 @@
+;; stdlib/char — character classification and conversion.
+;;
+;; This file is the source of truth for `char` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/char.rs.
+
+(defn char/alpha?
+  """
+  Return true if `c` is an alphabetic character (Unicode).
+
+  ## Examples
+
+  ```nexl
+  (char/alpha? \a)    ; => true
+  (char/alpha? \1)    ; => false
+  (char/alpha? \é)    ; => true
+  ```
+  """
+  [c]
+  (native "char/alpha?" c))
+
+(defn char/digit?
+  """
+  Return true if `c` is an ASCII decimal digit (0–9).
+
+  ## Examples
+
+  ```nexl
+  (char/digit? \5)    ; => true
+  (char/digit? \a)    ; => false
+  ```
+  """
+  [c]
+  (native "char/digit?" c))
+
+(defn char/alphanumeric?
+  """
+  Return true if `c` is alphabetic or a decimal digit.
+
+  ## Examples
+
+  ```nexl
+  (char/alphanumeric? \a)    ; => true
+  (char/alphanumeric? \5)    ; => true
+  (char/alphanumeric? \!)    ; => false
+  ```
+  """
+  [c]
+  (native "char/alphanumeric?" c))
+
+(defn char/whitespace?
+  """
+  Return true if `c` is a whitespace character (space, tab, newline, etc.).
+
+  ## Examples
+
+  ```nexl
+  (char/whitespace? \ )    ; => true
+  (char/whitespace? \a)    ; => false
+  ```
+  """
+  [c]
+  (native "char/whitespace?" c))
+
+(defn char/upper?
+  """
+  Return true if `c` is an uppercase letter.
+
+  ## Examples
+
+  ```nexl
+  (char/upper? \A)    ; => true
+  (char/upper? \a)    ; => false
+  ```
+  """
+  [c]
+  (native "char/upper?" c))
+
+(defn char/lower?
+  """
+  Return true if `c` is a lowercase letter.
+
+  ## Examples
+
+  ```nexl
+  (char/lower? \a)    ; => true
+  (char/lower? \A)    ; => false
+  ```
+  """
+  [c]
+  (native "char/lower?" c))
+
+(defn char/ascii?
+  """
+  Return true if `c` is in the ASCII range (codepoint 0–127).
+
+  ## Examples
+
+  ```nexl
+  (char/ascii? \a)    ; => true
+  (char/ascii? \é)    ; => false
+  ```
+  """
+  [c]
+  (native "char/ascii?" c))
+
+(defn char/control?
+  """
+  Return true if `c` is a control character.
+
+  ## Examples
+
+  ```nexl
+  (char/control? \newline)    ; => true
+  (char/control? \a)          ; => false
+  ```
+  """
+  [c]
+  (native "char/control?" c))
+
+(defn char/punctuation?
+  """
+  Return true if `c` is an ASCII punctuation character.
+
+  ## Examples
+
+  ```nexl
+  (char/punctuation? \!)    ; => true
+  (char/punctuation? \a)    ; => false
+  ```
+  """
+  [c]
+  (native "char/punctuation?" c))
+
+(defn char/to-upper
+  """
+  Return the uppercase version of `c`.
+
+  ## Examples
+
+  ```nexl
+  (char/to-upper \a)    ; => \A
+  (char/to-upper \A)    ; => \A
+  ```
+  """
+  [c]
+  (native "char/to-upper" c))
+
+(defn char/to-lower
+  """
+  Return the lowercase version of `c`.
+
+  ## Examples
+
+  ```nexl
+  (char/to-lower \A)    ; => \a
+  (char/to-lower \a)    ; => \a
+  ```
+  """
+  [c]
+  (native "char/to-lower" c))
+
+(defn char/to-int
+  """
+  Return the Unicode codepoint of `c` as an Int.
+
+  ## Examples
+
+  ```nexl
+  (char/to-int \A)    ; => 65
+  (char/to-int \a)    ; => 97
+  ```
+  """
+  [c]
+  (native "char/to-int" c))
+
+(defn char/from-int
+  """
+  Return `(Some Char)` for a valid Unicode codepoint `n`, or `None` if invalid.
+
+  ## Examples
+
+  ```nexl
+  (char/from-int 65)      ; => (Some \A)
+  (char/from-int 0xD800)  ; => None  (surrogate, invalid)
+  ```
+  """
+  [n]
+  (native "char/from-int" n))
+
+(defn char/to-str
+  """
+  Convert `c` to a single-character Str.
+
+  ## Examples
+
+  ```nexl
+  (char/to-str \A)    ; => "A"
+  (char/to-str \!)    ; => "!"
+  ```
+  """
+  [c]
+  (native "char/to-str" c))
