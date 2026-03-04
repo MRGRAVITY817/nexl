@@ -6246,6 +6246,46 @@ mod tests {
     #[test]
     fn flaky_annotation_body_still_runs() {}
 
+    // --- core module enrichment (M28) ---
+
+    #[test]
+    fn test_core_complement() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(def pos? (core/complement (fn [x] (< x 0))))", &env).unwrap();
+        assert_eq!(eval_forms("(pos? 5)", &env).unwrap(), Value::Bool(true));
+        assert_eq!(eval_forms("(pos? -1)", &env).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_core_pipe() {
+        assert_eq!(
+            eval_str("(core/pipe 5 (fn [x] (+ x 1)) (fn [x] (* x 2)))").unwrap(),
+            Value::Int(12)
+        );
+    }
+
+    #[test]
+    fn test_core_tap() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(def a (atom 0))", &env).unwrap();
+        let result = eval_forms("(core/tap 42 (fn [x] (reset! a x)))", &env).unwrap();
+        assert_eq!(result, Value::Int(42));
+        assert_eq!(eval_forms("(deref a)", &env).unwrap(), Value::Int(42));
+    }
+
+    #[test]
+    fn test_core_memoize() {
+        let env = crate::stdlib::standard_env();
+        eval_forms("(def counter (atom 0))", &env).unwrap();
+        eval_forms(
+            "(def memo-inc (core/memoize (fn [x] (do (swap! counter (fn [c] (+ c 1))) (+ x 1)))))",
+            &env,
+        ).unwrap();
+        assert_eq!(eval_forms("(memo-inc 5)", &env).unwrap(), Value::Int(6));
+        assert_eq!(eval_forms("(memo-inc 5)", &env).unwrap(), Value::Int(6));
+        assert_eq!(eval_forms("(deref counter)", &env).unwrap(), Value::Int(1));
+    }
+
     // --- math module enrichment (M28) ---
 
     #[test]

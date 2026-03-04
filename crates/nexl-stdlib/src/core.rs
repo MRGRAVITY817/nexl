@@ -20,6 +20,11 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("constantly", constantly),
         ("juxt", juxt),
         ("apply", apply),
+        ("complement", complement),
+        ("pipe", pipe),
+        ("tap", tap),
+        ("memoize", memoize),
+        ("trampoline", trampoline),
     ]
 }
 
@@ -135,6 +140,106 @@ fn apply(args: &[Value]) -> Result<Value, String> {
     let mut all_args: Vec<Value> = args[1..args.len() - 1].to_vec();
     all_args.extend(trailing.iter().cloned());
     call_value(func, &all_args)
+}
+
+/// `(complement f)` — returns a function that negates f's boolean result.
+fn complement(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [f] => {
+            let f = f.clone();
+            Ok(Value::NativeClosure {
+                name: Rc::from("complement"),
+                f: Rc::new(move |inner_args: &[Value]| {
+                    let result = call_value(&f, inner_args)?;
+                    match result {
+                        Value::Bool(b) => Ok(Value::Bool(!b)),
+                        _ => Err(format!(
+                            "`complement` function must return Bool, got {}",
+                            result.type_name()
+                        )),
+                    }
+                }),
+            })
+        }
+        _ => Err(format!(
+            "`complement` requires exactly 1 argument, got {}",
+            args.len()
+        )),
+    }
+}
+
+/// `(pipe x f1 f2 ...)` — thread x through f1, f2, etc.
+fn pipe(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("`pipe` requires at least 1 argument".into());
+    }
+    let mut value = args[0].clone();
+    for f in &args[1..] {
+        value = call_value(f, &[value])?;
+    }
+    Ok(value)
+}
+
+/// `(tap x f)` — call f with x for side effects, return x. Subject-first.
+fn tap(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [x, f] => {
+            let _ = call_value(f, &[x.clone()])?;
+            Ok(x.clone())
+        }
+        _ => Err(format!(
+            "`tap` requires exactly 2 arguments, got {}",
+            args.len()
+        )),
+    }
+}
+
+/// `(memoize f)` — returns a memoized version of f.
+fn memoize(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [f] => {
+            let f = f.clone();
+            let cache: Rc<std::cell::RefCell<Vec<(Vec<Value>, Value)>>> =
+                Rc::new(std::cell::RefCell::new(Vec::new()));
+            Ok(Value::NativeClosure {
+                name: Rc::from("memoize"),
+                f: Rc::new(move |inner_args: &[Value]| {
+                    let key: Vec<Value> = inner_args.to_vec();
+                    {
+                        let cache_ref = cache.borrow();
+                        for (k, v) in cache_ref.iter() {
+                            if k == &key {
+                                return Ok(v.clone());
+                            }
+                        }
+                    }
+                    let result = call_value(&f, inner_args)?;
+                    cache.borrow_mut().push((key, result.clone()));
+                    Ok(result)
+                }),
+            })
+        }
+        _ => Err(format!(
+            "`memoize` requires exactly 1 argument, got {}",
+            args.len()
+        )),
+    }
+}
+
+/// `(trampoline f args...)` — call f, if result is a fn, call it again, repeat until non-fn.
+fn trampoline(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("`trampoline` requires at least 1 argument".into());
+    }
+    let mut result = call_value(&args[0], &args[1..])?;
+    loop {
+        match &result {
+            Value::NativeFunction(_) | Value::NativeClosure { .. } | Value::Function(_) => {
+                result = call_value(&result, &[])?;
+            }
+            _ => return Ok(result),
+        }
+    }
 }
 
 /// Helper: call a Value as a function with the given args.

@@ -90,7 +90,7 @@ Reference: `docs/stdlib-spec.md`
 
 ## `core` Module (New — Nexl)
 
-- [ ] **Higher-order utilities** — ~12 functions (written in Nexl)
+- [x] **Higher-order utilities** — ~12 functions (written in Nexl)
   - `identity`, `comp`, `comp*`, `pipe`: function composition
   - `partial`, `constantly`, `complement`: function builders
   - `juxt`, `apply`: function application
