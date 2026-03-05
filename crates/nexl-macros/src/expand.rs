@@ -78,6 +78,12 @@ enum BuiltinMacro {
     Cond,
     ThreadFirst,
     ThreadLast,
+    SomeThreadFirst,
+    SomeThreadLast,
+    OkThreadFirst,
+    OkThreadLast,
+    CondThreadFirst,
+    CondThreadLast,
     And,
     Or,
     // These three are not registered in Expander::new() — they are handled by
@@ -113,6 +119,30 @@ impl Expander {
         macros.insert(
             "->>".to_string(),
             MacroKind::Builtin(BuiltinMacro::ThreadLast),
+        );
+        macros.insert(
+            "some->".to_string(),
+            MacroKind::Builtin(BuiltinMacro::SomeThreadFirst),
+        );
+        macros.insert(
+            "some->>".to_string(),
+            MacroKind::Builtin(BuiltinMacro::SomeThreadLast),
+        );
+        macros.insert(
+            "ok->".to_string(),
+            MacroKind::Builtin(BuiltinMacro::OkThreadFirst),
+        );
+        macros.insert(
+            "ok->>".to_string(),
+            MacroKind::Builtin(BuiltinMacro::OkThreadLast),
+        );
+        macros.insert(
+            "cond->".to_string(),
+            MacroKind::Builtin(BuiltinMacro::CondThreadFirst),
+        );
+        macros.insert(
+            "cond->>".to_string(),
+            MacroKind::Builtin(BuiltinMacro::CondThreadLast),
         );
         macros.insert("and".to_string(), MacroKind::Builtin(BuiltinMacro::And));
         macros.insert("or".to_string(), MacroKind::Builtin(BuiltinMacro::Or));
@@ -679,6 +709,24 @@ fn expand_builtin_macro(def: BuiltinMacro, call: &Node) -> Result<Node, MacroErr
         BuiltinMacro::Cond => expand_cond(&args)?,
         BuiltinMacro::ThreadFirst => expand_thread(&args, ThreadPosition::First)?,
         BuiltinMacro::ThreadLast => expand_thread(&args, ThreadPosition::Last)?,
+        BuiltinMacro::SomeThreadFirst => {
+            expand_option_thread(&args, ThreadPosition::First, &mut gensym)?
+        }
+        BuiltinMacro::SomeThreadLast => {
+            expand_option_thread(&args, ThreadPosition::Last, &mut gensym)?
+        }
+        BuiltinMacro::OkThreadFirst => {
+            expand_result_thread(&args, ThreadPosition::First, &mut gensym)?
+        }
+        BuiltinMacro::OkThreadLast => {
+            expand_result_thread(&args, ThreadPosition::Last, &mut gensym)?
+        }
+        BuiltinMacro::CondThreadFirst => {
+            expand_cond_thread(&args, ThreadPosition::First, &mut gensym)?
+        }
+        BuiltinMacro::CondThreadLast => {
+            expand_cond_thread(&args, ThreadPosition::Last, &mut gensym)?
+        }
         BuiltinMacro::And => expand_and(&args, &mut gensym),
         BuiltinMacro::Or => expand_or(&args, &mut gensym),
         BuiltinMacro::Is => expand_is(&args, &mut gensym)?,
@@ -1327,6 +1375,150 @@ fn thread_step(acc: &Node, step: &Node, position: ThreadPosition) -> Result<Node
         }
         _ => Ok(list_node(vec![step.clone(), acc.clone()])),
     }
+}
+
+/// `(some-> val step1 step2 ...)` — thread-first through Option chain.
+///
+/// Threads the WHOLE Option value through each step.  Short-circuits (stops) when
+/// the current value is `None`.  Steps must accept a `(Some v)` Option and return
+/// `(Some v)` or `None`.
+///
+/// Thread-last variant: `(some->> val step1 step2 ...)`
+fn expand_option_thread(
+    args: &[SyntaxObj],
+    position: ThreadPosition,
+    gensym: &mut Gensym,
+) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Err(MacroError::Message(
+            "some-> requires at least 1 argument".to_string(),
+        ));
+    }
+    // (some-> val step1 step2 ...)
+    // Expands to a let chain:
+    //   (let [__sv val
+    //         __sv (match __sv (None) __sv (Some _) (step1 __sv))
+    //         __sv (match __sv (None) __sv (Some _) (step2 __sv))]
+    //     __sv)
+    let vname = gensym.fresh("__sv");
+    let v = symbol_node(&vname);
+    let mut bindings = vec![v.clone(), args[0].node.clone()];
+
+    for step in &args[1..] {
+        let call = thread_step(&v, &step.node, position)?;
+        // (match __sv (None) __sv (Some _) (step __sv))
+        let match_expr = list_node(vec![
+            symbol_node("match"),
+            v.clone(),
+            list_node(vec![symbol_node("None")]),
+            v.clone(),
+            list_node(vec![symbol_node("Some"), symbol_node("_")]),
+            call,
+        ]);
+        bindings.push(v.clone());
+        bindings.push(match_expr);
+    }
+
+    Ok(list_node(vec![
+        symbol_node("let"),
+        vector_node(bindings),
+        v,
+    ]))
+}
+
+/// `(ok-> val step1 step2 ...)` — thread-first through Result chain.
+///
+/// Threads the WHOLE Result value through each step.  Short-circuits (stops) when
+/// the current value is `(Err e)`.  Steps must accept an `(Ok v)` Result and return
+/// `(Ok v)` or `(Err e)`.
+///
+/// Thread-last variant: `(ok->> val step1 step2 ...)`
+fn expand_result_thread(
+    args: &[SyntaxObj],
+    position: ThreadPosition,
+    gensym: &mut Gensym,
+) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Err(MacroError::Message(
+            "ok-> requires at least 1 argument".to_string(),
+        ));
+    }
+    // (ok-> val step1 step2 ...)
+    // Expands to a let chain:
+    //   (let [__rv val
+    //         __rv (match __rv (Err _) __rv (Ok _) (step1 __rv))
+    //         __rv (match __rv (Err _) __rv (Ok _) (step2 __rv))]
+    //     __rv)
+    let vname = gensym.fresh("__rv");
+    let v = symbol_node(&vname);
+    let mut bindings = vec![v.clone(), args[0].node.clone()];
+
+    for step in &args[1..] {
+        let call = thread_step(&v, &step.node, position)?;
+        // (match __rv (Err _) __rv (Ok _) (step __rv))
+        let match_expr = list_node(vec![
+            symbol_node("match"),
+            v.clone(),
+            list_node(vec![symbol_node("Err"), symbol_node("_")]),
+            v.clone(),
+            list_node(vec![symbol_node("Ok"), symbol_node("_")]),
+            call,
+        ]);
+        bindings.push(v.clone());
+        bindings.push(match_expr);
+    }
+
+    Ok(list_node(vec![
+        symbol_node("let"),
+        vector_node(bindings),
+        v,
+    ]))
+}
+
+/// `(cond-> val pred1 step1 pred2 step2 ...)` — thread-first when pred is true.
+///
+/// Each `(pred, step)` pair: if `pred` is truthy, thread current value through `step`.
+/// Unlike `some->`, `cond->` does not unwrap Options; it applies to plain values.
+///
+/// Thread-last variant: `(cond->> val pred1 step1 pred2 step2 ...)`
+fn expand_cond_thread(
+    args: &[SyntaxObj],
+    position: ThreadPosition,
+    gensym: &mut Gensym,
+) -> Result<Node, MacroError> {
+    if args.is_empty() {
+        return Err(MacroError::Message(
+            "cond-> requires at least 1 argument".to_string(),
+        ));
+    }
+    let pairs = &args[1..];
+    if !pairs.len().is_multiple_of(2) {
+        return Err(MacroError::Message(
+            "cond-> requires an even number of pred/step pairs".to_string(),
+        ));
+    }
+    // Build a let chain: let [v val, v (if p1 (step1 v) v), v (if p2 (step2 v) v)] v
+    let vname = gensym.fresh("__cv");
+    let v = symbol_node(&vname);
+    let mut bindings = vec![v.clone(), args[0].node.clone()];
+    for pair in pairs.chunks_exact(2) {
+        let pred = &pair[0].node;
+        let step = &pair[1].node;
+        let call = thread_step(&v, step, position)?;
+        let if_expr = list_node(vec![
+            symbol_node("if"),
+            pred.clone(),
+            call,
+            v.clone(),
+        ]);
+        bindings.push(v.clone());
+        bindings.push(if_expr);
+    }
+    Ok(list_node(vec![
+        symbol_node("let"),
+        vector_node(bindings),
+        v,
+    ]))
 }
 
 fn expand_and(args: &[SyntaxObj], gensym: &mut Gensym) -> Node {

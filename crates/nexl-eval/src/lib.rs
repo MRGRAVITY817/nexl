@@ -213,6 +213,9 @@ pub enum EvalError {
     /// function's return value.
     #[error("early return")]
     EarlyReturn(Value),
+    /// Call stack exceeded the configured maximum depth.
+    #[error("stack overflow: maximum call depth exceeded")]
+    StackOverflow,
 }
 
 #[cfg(test)]
@@ -2560,6 +2563,19 @@ mod tests {
         assert_eq!(nodes.len(), 1, "eval_str expects exactly one form");
         let env = crate::stdlib::standard_env();
         eval::eval(&nodes[0], &env)
+    }
+
+    /// Parse, macro-expand, and evaluate a Nexl snippet in the standard environment.
+    fn eval_str_expanded(src: &str) -> Result<Value, EvalError> {
+        let nodes = nexl_reader::read(src, meta::FileId::SYNTHETIC).expect("parse error");
+        let mut expander = nexl_macros::Expander::new();
+        let expanded = expander.expand_forms(&nodes).expect("macro expand error");
+        let env = crate::stdlib::standard_env();
+        let mut last = Value::Unit;
+        for node in &expanded {
+            last = eval::eval(node, &env)?;
+        }
+        Ok(last)
     }
 
     fn option_none() -> Value {
@@ -7955,5 +7971,134 @@ mod tests {
     #[test]
     fn test_char_ascii() {
         assert_eq!(eval_str(r"(char/ascii? \~)").unwrap(), Value::Bool(true));
+    }
+
+    // ── threading macro variants ───────────────────────────────────────────────
+
+    #[test]
+    fn test_some_thread_first_some_chain() {
+        // (some-> (Some 5) (option/map (fn [x] (* x 2)))) => (Some 10)
+        let result = eval_str_expanded("(some-> (Some 5) (option/map (fn [x] (* x 2))))").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Int(10)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_some_thread_first_short_circuit() {
+        // (some-> None (option/map (fn [x] (* x 2)))) => None
+        let result = eval_str_expanded("(some-> None (option/map (fn [x] (* x 2))))").unwrap();
+        assert!(matches!(result, Value::Adt { ctor, .. } if ctor.as_ref() == "None"));
+    }
+
+    #[test]
+    fn test_some_thread_first_passthrough() {
+        // (some-> (Some 42)) — no steps, returns initial value as-is
+        let result = eval_str_expanded("(some-> (Some 42))").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Int(42)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_ok_thread_first_ok_chain() {
+        // (ok-> (Ok 5) (result/map (fn [x] (* x 2)))) => (Ok 10)
+        let result = eval_str_expanded("(ok-> (Ok 5) (result/map (fn [x] (* x 2))))").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(10)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_ok_thread_first_short_circuit() {
+        // (ok-> (Err "oops") (result/map (fn [x] (* x 2)))) => (Err "oops")
+        let result = eval_str_expanded(r#"(ok-> (Err "oops") (result/map (fn [x] (* x 2))))"#).unwrap();
+        assert!(matches!(result, Value::Adt { ctor, .. } if ctor.as_ref() == "Err"));
+    }
+
+    #[test]
+    fn test_cond_thread_first_applies_true() {
+        // (cond-> 5 true (+ 1)) => (+ 5 1) = 6
+        let result = eval_str_expanded("(cond-> 5 true (+ 1))").unwrap();
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_cond_thread_first_skips_false() {
+        // (cond-> 5 false (+ 1)) => skipped, stays 5
+        let result = eval_str_expanded("(cond-> 5 false (+ 1))").unwrap();
+        assert_eq!(result, Value::Int(5));
+    }
+
+    #[test]
+    fn test_cond_thread_first_multiple_steps() {
+        // (cond-> 0 true (+ 1) false (* 100) true (+ 10)) => 11
+        let result = eval_str_expanded("(cond-> 0 true (+ 1) false (* 100) true (+ 10))").unwrap();
+        assert_eq!(result, Value::Int(11));
+    }
+
+    #[test]
+    fn test_some_thread_last() {
+        // some->> threads the whole Option as the LAST argument of each step.
+        // Use a 2-arg helper where Option is second (last): (map-opt f opt)
+        // (some->> (Some 5) (map-opt (fn [x] (* x 3)))) => (Some 15)
+        // expands to: (map-opt (fn [x] (* x 3)) (Some 5))
+        let result = eval_str_expanded(
+            "(let [map-opt (fn [f opt] (option/map opt f))] \
+               (some->> (Some 5) (map-opt (fn [x] (* x 3)))))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Int(15)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_ok_thread_last() {
+        // ok->> threads the whole Result as the LAST argument of each step.
+        // Use a 2-arg helper where Result is second (last): (map-ok f r)
+        // (ok->> (Ok 5) (map-ok (fn [x] (* x 3)))) => (Ok 15)
+        // expands to: (map-ok (fn [x] (* x 3)) (Ok 5))
+        let result = eval_str_expanded(
+            "(let [map-ok (fn [f r] (result/map r f))] \
+               (ok->> (Ok 5) (map-ok (fn [x] (* x 3)))))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Result"),
+                ctor: std::rc::Rc::from("Ok"),
+                fields: std::rc::Rc::new(vec![Value::Int(15)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_cond_thread_last_applies() {
+        // (cond->> [1 2 3] true (map (fn [x] (* x 2)))) => [2 4 6]
+        let result = eval_str_expanded("(cond->> [1 2 3] true (map (fn [x] (* x 2))))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(2), Value::Int(4), Value::Int(6)]))
+        );
     }
 }

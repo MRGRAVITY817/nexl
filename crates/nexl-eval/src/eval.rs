@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::rc::Rc;
 
 use meta::{
@@ -7,6 +8,35 @@ use meta::{
 use nexl_runtime::{BuiltHandlerEffect, Value, value::Function, value::HandlerDef};
 
 use crate::{Env, EvalError};
+
+/// Maximum Nexl call-stack depth before returning a `StackOverflow` error.
+const MAX_CALL_DEPTH: usize = 10_000;
+
+thread_local! {
+    /// Tracks the current Nexl call depth to prevent unbounded recursion.
+    static CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// RAII guard that increments the call depth on construction and decrements on drop.
+struct CallDepthGuard;
+
+impl CallDepthGuard {
+    /// Try to enter one call level. Returns `Err(StackOverflow)` if the limit is reached.
+    fn enter() -> Result<Self, EvalError> {
+        let depth = CALL_DEPTH.with(|d| d.get());
+        if depth >= MAX_CALL_DEPTH {
+            return Err(EvalError::StackOverflow);
+        }
+        CALL_DEPTH.with(|d| d.set(depth + 1));
+        Ok(CallDepthGuard)
+    }
+}
+
+impl Drop for CallDepthGuard {
+    fn drop(&mut self) {
+        CALL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
 
 #[derive(Debug)]
 enum EvalReturn {
@@ -1799,6 +1829,9 @@ fn eval_apply<'a>(
         return Err(EvalError::InvalidCallable);
     };
 
+    // Guard against unbounded recursion before allocating the call environment.
+    let _depth_guard = CallDepthGuard::enter()?;
+
     let required = func.arity as usize;
     let provided = items.len() - 1;
 
@@ -1862,9 +1895,9 @@ fn eval_apply<'a>(
     }
 
     let mut last = Value::Unit;
-    for expr in &func.body {
+    for expr in func.body.iter() {
         match eval_with_loop(expr, &call_env, loop_state) {
-            Ok(EvalReturn::Value(v)) => last = v,
+            Ok(EvalReturn::Value(v)) => { last = v; }
             Ok(EvalReturn::Recur(vals)) => return Ok(EvalReturn::Recur(vals)),
             Err(EvalError::EarlyReturn(v)) => return Ok(EvalReturn::Value(v)),
             Err(e) => return Err(e),
@@ -1914,6 +1947,9 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
     let Value::Function(func) = callee else {
         return Err(EvalError::InvalidCallable);
     };
+
+    // Guard against unbounded recursion before allocating the call environment.
+    let _depth_guard = CallDepthGuard::enter()?;
 
     let required = func.arity as usize;
     let provided = args.len();

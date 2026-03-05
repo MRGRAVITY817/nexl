@@ -35,12 +35,20 @@ fn of(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Vec(Rc::new(args.to_vec())))
 }
 
+/// Maximum number of elements allowed in eagerly-allocated vectors.
+const MAX_ALLOC: i64 = 10_000_000;
+
 /// `(vec/repeat n val)` — return a Vec of `n` copies of `val`.
 fn repeat(args: &[Value]) -> Result<Value, String> {
     match args {
         [Value::Int(n), v] => {
             if *n < 0 {
                 return Err(format!("`vec/repeat` count must be >= 0, got {n}"));
+            }
+            if *n > MAX_ALLOC {
+                return Err(format!(
+                    "`vec/repeat` count too large: {n} (max {MAX_ALLOC})"
+                ));
             }
             Ok(Value::Vec(Rc::new(vec![v.clone(); *n as usize])))
         }
@@ -57,6 +65,11 @@ fn init(args: &[Value]) -> Result<Value, String> {
         [Value::Int(n), f] => {
             if *n < 0 {
                 return Err(format!("`vec/init` count must be >= 0, got {n}"));
+            }
+            if *n > MAX_ALLOC {
+                return Err(format!(
+                    "`vec/init` count too large: {n} (max {MAX_ALLOC})"
+                ));
             }
             let mut result = Vec::with_capacity(*n as usize);
             for i in 0..*n {
@@ -281,10 +294,16 @@ fn rotate_right(args: &[Value]) -> Result<Value, String> {
 
 /// `(vec/permutations xs)` — return all orderings of `xs` as a Vec of Vecs.
 ///
-/// O(n!) — avoid on large inputs.
+/// O(n!) — input is limited to 10 elements to prevent memory exhaustion.
 fn permutations(args: &[Value]) -> Result<Value, String> {
     match args {
         [Value::Vec(v)] => {
+            if v.len() > 10 {
+                return Err(format!(
+                    "`vec/permutations` input too large: {} elements (max 10, since 11! = 39,916,800 results)",
+                    v.len()
+                ));
+            }
             let perms = gen_permutations(v);
             Ok(Value::Vec(Rc::new(
                 perms.into_iter().map(|p| Value::Vec(Rc::new(p))).collect(),
@@ -315,12 +334,19 @@ fn gen_permutations(v: &[Value]) -> Vec<Vec<Value>> {
 
 /// `(vec/combinations xs k)` — return all ways to choose `k` elements from `xs`.
 ///
-/// O(C(n,k)) — elements preserve original order.
+/// O(C(n,k)) — elements preserve original order. n is limited to 20 to prevent
+/// memory exhaustion (C(20,10) = 184,756; C(21,10) = 352,716 — safe upper bound).
 fn combinations(args: &[Value]) -> Result<Value, String> {
     match args {
         [Value::Vec(v), Value::Int(k)] => {
             if *k < 0 {
                 return Err(format!("`vec/combinations` k must be >= 0, got {k}"));
+            }
+            if v.len() > 20 {
+                return Err(format!(
+                    "`vec/combinations` input too large: {} elements (max 20)",
+                    v.len()
+                ));
             }
             let combs = gen_combinations(v, *k as usize);
             Ok(Value::Vec(Rc::new(

@@ -1533,14 +1533,28 @@ fn reverse_fn(args: &[Value]) -> Result<Value, String> {
 // Range
 // ---------------------------------------------------------------------------
 
+/// Maximum number of elements `range` will eagerly allocate.
+const RANGE_MAX: i64 = 10_000_000;
+
 /// `(range n)`, `(range start end)`, or `(range start end step)`.
 fn range_fn(args: &[Value]) -> Result<Value, String> {
     match args {
         [Value::Int(n)] => {
+            if *n > RANGE_MAX {
+                return Err(format!(
+                    "`range` count too large: {n} (max {RANGE_MAX})"
+                ));
+            }
             let items: Vec<Value> = (0..*n).map(Value::Int).collect();
             Ok(Value::Vec(Rc::new(items)))
         }
         [Value::Int(start), Value::Int(end)] => {
+            let count = end.saturating_sub(*start).max(0);
+            if count > RANGE_MAX {
+                return Err(format!(
+                    "`range` span too large: {count} elements (max {RANGE_MAX})"
+                ));
+            }
             let items: Vec<Value> = (*start..*end).map(Value::Int).collect();
             Ok(Value::Vec(Rc::new(items)))
         }
@@ -1552,11 +1566,21 @@ fn range_fn(args: &[Value]) -> Result<Value, String> {
             let mut i = *start;
             if *step > 0 {
                 while i < *end {
+                    if items.len() as i64 >= RANGE_MAX {
+                        return Err(format!(
+                            "`range` would produce more than {RANGE_MAX} elements"
+                        ));
+                    }
                     items.push(Value::Int(i));
                     i += step;
                 }
             } else {
                 while i > *end {
+                    if items.len() as i64 >= RANGE_MAX {
+                        return Err(format!(
+                            "`range` would produce more than {RANGE_MAX} elements"
+                        ));
+                    }
                     items.push(Value::Int(i));
                     i += step;
                 }

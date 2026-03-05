@@ -471,7 +471,17 @@ impl std::fmt::Debug for Value {
                 .field("ctor", ctor)
                 .field("fields", fields)
                 .finish(),
-            Value::Function(func) => f.debug_tuple("Function").field(func).finish(),
+            Value::Function(func) => {
+                // Do NOT recurse into captures or module_captures — they can form Rc cycles
+                // (e.g., result/map.module_captures["result"] contains result/map itself),
+                // which would cause infinite Debug recursion and hang the process.
+                f.debug_struct("Function")
+                    .field("name", &func.name)
+                    .field("arity", &func.arity)
+                    .field("captures", &format!("[{} bindings]", func.captures.len()))
+                    .field("modules", &format!("[{} aliases]", func.module_captures.len()))
+                    .finish_non_exhaustive()
+            }
             Value::NativeFunction(nf) => f.debug_tuple("NativeFunction").field(nf).finish(),
             Value::NativeClosure { name, .. } => f
                 .debug_struct("NativeClosure")
