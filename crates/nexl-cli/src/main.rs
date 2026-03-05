@@ -5,6 +5,7 @@
 //! If no output path is given, the output file is derived from the input
 //! by replacing the extension with `.wasm`.
 
+mod functions;
 mod repl_protocol;
 mod wasm_runner;
 
@@ -163,6 +164,62 @@ enum Command {
         /// Project template: "default" or "web".
         #[arg(long = "template", default_value = "default")]
         template: String,
+    },
+    /// Manage and serve effect-sandboxed Nexl functions.
+    Functions {
+        #[command(subcommand)]
+        command: FunctionsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand, PartialEq, Eq)]
+enum FunctionsCommand {
+    /// Deploy a .nx handler file as a function.
+    Deploy {
+        /// Path to the .nx file defining `(defn handle [req] ...)`.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Function name (defaults to file stem).
+        #[arg(long = "name")]
+        name: Option<String>,
+        /// Capability level: pure, read-only, or full (default: full).
+        #[arg(long = "capability", default_value = "full")]
+        capability: String,
+        /// URL route pattern (default: /<name>).
+        #[arg(long = "route")]
+        route: Option<String>,
+    },
+    /// List all deployed functions.
+    List,
+    /// Serve deployed functions over HTTP.
+    Serve {
+        /// Port to listen on (default: 8080).
+        #[arg(long = "port", default_value = "8080")]
+        port: u16,
+    },
+    /// Show recent invocation logs for a function.
+    Logs {
+        /// Function name.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Number of recent entries to show (default: 20).
+        #[arg(short = 'n', default_value = "20")]
+        n: usize,
+    },
+    /// Invoke a function directly (without HTTP).
+    Invoke {
+        /// Function name.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// HTTP method (default: GET).
+        #[arg(long = "method", default_value = "GET")]
+        method: String,
+        /// URL path (defaults to the function's registered route).
+        #[arg(long = "path")]
+        path: Option<String>,
+        /// Request body as a string.
+        #[arg(long = "body")]
+        body: Option<String>,
     },
 }
 
@@ -349,6 +406,12 @@ fn main() {
         }
         Command::New { name, template } => {
             if let Err(message) = command_new(&name, &template) {
+                print_error(&message);
+                process::exit(1);
+            }
+        }
+        Command::Functions { command } => {
+            if let Err(message) = command_functions(command) {
                 print_error(&message);
                 process::exit(1);
             }
@@ -991,6 +1054,26 @@ fn command_new(name: &str, template: &str) -> Result<(), String> {
     println!();
 
     Ok(())
+}
+
+fn command_functions(cmd: FunctionsCommand) -> Result<(), String> {
+    match cmd {
+        FunctionsCommand::Deploy { file, name, capability, route } => {
+            functions::cmd_deploy(&file, name.as_deref(), &capability, route.as_deref())
+        }
+        FunctionsCommand::List => {
+            functions::cmd_list();
+            Ok(())
+        }
+        FunctionsCommand::Serve { port } => functions::cmd_serve(port),
+        FunctionsCommand::Logs { name, n } => {
+            functions::cmd_logs(&name, n);
+            Ok(())
+        }
+        FunctionsCommand::Invoke { name, method, path, body } => {
+            functions::cmd_invoke(&name, &method, path.as_deref(), body.as_deref())
+        }
+    }
 }
 
 fn scaffold_default_main(name: &str) -> String {

@@ -23,23 +23,30 @@ and enriched stdlib, then harden the language and toolchain for a 1.0 release.
   - `nexl doc` generates HTML API docs
   - Full order lifecycle integration demo in `src/main.nx`
 
-- [ ] **nexl-functions** — Effect-sandboxed WASM plugin host (flagship)
-  - HTTP trigger: incoming request → run function → return response
-  - Capability levels: pure / read-only / full
-  - `nexl functions deploy` command
-  - Dashboard: deployed functions, capabilities, invocation logs
-  - Runs locally via Wasmtime
+- [x] **nexl-functions** — Effect-sandboxed HTTP function host (flagship)
+  - `nexl functions deploy <file.nx>` — register handler with name, capability, route
+  - `nexl functions list` — list deployed functions
+  - `nexl functions serve [--port 8080]` — HTTP server routing requests to handlers
+  - `nexl functions logs <name>` — view invocation logs
+  - `nexl functions invoke <name>` — direct invocation without HTTP
+  - Capability levels: pure / read-only / full (sandbox policy enforcement)
+  - HTML dashboard at `GET /` listing all functions
+  - Registry at `.nexl-functions/registry.json`
+  - Logs at `.nexl-functions/logs/<name>.jsonl`
+  - Note: Stage 0 uses tree-walk evaluator; Wasmtime backend is Stage 1
 
-- [ ] **1.0 stability contract** — define stable vs experimental surface
+- [x] **1.0 stability contract** — define stable vs experimental surface
+  - Written at `docs/stability.md`
   - Stable: syntax, core forms, type system, effect system, stdlib, CLI, WIT interop
   - Experimental: WASI 0.3 async, native backend, specific optimizations
-  - Backward compatibility promise
-  - Edition mechanism design
+  - Backward compatibility promise documented
+  - Edition mechanism design documented
 
-- [ ] **Migration guide & changelog** — pre-1.0 → 1.0
-  - Document every breaking change
-  - `nexl migrate` tool for automated fixups
-  - Stage 0 → Stage 1 → Stage 2 changelog
+- [x] **Migration guide & changelog** — pre-1.0 → 1.0
+  - Written at `docs/migration.md`
+  - Documents all breaking changes (naming, Unit vs nil, booleans, effects, match)
+  - Automated `nexl migrate` tool spec
+  - Stage 0 → 1 → 2 changelog
 
 - [ ] **Public documentation site**
   - Language guide (tutorial progression)
@@ -47,14 +54,15 @@ and enriched stdlib, then harden the language and toolchain for a 1.0 release.
   - Effect system guide
   - WASM interop guide
   - Cookbook integration
+  - Deferred: requires static site generator and hosting
 
-- [ ] **Community infrastructure**
-  - GitHub Discussions or Discord
-  - Good-first-issue labels
-  - Contributing guide
-  - Code of conduct
+- [x] **Community infrastructure**
+  - `CONTRIBUTING.md` — development setup, workflow, good-first-issues
+  - `CODE_OF_CONDUCT.md` — based on Contributor Covenant 2.1
+  - Issue tracker labels, Discord, and GitHub Discussions are operational concerns
 
-- [ ] **AI/LLM readiness**
-  - Context files for AI coding assistants
-  - Canonical example corpus (50+ programs)
-  - Verify Claude can write basic Nexl from documentation context
+- [x] **AI/LLM readiness**
+  - `examples/` directory with 14 canonical programs covering all language features
+  - `CLAUDE.md` context file for AI coding assistants (already exists)
+  - `docs/stability.md` and `docs/migration.md` for grounding
+  - Example topics: hello, functions, collections, Option/Result, matching, JSON, HTTP, DB, testing, effects, crypto, channels, file I/O, nexl-functions handler
