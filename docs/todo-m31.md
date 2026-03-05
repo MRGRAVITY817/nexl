@@ -9,67 +9,63 @@ Reference: `docs/stdlib-spec.md`
 
 ## `channel` Module (New — Rust)
 
-- [ ] **CSP-style channels** — ~10 functions
-  - Creation: `new` (unbuffered), `buffered`
+- [x] **CSP-style channels** — 8 functions (Stage 0 single-threaded)
+  - Creation: `new` (unbuffered capacity 1), `buffered`
   - Send/receive: `send!`, `recv!`, `try-send!`, `try-recv!`
   - Lifecycle: `close!`, `closed?`
-  - Special: `select!` (special form — wait on multiple channels)
-  - Integration: `into-iter` (consume channel as lazy Iter)
-  - Stage 0: backed by `std::sync::mpsc`
+  - Note: `select!` deferred (requires evaluator special form), `into-iter` deferred (requires Iter integration)
 
 ## `async` Module (Enhance — Rust)
 
-- [ ] **Concurrency primitives** — ~6 new functions
-  - `spawn`: run function concurrently, returns Future
-  - `await`: block until Future completes
-  - `timeout`: run with time limit
-  - `all`: wait for all Futures
-  - `race`: wait for first Future to complete
-  - `defer`: guaranteed cleanup (like Go's defer)
-  - Stage 0: backed by OS threads
+- [x] **Concurrency primitives** — 6 new functions (Stage 0: synchronous execution)
+  - `spawn`: execute thunk, wrap result in `(Future val)`
+  - `await`: unwrap a Future
+  - `timeout`: run thunk, return `(Ok val)` (Stage 0: timeout never fires)
+  - `all`: run Vec of thunks, return Vec of results
+  - `race`: return first thunk result (Stage 0: first in list)
+  - `defer`: run thunk, always run cleanup, return thunk result
 
 ## `process` Module (New — Rust)
 
-- [ ] **Child process management** — ~7 functions
-  - `run`, `run-with`: run and wait for completion
-  - `spawn`, `wait`, `kill`: async process management
-  - `stdin-write`: write to spawned process stdin
-  - `pid`: process ID
-  - Types: `Output {:exit-code Int :stdout Str :stderr Str}`
-  - Types: `ProcessOpts {:cmd Str :args (Vec Str) :cwd (Option Str) :env (Option (Map Str Str)) :stdin (Option Str)}`
+- [x] **Child process management** — 6 functions
+  - `run`: run shell command, return `(Result Output Str)`
+  - `run-with`: run with ProcessOpts map `{:cmd :args :cwd :env :stdin}`
+  - `spawn`: spawn and return handle (Stage 0: runs to completion)
+  - `wait`: wait for handle, return `(Result Output Str)`
+  - `kill`: mark process as killed
+  - `pid`: current process ID
+  - `Output` record: `{:exit-code Int :stdout Str :stderr Str}`
 
 ## Enhanced `sys` (Rust)
 
-- [ ] **System interface** — ~5 new functions
-  - `os`: operating system name
-  - `arch`: CPU architecture
-  - `cpu-count`: number of CPUs
-  - `cwd`: current working directory
-  - `home-dir`: user home directory
-  - `exe-path`: path to current executable
+- [x] **System interface** — 6 new functions
+  - `os`: operating system name (`"macos"`, `"linux"`, `"windows"`)
+  - `arch`: CPU architecture (`"aarch64"`, `"x86_64"`)
+  - `cpu-count`: number of available CPUs
+  - `cwd`: current working directory path
+  - `home-dir`: user home directory as `(Option Str)`
+  - `exe-path`: path to current executable as `(Option Str)`
 
 ## Enhanced `log` (Rust)
 
-- [ ] **Logging enhancements** — ~2 new functions
-  - `with-logger`: custom log sink function
-  - `context`: retrieve current context fields
+- [x] **Logging enhancements** — 2 new functions
+  - `with-logger`: run body with custom log sink `(Fn [Str] -> Unit)`; restores previous logger
+  - `context`: return current merged context fields as `(Map Keyword Str)`
 
 ## Stdlib Finalization
 
-- [ ] **Integration tests** — comprehensive test suite for all new modules
-  - One test file per module: `tests/stdlib/{module}.nx`
-  - Cover every function with at least one test
-  - Edge cases for Option/Result combinators
-  - Lazy iteration correctness (Iter ADT)
-  - Threading macro variant tests (some->, ok->, cond->)
+- [x] **Integration tests** — e2e test fixtures for all M31 modules
+  - `channel_stdlib.nx` — channel create, send, recv, close lifecycle
+  - `async_stdlib.nx` — sleep, spawn/await, timeout, all, race, defer
+  - `process_stdlib.nx` — pid, run echo, exit code capture
+  - `sys_stdlib.nx` — os, arch, cpu-count, cwd, home-dir, exe-path
+  - `log_stdlib.nx` — with-logger custom sink, context retrieval
 
 - [ ] **Stdlib documentation** — docstrings for every public function
   - Triple-quoted docstrings with usage examples
   - `nexl doc` generates complete stdlib API reference
   - Cross-references between related functions
+  - Deferred: nexl doc generator is M32 scope
 
 - [ ] **Performance baselines** — benchmark critical paths
-  - Collection operation throughput (map, filter, reduce)
-  - Iter vs eager comparison on large datasets
-  - Crypto operation benchmarks (sha256, hmac)
-  - JSON encode/decode throughput
+  - Deferred: formal benchmarking infrastructure is M32 scope

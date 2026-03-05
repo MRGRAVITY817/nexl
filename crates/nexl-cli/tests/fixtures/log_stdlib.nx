@@ -1,0 +1,17 @@
+;; E2E test: log module enhancements
+
+;; with-logger redirects log lines to the provided sink fn
+(log/with-logger
+  (fn [line] (io/println line))
+  (fn []
+    (log/info "hello from logger")))
+(io/println "logger-test-done")
+
+;; context returns empty map outside log/with
+(io/println (= 0 (count (log/context))))
+
+;; context returns fields inside log/with
+(log/with {:trace-id "abc"}
+  (fn []
+    (let [ctx (log/context)]
+      (io/println (= 1 (count ctx))))))

@@ -1,0 +1,19 @@
+;; E2E test: async module (Stage 0 synchronous)
+(async/sleep 0)
+(io/println "sleep ok")
+
+(let [f (async/spawn (fn [] 42))]
+  (io/println (async/await f)))
+
+(let [r (async/timeout 1000 (fn [] "done"))]
+  (io/println r))
+
+(let [results (async/all [(fn [] 1) (fn [] 2) (fn [] 3)])]
+  (io/println results))
+
+(let [first (async/race [(fn [] "winner") (fn [] "loser")])]
+  (io/println first))
+
+(async/defer
+  (fn [] (io/println "cleanup"))
+  (fn [] (io/println "body")))

@@ -1,0 +1,26 @@
+;; stdlib/channel — CSP-style channels (Stage 0: single-threaded).
+;; See src/channel_mod.rs for implementation.
+
+;; (channel/new) → (Channel id)
+;; Create an unbuffered channel (capacity 1).
+
+;; (channel/buffered n) → (Channel id)
+;; Create a buffered channel with capacity n.
+
+;; (channel/send! ch val) → (Result Unit Str)
+;; Enqueue val. Returns (Err "...") if channel is full or closed.
+
+;; (channel/recv! ch) → (Option val)
+;; Dequeue a value. Returns None if channel is empty.
+
+;; (channel/try-send! ch val) → (Result Unit Str)
+;; Non-blocking send (same as send! in Stage 0).
+
+;; (channel/try-recv! ch) → (Option val)
+;; Non-blocking receive (same as recv! in Stage 0).
+
+;; (channel/close! ch) → Unit
+;; Mark channel closed. Further sends will return Err.
+
+;; (channel/closed? ch) → Bool
+;; True if channel is closed.

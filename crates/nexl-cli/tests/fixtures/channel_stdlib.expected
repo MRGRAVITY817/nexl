@@ -1,0 +1,8 @@
+false
+(Ok unit)
+(Some 42)
+None
+true
+(Err "send on closed channel")
+(Some "a")
+(Some "b")

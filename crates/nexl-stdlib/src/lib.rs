@@ -6,6 +6,8 @@
 
 pub mod async_mod;
 pub mod base64_mod;
+pub mod channel_mod;
+pub mod process_mod;
 pub mod bit;
 pub mod char;
 pub mod csv_mod;
@@ -68,6 +70,8 @@ pub fn nexl_declaration_sources() -> &'static [(&'static str, &'static str)] {
         ("test",     include_str!("../nexl/test.nx")),
         ("net",      include_str!("../nexl/net.nx")),
         ("async",    include_str!("../nexl/async.nx")),
+        ("channel",  include_str!("../nexl/channel.nx")),
+        ("process",  include_str!("../nexl/process.nx")),
         ("sys",      include_str!("../nexl/sys.nx")),
         ("option",   include_str!("../nexl/option_impl.nx")),
         ("result",   include_str!("../nexl/result_impl.nx")),
@@ -124,6 +128,8 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("test", test::entries()),
         ("net", net::entries()),
         ("async", async_mod::entries()),
+        ("channel", channel_mod::entries()),
+        ("process", process_mod::entries()),
         ("sys", sys::entries()),
         ("gen", gen_mod::entries()),
         ("vec", vec::entries()),
@@ -192,8 +198,9 @@ mod tests {
             names,
             vec![
                 "core", "str", "math", "conv", "io", "json", "http", "db", "env", "time",
-                "random", "crypto", "log", "test", "net", "async", "sys", "gen", "vec", "map",
-                "set", "char", "regex", "bit", "path", "base64", "uuid", "uri", "csv", "toml"
+                "random", "crypto", "log", "test", "net", "async", "channel", "process", "sys",
+                "gen", "vec", "map", "set", "char", "regex", "bit", "path", "base64", "uuid",
+                "uri", "csv", "toml"
             ]
         );
     }

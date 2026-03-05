@@ -1,0 +1,18 @@
+;; E2E test: channel module
+(let [ch (channel/new)]
+  (io/println (channel/closed? ch))
+  (let [r1 (channel/send! ch 42)]
+    (io/println r1))
+  (let [v1 (channel/recv! ch)]
+    (io/println v1))
+  (io/println (channel/recv! ch))
+  (channel/close! ch)
+  (io/println (channel/closed? ch))
+  (io/println (channel/send! ch 99)))
+
+(let [bch (channel/buffered 3)]
+  (channel/send! bch "a")
+  (channel/send! bch "b")
+  (channel/send! bch "c")
+  (io/println (channel/recv! bch))
+  (io/println (channel/recv! bch)))

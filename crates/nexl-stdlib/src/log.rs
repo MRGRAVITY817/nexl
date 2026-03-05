@@ -62,6 +62,9 @@ thread_local! {
 
     /// Context stack: each entry is a flat key→value map of extra log fields.
     static CONTEXT_STACK: RefCell<Vec<HashMap<String, String>>> = const { RefCell::new(Vec::new()) };
+
+    /// Custom log sink. If `Some`, called with the formatted JSON line instead of eprintln.
+    static CUSTOM_LOGGER: RefCell<Option<nexl_runtime::Value>> = const { RefCell::new(None) };
 }
 
 fn current_min_level() -> Level {
@@ -132,6 +135,19 @@ pub(crate) fn format_log_line(level: &str, msg: &str, context: &HashMap<String, 
 
 // ─── Core log function ────────────────────────────────────────────────────────
 
+fn emit_line(line: &str) {
+    let custom = CUSTOM_LOGGER.with(|l| l.borrow().clone());
+    if let Some(logger_fn) = custom {
+        use std::rc::Rc;
+        let _ = nexl_runtime::call_value(
+            &logger_fn,
+            &[Value::Str(Rc::from(line))],
+        );
+    } else {
+        eprintln!("{line}");
+    }
+}
+
 fn log_at_level(level: Level, args: &[Value]) -> Result<Value, String> {
     nexl_runtime::sandbox::check(nexl_runtime::sandbox::Capability::Console)?;
     if args.is_empty() {
@@ -147,7 +163,7 @@ fn log_at_level(level: Level, args: &[Value]) -> Result<Value, String> {
     };
     let ctx = collect_context();
     let line = format_log_line(level.as_str(), &msg, &ctx);
-    eprintln!("{line}");
+    emit_line(&line);
     Ok(Value::Unit)
 }
 
@@ -162,6 +178,8 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("error", error),
         ("with", with_fn),
         ("set-level", set_level_fn),
+        ("with-logger", with_logger_fn),
+        ("context", context_fn),
     ]
 }
 
@@ -246,6 +264,44 @@ fn set_level_fn(args: &[Value]) -> Result<Value, String> {
             args.len()
         )),
     }
+}
+
+/// `(log/with-logger sink body)` — run body with `sink` as the log output function.
+///
+/// `sink` is a `(Fn [Str] -> Unit)` that receives each formatted JSON log line.
+/// The previous logger is restored after `body` returns.
+fn with_logger_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [sink, body] => {
+            let previous = CUSTOM_LOGGER.with(|l| l.borrow().clone());
+            CUSTOM_LOGGER.with(|l| *l.borrow_mut() = Some(sink.clone()));
+            let result = nexl_runtime::call_value(body, &[]);
+            CUSTOM_LOGGER.with(|l| *l.borrow_mut() = previous);
+            result.map_err(|e| format!("`log/with-logger` body failed: {e}"))
+        }
+        _ => Err(format!(
+            "`log/with-logger` requires 2 arguments (sink body), got {}",
+            args.len()
+        )),
+    }
+}
+
+/// `(log/context)` — return the current merged context fields as `(Map Keyword Str)`.
+fn context_fn(args: &[Value]) -> Result<Value, String> {
+    if !args.is_empty() {
+        return Err(format!("`log/context` takes 0 arguments, got {}", args.len()));
+    }
+    let ctx = collect_context();
+    use std::rc::Rc;
+    use nexl_runtime::value::NexlMap;
+    let mut m = NexlMap::new();
+    for (k, v) in &ctx {
+        m = m.put(
+            Value::Keyword { ns: None, name: Rc::from(k.as_str()) },
+            Value::Str(Rc::from(v.as_str())),
+        );
+    }
+    Ok(Value::Map(Rc::new(m)))
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

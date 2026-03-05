@@ -1,0 +1,12 @@
+;; E2E test: process module
+(io/println (> (process/pid) 0))
+
+(let [r (process/run "echo hello")]
+  (match r
+    (Ok out) (io/println (str/trim (:stdout out)))
+    (Err e)  (io/println (str/concat "error: " e))))
+
+(let [r (process/run "exit 0")]
+  (match r
+    (Ok out) (io/println (:exit-code out))
+    (Err e)  (io/println e)))

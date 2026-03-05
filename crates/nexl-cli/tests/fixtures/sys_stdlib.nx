@@ -1,0 +1,11 @@
+;; E2E test: sys module enhancements
+(io/println (> (str/char-count (sys/os)) 0))
+(io/println (> (str/char-count (sys/arch)) 0))
+(io/println (> (sys/cpu-count) 0))
+(io/println (> (str/char-count (sys/cwd)) 0))
+(match (sys/home-dir)
+  (Some _) (io/println true)
+  None     (io/println false))
+(match (sys/exe-path)
+  (Some _) (io/println true)
+  None     (io/println false))

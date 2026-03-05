@@ -1,0 +1,22 @@
+;; stdlib/process — child process management.
+;; See src/process_mod.rs for implementation.
+
+;; (process/run cmd) → (Result Output Str)
+;; Run shell command cmd, return Output record.
+;; Output: {:exit-code Int :stdout Str :stderr Str}
+
+;; (process/run-with opts) → (Result Output Str)
+;; Run with ProcessOpts map.
+;; ProcessOpts: {:cmd Str :args (Vec Str) :cwd (Option Str) :env (Map Str Str) :stdin (Option Str)}
+
+;; (process/spawn cmd) → ProcessHandle
+;; Spawn command and return a handle (Stage 0: runs to completion immediately).
+
+;; (process/wait handle) → (Result Output Str)
+;; Wait for spawned process, return Output record.
+
+;; (process/kill handle) → Unit
+;; Kill the process (Stage 0: marks as killed, affects wait result).
+
+;; (process/pid) → Int
+;; Return the PID of the current process.
