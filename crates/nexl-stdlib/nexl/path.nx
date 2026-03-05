@@ -1,0 +1,184 @@
+;; stdlib/path — cross-platform path manipulation.
+;;
+;; This file is the source of truth for `path` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/path_mod.rs.
+;; All operations are pure (no effects) — they manipulate path strings.
+
+(defn path/join
+  """
+  Join path components with the OS separator.
+
+  ## Examples
+
+  ```nexl
+  (path/join "foo" "bar")          ; => "foo/bar" (on Unix)
+  (path/join "/usr" "local" "bin") ; => "/usr/local/bin"
+  ```
+  """
+  [& parts]
+  (native "path/join" parts))
+
+(defn path/parent
+  """
+  Return `(Some parent-dir)` or `None` if the path has no parent.
+
+  ## Examples
+
+  ```nexl
+  (path/parent "foo/bar/baz.txt")  ; => (Some "foo/bar")
+  (path/parent "file.txt")         ; => None
+  ```
+  """
+  [p]
+  (native "path/parent" p))
+
+(defn path/file-name
+  """
+  Return `(Some filename-with-extension)` or `None`.
+
+  ## Examples
+
+  ```nexl
+  (path/file-name "foo/bar.txt")  ; => (Some "bar.txt")
+  ```
+  """
+  [p]
+  (native "path/file-name" p))
+
+(defn path/stem
+  """
+  Return `(Some filename-without-extension)` or `None`.
+
+  ## Examples
+
+  ```nexl
+  (path/stem "foo/bar.txt")  ; => (Some "bar")
+  (path/stem "Makefile")     ; => (Some "Makefile")
+  ```
+  """
+  [p]
+  (native "path/stem" p))
+
+(defn path/extension
+  """
+  Return `(Some extension)` without the dot, or `None`.
+
+  ## Examples
+
+  ```nexl
+  (path/extension "file.rs")    ; => (Some "rs")
+  (path/extension "Makefile")   ; => None
+  ```
+  """
+  [p]
+  (native "path/extension" p))
+
+(defn path/with-extension
+  """
+  Return the path with its extension replaced by `ext`.
+  Pass `""` to strip the extension.
+
+  ## Examples
+
+  ```nexl
+  (path/with-extension "foo/bar.txt" "rs")  ; => "foo/bar.rs"
+  (path/with-extension "foo/bar.txt" "")    ; => "foo/bar"
+  ```
+  """
+  [p ext]
+  (native "path/with-extension" p ext))
+
+(defn path/normalize
+  """
+  Resolve `.` and `..` components without touching the filesystem.
+
+  ## Examples
+
+  ```nexl
+  (path/normalize "foo/./bar/../baz")  ; => "foo/baz"
+  ```
+  """
+  [p]
+  (native "path/normalize" p))
+
+(defn path/absolute?
+  """
+  Return true if the path is absolute.
+
+  ## Examples
+
+  ```nexl
+  (path/absolute? "/etc/hosts")   ; => true
+  (path/absolute? "relative")     ; => false
+  ```
+  """
+  [p]
+  (native "path/absolute?" p))
+
+(defn path/relative?
+  """
+  Return true if the path is relative.
+
+  ## Examples
+
+  ```nexl
+  (path/relative? "foo/bar")   ; => true
+  (path/relative? "/foo/bar")  ; => false
+  ```
+  """
+  [p]
+  (native "path/relative?" p))
+
+(defn path/separator
+  """
+  Return the OS path separator: `"/"` on Unix, `"\\"` on Windows.
+
+  ## Examples
+
+  ```nexl
+  (path/separator)  ; => "/" (on macOS/Linux)
+  ```
+  """
+  []
+  (native "path/separator"))
+
+(defn path/components
+  """
+  Split the path into its individual components.
+
+  ## Examples
+
+  ```nexl
+  (path/components "foo/bar/baz")  ; => ["foo" "bar" "baz"]
+  ```
+  """
+  [p]
+  (native "path/components" p))
+
+(defn path/relative-to
+  """
+  Make `p` relative to `base`. Returns `(Some relative-path)` or `None`.
+
+  ## Examples
+
+  ```nexl
+  (path/relative-to "/usr" "/usr/local/bin")  ; => (Some "local/bin")
+  (path/relative-to "/usr" "/etc/hosts")      ; => None
+  ```
+  """
+  [base p]
+  (native "path/relative-to" base p))
+
+(defn path/starts-with?
+  """
+  Return true if `p` starts with the given prefix path.
+
+  ## Examples
+
+  ```nexl
+  (path/starts-with? "/usr/local/bin" "/usr/local")  ; => true
+  (path/starts-with? "/usr/local/bin" "/etc")        ; => false
+  ```
+  """
+  [p prefix]
+  (native "path/starts-with?" p prefix))

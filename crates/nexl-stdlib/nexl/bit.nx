@@ -1,0 +1,218 @@
+;; stdlib/bit — bitwise operations on Int (i64).
+;;
+;; This file is the source of truth for `bit` module documentation.
+;; The Rust implementation lives in crates/nexl-stdlib/src/bit.rs.
+
+(defn bit/and
+  """
+  Bitwise AND of two integers.
+
+  ## Examples
+
+  ```nexl
+  (bit/and 0b1100 0b1010)    ; => 0b1000
+  (bit/and 255 0x0F)         ; => 15
+  ```
+  """
+  [a b]
+  (native "bit/and" a b))
+
+(defn bit/or
+  """
+  Bitwise OR of two integers.
+
+  ## Examples
+
+  ```nexl
+  (bit/or 0b1100 0b1010)    ; => 0b1110
+  ```
+  """
+  [a b]
+  (native "bit/or" a b))
+
+(defn bit/xor
+  """
+  Bitwise XOR of two integers.
+
+  ## Examples
+
+  ```nexl
+  (bit/xor 0b1100 0b1010)    ; => 0b0110
+  ```
+  """
+  [a b]
+  (native "bit/xor" a b))
+
+(defn bit/not
+  """
+  Bitwise complement (flip all 64 bits).
+
+  ## Examples
+
+  ```nexl
+  (bit/not 0)     ; => -1
+  (bit/not -1)    ; => 0
+  ```
+  """
+  [a]
+  (native "bit/not" a))
+
+(defn bit/shift-left
+  """
+  Left-shift `a` by `n` bit positions (wrapping).
+
+  ## Examples
+
+  ```nexl
+  (bit/shift-left 1 4)    ; => 16
+  ```
+  """
+  [a n]
+  (native "bit/shift-left" a n))
+
+(defn bit/shift-right
+  """
+  Arithmetic right-shift `a` by `n` bit positions (sign bit preserved, wrapping).
+
+  ## Examples
+
+  ```nexl
+  (bit/shift-right 16 2)    ; => 4
+  (bit/shift-right -8 1)    ; => -4
+  ```
+  """
+  [a n]
+  (native "bit/shift-right" a n))
+
+(defn bit/count-ones
+  """
+  Return the number of 1 bits (population count / Hamming weight).
+
+  ## Examples
+
+  ```nexl
+  (bit/count-ones 0b10110)    ; => 3
+  ```
+  """
+  [a]
+  (native "bit/count-ones" a))
+
+(defn bit/count-zeros
+  """
+  Return the number of 0 bits in the 64-bit representation.
+
+  ## Examples
+
+  ```nexl
+  (bit/count-zeros 0b10110)    ; => 61
+  ```
+  """
+  [a]
+  (native "bit/count-zeros" a))
+
+(defn bit/leading-zeros
+  """
+  Return the number of leading zero bits.
+
+  ## Examples
+
+  ```nexl
+  (bit/leading-zeros 1)    ; => 63
+  ```
+  """
+  [a]
+  (native "bit/leading-zeros" a))
+
+(defn bit/trailing-zeros
+  """
+  Return the number of trailing zero bits.
+
+  ## Examples
+
+  ```nexl
+  (bit/trailing-zeros 8)    ; => 3
+  ```
+  """
+  [a]
+  (native "bit/trailing-zeros" a))
+
+(defn bit/rotate-left
+  """
+  Rotate bits left by `n` positions.
+
+  ## Examples
+
+  ```nexl
+  (bit/rotate-left 1 1)    ; => 2
+  ```
+  """
+  [a n]
+  (native "bit/rotate-left" a n))
+
+(defn bit/rotate-right
+  """
+  Rotate bits right by `n` positions.
+
+  ## Examples
+
+  ```nexl
+  (bit/rotate-right 2 1)    ; => 1
+  ```
+  """
+  [a n]
+  (native "bit/rotate-right" a n))
+
+(defn bit/test
+  """
+  Return true if bit at position `pos` is set (1).
+  Position 0 is the least significant bit.
+
+  ## Examples
+
+  ```nexl
+  (bit/test 0b1010 1)    ; => true
+  (bit/test 0b1010 0)    ; => false
+  ```
+  """
+  [a pos]
+  (native "bit/test" a pos))
+
+(defn bit/set
+  """
+  Return `a` with bit at position `pos` set to 1.
+
+  ## Examples
+
+  ```nexl
+  (bit/set 0b1000 0)    ; => 0b1001
+  ```
+  """
+  [a pos]
+  (native "bit/set" a pos))
+
+(defn bit/clear
+  """
+  Return `a` with bit at position `pos` cleared to 0.
+
+  ## Examples
+
+  ```nexl
+  (bit/clear 0b1111 2)    ; => 0b1011
+  ```
+  """
+  [a pos]
+  (native "bit/clear" a pos))
+
+(defn bit/toggle
+  """
+  Return `a` with bit at position `pos` flipped.
+
+  ## Examples
+
+  ```nexl
+  (bit/toggle 0b1010 0)    ; => 0b1011
+  (bit/toggle 0b1010 1)    ; => 0b1000
+  ```
+  """
+  [a pos]
+  (native "bit/toggle" a pos))

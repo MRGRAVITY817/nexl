@@ -185,6 +185,9 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("close", close_fn),
         ("execute", execute_fn),
         ("query", query_fn),
+        ("begin-transaction", begin_transaction_fn),
+        ("commit-transaction", commit_transaction_fn),
+        ("rollback-transaction", rollback_transaction_fn),
     ]
 }
 
@@ -289,6 +292,72 @@ fn query_fn(args: &[Value]) -> Result<Value, String> {
             args[1].type_name(),
             args[2].type_name()
         )),
+    }
+}
+
+/// `(db/begin-transaction db)` → `(Result Unit Str)` — start a transaction.
+fn begin_transaction_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [db_handle] => {
+            let id = extract_id(db_handle)?;
+            let result = with_conn(id, |conn| {
+                conn.execute_batch("BEGIN").map_err(|e| {
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error { code: rusqlite::ffi::ErrorCode::Unknown, extended_code: 0 },
+                        Some(e.to_string()),
+                    )
+                })
+            });
+            match result {
+                Ok(()) => Ok(ok_val(Value::Unit)),
+                Err(e) => Ok(err_val(&e)),
+            }
+        }
+        _ => Err(format!("`db/begin-transaction` requires 1 argument (Db), got {}", args.len())),
+    }
+}
+
+/// `(db/commit-transaction db)` → `(Result Unit Str)` — commit the current transaction.
+fn commit_transaction_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [db_handle] => {
+            let id = extract_id(db_handle)?;
+            let result = with_conn(id, |conn| {
+                conn.execute_batch("COMMIT").map_err(|e| {
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error { code: rusqlite::ffi::ErrorCode::Unknown, extended_code: 0 },
+                        Some(e.to_string()),
+                    )
+                })
+            });
+            match result {
+                Ok(()) => Ok(ok_val(Value::Unit)),
+                Err(e) => Ok(err_val(&e)),
+            }
+        }
+        _ => Err(format!("`db/commit-transaction` requires 1 argument (Db), got {}", args.len())),
+    }
+}
+
+/// `(db/rollback-transaction db)` → `(Result Unit Str)` — rollback the current transaction.
+fn rollback_transaction_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [db_handle] => {
+            let id = extract_id(db_handle)?;
+            let result = with_conn(id, |conn| {
+                conn.execute_batch("ROLLBACK").map_err(|e| {
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error { code: rusqlite::ffi::ErrorCode::Unknown, extended_code: 0 },
+                        Some(e.to_string()),
+                    )
+                })
+            });
+            match result {
+                Ok(()) => Ok(ok_val(Value::Unit)),
+                Err(e) => Ok(err_val(&e)),
+            }
+        }
+        _ => Err(format!("`db/rollback-transaction` requires 1 argument (Db), got {}", args.len())),
     }
 }
 

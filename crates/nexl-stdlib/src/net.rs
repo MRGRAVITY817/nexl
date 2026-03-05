@@ -118,6 +118,33 @@ pub(crate) fn http_post(url: &str, body: &str) -> Result<String, String> {
     Ok(strip_headers(&response).to_string())
 }
 
+/// Perform a blocking HTTP/1.0 request with a given method and optional body.
+pub(crate) fn http_request(method: &str, url: &str, body: &str) -> Result<String, String> {
+    let (host, port, path) = parse_http_url(url)?;
+    let addr = format!("{host}:{port}");
+    let mut stream = TcpStream::connect(&addr)
+        .map_err(|e| format!("`http/{method}` connect to {addr} failed: {e}"))?;
+
+    let request = if body.is_empty() {
+        format!("{method} {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+    } else {
+        format!(
+            "{method} {path} HTTP/1.0\r\nHost: {host}\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    };
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("`http/{method}` send failed: {e}"))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|e| format!("`http/{method}` receive failed: {e}"))?;
+
+    Ok(strip_headers(&response).to_string())
+}
+
 // ─── Stdlib function wrappers ─────────────────────────────────────────────────
 
 /// `(net/get url)` — HTTP GET request, returns response body as Str.

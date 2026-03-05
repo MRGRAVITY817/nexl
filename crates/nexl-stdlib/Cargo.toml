@@ -9,3 +9,15 @@ nexl-runtime = { path = "../nexl-runtime" }
 getrandom = "0.2"
 regex = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
+url = "2"
+csv = "1"
+toml = "0.8"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4", "v7"] }
+sha2 = "0.10"
+hmac = "0.12"
+blake3 = "1"
+pbkdf2 = "0.12"
+sha1 = "0.10"
+hex = "0.4"
+chrono = "0.4"

@@ -27,11 +27,18 @@ pub fn entries() -> Vec<StdlibEntry> {
     vec![
         ("get", get_fn as fn(&[Value]) -> Result<Value, String>),
         ("post", post_fn),
+        ("put", put_fn),
+        ("patch", patch_fn),
+        ("delete", delete_fn),
+        ("head", head_fn),
+        ("request", request_fn),
         ("response", response_fn),
         ("serve", serve_fn),
         ("status", status_fn),
         ("body", body_fn),
         ("headers", headers_fn),
+        ("header", header_fn),
+        ("ok?", ok_pred),
     ]
 }
 
@@ -130,6 +137,151 @@ fn post_fn(args: &[Value]) -> Result<Value, String> {
             args[1].type_name(),
             args[2].type_name()
         )),
+    }
+}
+
+/// `(http/put url body headers)` — HTTP PUT. Returns `(Result Response Str)`.
+fn put_fn(args: &[Value]) -> Result<Value, String> {
+    sandbox::check(Capability::Net)?;
+    match args {
+        [Value::Str(url), Value::Str(req_body), Value::Map(_headers)] => {
+            let empty_headers = Value::Map(Rc::new(vec![].into()));
+            match net::http_request("PUT", url, req_body) {
+                Ok(resp) => Ok(ok_val(make_response(200, &resp, empty_headers))),
+                Err(e) => Ok(err_val(&e)),
+            }
+        }
+        _ if args.len() != 3 => Err(format!(
+            "`http/put` requires 3 arguments (url body headers), got {}",
+            args.len()
+        )),
+        _ => Err("`http/put` expected (Str Str Map)".to_string()),
+    }
+}
+
+/// `(http/patch url body headers)` — HTTP PATCH. Returns `(Result Response Str)`.
+fn patch_fn(args: &[Value]) -> Result<Value, String> {
+    sandbox::check(Capability::Net)?;
+    match args {
+        [Value::Str(url), Value::Str(req_body), Value::Map(_headers)] => {
+            let empty_headers = Value::Map(Rc::new(vec![].into()));
+            match net::http_request("PATCH", url, req_body) {
+                Ok(resp) => Ok(ok_val(make_response(200, &resp, empty_headers))),
+                Err(e) => Ok(err_val(&e)),
+            }
+        }
+        _ if args.len() != 3 => Err(format!(
+            "`http/patch` requires 3 arguments (url body headers), got {}",
+            args.len()
+        )),
+        _ => Err("`http/patch` expected (Str Str Map)".to_string()),
+    }
+}
+
+/// `(http/delete url)` — HTTP DELETE. Returns `(Result Response Str)`.
+fn delete_fn(args: &[Value]) -> Result<Value, String> {
+    sandbox::check(Capability::Net)?;
+    match args {
+        [Value::Str(url)] => {
+            let empty_headers = Value::Map(Rc::new(vec![].into()));
+            match net::http_request("DELETE", url, "") {
+                Ok(resp) => Ok(ok_val(make_response(200, &resp, empty_headers))),
+                Err(e) => Ok(err_val(&e)),
+            }
+        }
+        _ => Err(format!("`http/delete` requires 1 argument (url), got {}", args.len())),
+    }
+}
+
+/// `(http/head url)` — HTTP HEAD. Returns `(Result Response Str)`.
+fn head_fn(args: &[Value]) -> Result<Value, String> {
+    sandbox::check(Capability::Net)?;
+    match args {
+        [Value::Str(url)] => {
+            let empty_headers = Value::Map(Rc::new(vec![].into()));
+            match net::http_request("HEAD", url, "") {
+                Ok(_resp) => Ok(ok_val(make_response(200, "", empty_headers))),
+                Err(e) => Ok(err_val(&e)),
+            }
+        }
+        _ => Err(format!("`http/head` requires 1 argument (url), got {}", args.len())),
+    }
+}
+
+/// `(http/request req)` — generic HTTP request.
+///
+/// `req` is a Map: `{:method Str :url Str :headers Map :body Str}`.
+/// Returns `(Result Response Str)`.
+fn request_fn(args: &[Value]) -> Result<Value, String> {
+    sandbox::check(Capability::Net)?;
+    match args {
+        [Value::Map(m)] => {
+            let method = match map_get(m, "method") {
+                Some(Value::Str(s)) => s.to_string(),
+                _ => return Err("`http/request` requires :method Str in request map".to_string()),
+            };
+            let url_str = match map_get(m, "url") {
+                Some(Value::Str(s)) => s.to_string(),
+                _ => return Err("`http/request` requires :url Str in request map".to_string()),
+            };
+            let body_str = match map_get(m, "body") {
+                Some(Value::Str(s)) => s.to_string(),
+                None => String::new(),
+                _ => return Err("`http/request` :body must be Str".to_string()),
+            };
+            let empty_headers = Value::Map(Rc::new(vec![].into()));
+            match net::http_request(&method, &url_str, &body_str) {
+                Ok(resp) => Ok(ok_val(make_response(200, &resp, empty_headers))),
+                Err(e) => Ok(err_val(&e)),
+            }
+        }
+        _ => Err(format!("`http/request` requires 1 argument (Map), got {}", args.len())),
+    }
+}
+
+/// `(http/header resp name)` → `(Option Str)` — get a single header from a response.
+fn header_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Map(m), Value::Str(name)] => {
+            match map_get(m, "headers") {
+                Some(Value::Map(hdrs)) => {
+                    let kw_key = Value::Keyword { ns: None, name: Rc::clone(name) };
+                    let str_key = Value::Str(Rc::clone(name));
+                    let v = hdrs.get(&kw_key).or_else(|| hdrs.get(&str_key));
+                    match v {
+                        Some(val) => Ok(Value::Adt {
+                            type_name: Rc::from("Option"),
+                            ctor: Rc::from("Some"),
+                            fields: Rc::new(vec![val.clone()]),
+                        }),
+                        None => Ok(Value::Adt {
+                            type_name: Rc::from("Option"),
+                            ctor: Rc::from("None"),
+                            fields: Rc::new(vec![]),
+                        }),
+                    }
+                }
+                _ => Ok(Value::Adt {
+                    type_name: Rc::from("Option"),
+                    ctor: Rc::from("None"),
+                    fields: Rc::new(vec![]),
+                }),
+            }
+        }
+        _ => Err(format!("`http/header` requires 2 arguments (Response Str), got {}", args.len())),
+    }
+}
+
+/// `(http/ok? resp)` → `Bool` — true if status is 200-299.
+fn ok_pred(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Map(m)] => {
+            match map_get(m, "status") {
+                Some(Value::Int(status)) => Ok(Value::Bool(*status >= 200 && *status <= 299)),
+                _ => Ok(Value::Bool(false)),
+            }
+        }
+        _ => Err(format!("`http/ok?` requires 1 argument (Response), got {}", args.len())),
     }
 }
 

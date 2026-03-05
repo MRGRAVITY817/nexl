@@ -22,6 +22,7 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("require", require_fn),
         ("all", all_fn),
         ("load-dotenv", load_dotenv_fn),
+        ("set", set_fn),
     ]
 }
 
@@ -124,6 +125,26 @@ fn load_dotenv_fn(args: &[Value]) -> Result<Value, String> {
         _ => Err(format!(
             "`env/load-dotenv` requires 1 argument, got {}",
             args.len()
+        )),
+    }
+}
+
+/// `(env/set name value)` — set an environment variable. Returns `Unit`.
+fn set_fn(args: &[Value]) -> Result<Value, String> {
+    match args {
+        [Value::Str(name), Value::Str(val)] => {
+            // SAFETY: single-threaded evaluator; caller owns the env.
+            unsafe { std::env::set_var(name.as_ref(), val.as_ref()) };
+            Ok(Value::Unit)
+        }
+        _ if args.len() != 2 => Err(format!(
+            "`env/set` requires 2 arguments (Str Str), got {}",
+            args.len()
+        )),
+        _ => Err(format!(
+            "`env/set` expected (Str Str), got ({}, {})",
+            args[0].type_name(),
+            args[1].type_name()
         )),
     }
 }

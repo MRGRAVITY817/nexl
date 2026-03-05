@@ -17,6 +17,7 @@ pub fn entries() -> Vec<StdlibEntry> {
         ("encode", encode),
         ("decode", decode),
         ("pretty", pretty),
+        ("encode-sorted", encode_sorted),
     ]
 }
 
@@ -81,6 +82,12 @@ fn encode(args: &[Value]) -> Result<Value, String> {
 /// `(json/decode s)` — M24 primary name for parse, returns `(Result Value Str)`.
 fn decode(args: &[Value]) -> Result<Value, String> {
     parse(args)
+}
+
+/// `(json/encode-sorted v)` — compact JSON with map keys sorted (deterministic output).
+fn encode_sorted(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("encode-sorted", args)?;
+    Ok(Value::Str(Rc::from(value_to_json_sorted(v).as_str())))
 }
 
 /// `(json/pretty v)` — pretty-print a Nexl value as indented JSON.
@@ -401,6 +408,33 @@ fn value_to_json(v: &Value) -> String {
             format!("{{{}}}", parts.join(","))
         }
         _ => "null".to_string(),
+    }
+}
+
+/// Like `value_to_json` but sorts map keys lexicographically for deterministic output.
+fn value_to_json_sorted(v: &Value) -> String {
+    match v {
+        Value::Map(entries) => {
+            let mut parts: Vec<(String, String)> = entries
+                .iter()
+                .map(|(k, v)| {
+                    let key_str = match k {
+                        Value::Keyword { name, .. } => name.to_string(),
+                        Value::Str(s) => s.to_string(),
+                        other => other.to_string(),
+                    };
+                    (key_str.clone(), format!("\"{}\":{}", key_str, value_to_json_sorted(v)))
+                })
+                .collect();
+            parts.sort_by(|a, b| a.0.cmp(&b.0));
+            let sorted: Vec<String> = parts.into_iter().map(|(_, v)| v).collect();
+            format!("{{{}}}", sorted.join(","))
+        }
+        Value::Vec(items) => {
+            let parts: Vec<String> = items.iter().map(value_to_json_sorted).collect();
+            format!("[{}]", parts.join(","))
+        }
+        other => value_to_json(other),
     }
 }
 

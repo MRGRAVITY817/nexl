@@ -5,7 +5,14 @@
 //! environment as qualified module functions.
 
 pub mod async_mod;
+pub mod base64_mod;
+pub mod bit;
 pub mod char;
+pub mod csv_mod;
+pub mod path_mod;
+pub mod toml_mod;
+pub mod uri_mod;
+pub mod uuid_mod;
 pub mod conv;
 pub mod core;
 pub mod crypto;
@@ -66,6 +73,13 @@ pub fn nexl_declaration_sources() -> &'static [(&'static str, &'static str)] {
         ("result",   include_str!("../nexl/result_impl.nx")),
         ("vec",      include_str!("../nexl/vec.nx")),
         ("char",     include_str!("../nexl/char.nx")),
+        ("bit",      include_str!("../nexl/bit.nx")),
+        ("path",     include_str!("../nexl/path.nx")),
+        ("base64",   include_str!("../nexl/base64.nx")),
+        ("uuid",     include_str!("../nexl/uuid.nx")),
+        ("uri",      include_str!("../nexl/uri.nx")),
+        ("csv",      include_str!("../nexl/csv.nx")),
+        ("toml",     include_str!("../nexl/toml.nx")),
     ]
 }
 
@@ -117,6 +131,13 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("set", set::entries()),
         ("char", char::entries()),
         ("regex", regex_mod::entries()),
+        ("bit", bit::entries()),
+        ("path", path_mod::entries()),
+        ("base64", base64_mod::entries()),
+        ("uuid", uuid_mod::entries()),
+        ("uri", uri_mod::entries()),
+        ("csv", csv_mod::entries()),
+        ("toml", toml_mod::entries()),
     ]
 }
 
@@ -172,7 +193,7 @@ mod tests {
             vec![
                 "core", "str", "math", "conv", "io", "json", "http", "db", "env", "time",
                 "random", "crypto", "log", "test", "net", "async", "sys", "gen", "vec", "map",
-                "set", "char", "regex"
+                "set", "char", "regex", "bit", "path", "base64", "uuid", "uri", "csv", "toml"
             ]
         );
     }
