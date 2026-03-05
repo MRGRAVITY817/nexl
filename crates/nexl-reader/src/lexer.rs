@@ -96,6 +96,14 @@ pub enum TokenKind {
         text: String,
         text_span: Span,
     },
+    /// Regex literal `#"pattern"` — raw content, desugars to `(regex/new "pattern")`.
+    ///
+    /// Backslashes are treated literally (no escape processing), so `#"\d+"` gives
+    /// the pattern `\d+` directly. Close with an unescaped `"`.
+    RegexLiteral {
+        pattern: String,
+        text_span: Span,
+    },
     /// Line comment — text from `;` to end of line, not including the newline.
     ///
     /// Preserved as a token so the reader can attach comments to adjacent
@@ -276,6 +284,16 @@ impl<'src> Lexer<'src> {
                     return Ok(Token {
                         kind: TokenKind::SetOpen,
                         span: self.span_from(start),
+                    });
+                }
+                Some('"') => {
+                    // Regex literal: `#"pattern"` — raw content, no escape processing.
+                    self.advance(); // consume opening `"`
+                    let (pattern, text_span) = self.read_dispatch_text('"', '"', start)?;
+                    let span = self.span_from(start);
+                    return Ok(Token {
+                        kind: TokenKind::RegexLiteral { pattern, text_span },
+                        span,
                     });
                 }
                 Some(next) if is_symbol_start(next) => {

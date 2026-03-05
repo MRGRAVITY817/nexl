@@ -7,4 +7,5 @@ license.workspace = true
 [dependencies]
 nexl-runtime = { path = "../nexl-runtime" }
 getrandom = "0.2"
+regex = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }

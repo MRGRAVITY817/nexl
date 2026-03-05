@@ -320,6 +320,16 @@ impl<'src> Reader<'src> {
                     tok.span,
                 ))
             }
+            // Regex literal `#"pattern"` desugars to `(regex/new "pattern")`.
+            // The pattern string is raw: `#"\d+"` yields the regex pattern `\d+`.
+            TokenKind::RegexLiteral { pattern, text_span: _ } => {
+                let head = Node::atom(
+                    Atom::Symbol { ns: Some("regex".into()), name: "new".into() },
+                    tok.span,
+                );
+                let pat_node = Node::atom(Atom::Str(pattern), tok.span);
+                Ok(Node::new(NodeKind::List(vec![head, pat_node]), tok.span))
+            }
             // Operator/separator tokens — treated as symbol atoms so they can
             // appear as elements inside collections (e.g. `[x : Int]`, `| Red`).
             TokenKind::Dot => Ok(Node::atom(

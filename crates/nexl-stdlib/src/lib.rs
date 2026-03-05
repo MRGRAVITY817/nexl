@@ -20,6 +20,7 @@ pub mod map;
 pub mod math;
 pub mod net;
 pub mod random;
+pub mod regex_mod;
 pub mod set;
 pub mod str;
 pub mod sys;
@@ -115,6 +116,7 @@ pub fn all_modules() -> Vec<(&'static str, Vec<StdlibEntry>)> {
         ("map", map::entries()),
         ("set", set::entries()),
         ("char", char::entries()),
+        ("regex", regex_mod::entries()),
     ]
 }
 
@@ -170,7 +172,7 @@ mod tests {
             vec![
                 "core", "str", "math", "conv", "io", "json", "http", "db", "env", "time",
                 "random", "crypto", "log", "test", "net", "async", "sys", "gen", "vec", "map",
-                "set", "char"
+                "set", "char", "regex"
             ]
         );
     }

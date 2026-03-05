@@ -8102,6 +8102,115 @@ mod tests {
         );
     }
 
+    // ── regex module ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_regex_new_valid() {
+        // Use \\d in Nexl string so the reader sees \d (a valid regex pattern)
+        let result = eval_str(r#"(regex/new "\\d+")"#).unwrap();
+        assert!(matches!(result, Value::Adt { ref ctor, .. } if ctor.as_ref() == "Ok"));
+    }
+
+    #[test]
+    fn test_regex_new_invalid() {
+        let result = eval_str(r#"(regex/new "[invalid")"#).unwrap();
+        assert!(matches!(result, Value::Adt { ref ctor, .. } if ctor.as_ref() == "Err"));
+    }
+
+    #[test]
+    fn test_regex_matches_true() {
+        let result = eval_str(
+            r#"(match (regex/new "\\d+") (Ok rx) (regex/matches? rx "42") _ false)"#
+        ).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_regex_matches_false() {
+        let result = eval_str(
+            r#"(match (regex/new "^\\d+$") (Ok rx) (regex/matches? rx "abc") _ false)"#
+        ).unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_regex_find_some() {
+        let result = eval_str(
+            r#"(match (regex/new "\\d+") (Ok rx) (option/some? (regex/find rx "abc123")) _ false)"#
+        ).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_regex_find_none() {
+        let result = eval_str(
+            r#"(match (regex/new "\\d+") (Ok rx) (option/some? (regex/find rx "abc")) _ false)"#
+        ).unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_regex_find_all_count() {
+        let result = eval_str(
+            r#"(match (regex/new "\\d+") (Ok rx) (count (regex/find-all rx "1 22 333")) _ 0)"#
+        ).unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_regex_replace() {
+        let result = eval_str(
+            r#"(match (regex/new "\\d+") (Ok rx) (regex/replace rx "a1b2c3" "N") _ "")"#
+        ).unwrap();
+        assert_eq!(result, Value::Str(std::rc::Rc::from("aNbNcN")));
+    }
+
+    #[test]
+    fn test_regex_replace_first() {
+        let result = eval_str(
+            r#"(match (regex/new "\\d+") (Ok rx) (regex/replace-first rx "a1b2c3" "N") _ "")"#
+        ).unwrap();
+        assert_eq!(result, Value::Str(std::rc::Rc::from("aNb2c3")));
+    }
+
+    #[test]
+    fn test_regex_split() {
+        let result = eval_str(
+            r#"(match (regex/new ",") (Ok rx) (regex/split rx "a,b,c") _ [])"#
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Str(std::rc::Rc::from("a")),
+                Value::Str(std::rc::Rc::from("b")),
+                Value::Str(std::rc::Rc::from("c")),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_regex_escape() {
+        let result = eval_str(r#"(regex/escape "1+1=2")"#).unwrap();
+        assert_eq!(result, Value::Str(std::rc::Rc::from(r"1\+1=2")));
+    }
+
+    #[test]
+    fn test_regex_captures_some() {
+        let result = eval_str(
+            r#"(match (regex/new "(\\d+)-(\\d+)") (Ok rx)
+                 (option/some? (regex/captures rx "2024-01"))
+               _ false)"#
+        ).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_regex_literal_syntax() {
+        // #"\d+" uses the regex literal — raw content, no double-escaping needed
+        let result = eval_str(r#"(match #"\d+" (Ok rx) (regex/matches? rx "42") _ false)"#).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
     // ── iter module ───────────────────────────────────────────────────────────
 
     fn done_val() -> Value {

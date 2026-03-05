@@ -72,12 +72,12 @@ Reference: `docs/stdlib-spec.md`
 
 ## `regex` Module (New — Rust)
 
-- [ ] **Regex functions** — ~9 functions
+- [x] **Regex functions** — ~9 functions
   - `new`, `matches?`, `find`, `find-all`, `replace`, `replace-first`, `split`, `captures`, `escape`
   - Match type: `{:start Int :end Int :text Str}`
   - Backed by Rust `regex` crate (linear-time, Unicode)
 
-- [ ] **Regex literal syntax `#"pattern"`** — lexer + reader
+- [x] **Regex literal syntax `#"pattern"`** — lexer + reader
   - `#"` opens regex literal, `"` closes
   - No double-escaping needed: `#"\d+"` instead of `"\\d+"`
   - Desugars to `(regex/new "...")` in AST
