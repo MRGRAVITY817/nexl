@@ -8101,4 +8101,447 @@ mod tests {
             Value::Vec(std::rc::Rc::new(vec![Value::Int(2), Value::Int(4), Value::Int(6)]))
         );
     }
+
+    // ── iter module ───────────────────────────────────────────────────────────
+
+    fn done_val() -> Value {
+        Value::Adt {
+            type_name: std::rc::Rc::from("Iter"),
+            ctor: std::rc::Rc::from("Done"),
+            fields: std::rc::Rc::new(vec![]),
+        }
+    }
+
+    #[test]
+    fn test_iter_empty_is_done() {
+        // (iter/empty) => Done
+        assert_eq!(eval_str("(iter/empty)").unwrap(), done_val());
+    }
+
+    #[test]
+    fn test_iter_singleton_to_vec() {
+        // (iter/to-vec (iter/singleton 42)) => [42]
+        let result = eval_str("(iter/to-vec (iter/singleton 42))").unwrap();
+        assert_eq!(result, Value::Vec(std::rc::Rc::new(vec![Value::Int(42)])));
+    }
+
+    #[test]
+    fn test_iter_from_vec_roundtrip() {
+        // (iter/to-vec (iter/from-vec [1 2 3])) => [1 2 3]
+        let result = eval_str("(iter/to-vec (iter/from-vec [1 2 3]))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_from_vec_empty() {
+        // (iter/to-vec (iter/from-vec [])) => []
+        let result = eval_str("(iter/to-vec (iter/from-vec []))").unwrap();
+        assert_eq!(result, Value::Vec(std::rc::Rc::new(vec![])));
+    }
+
+    #[test]
+    fn test_iter_range_basic() {
+        // (iter/to-vec (iter/range 5)) => [0 1 2 3 4]
+        let result = eval_str("(iter/to-vec (iter/range 5))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_range_from() {
+        // (iter/to-vec (iter/range-from 3 6)) => [3 4 5]
+        let result = eval_str("(iter/to-vec (iter/range-from 3 6))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Int(4), Value::Int(5)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_range_empty() {
+        // (iter/to-vec (iter/range 0)) => []
+        let result = eval_str("(iter/to-vec (iter/range 0))").unwrap();
+        assert_eq!(result, Value::Vec(std::rc::Rc::new(vec![])));
+    }
+
+    #[test]
+    fn test_iter_take() {
+        // (iter/to-vec (iter/take 3 (iter/repeat 7))) => [7 7 7]
+        let result = eval_str("(iter/to-vec (iter/take 3 (iter/repeat 7)))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(7), Value::Int(7), Value::Int(7)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_take_less_than_available() {
+        // (iter/to-vec (iter/take 2 (iter/from-vec [1 2 3 4]))) => [1 2]
+        let result = eval_str("(iter/to-vec (iter/take 2 (iter/from-vec [1 2 3 4])))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_drop() {
+        // (iter/to-vec (iter/drop 2 (iter/from-vec [1 2 3 4]))) => [3 4]
+        let result = eval_str("(iter/to-vec (iter/drop 2 (iter/from-vec [1 2 3 4])))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Int(4)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_map() {
+        // (iter/to-vec (iter/map (fn [x] (* x x)) (iter/from-vec [1 2 3]))) => [1 4 9]
+        let result = eval_str(
+            "(iter/to-vec (iter/map (fn [x] (* x x)) (iter/from-vec [1 2 3])))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(4), Value::Int(9)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_filter() {
+        // (iter/to-vec (iter/filter (fn [x] (= (mod x 2) 0)) (iter/range 6))) => [0 2 4]
+        let result = eval_str(
+            "(iter/to-vec (iter/filter (fn [x] (= (mod x 2) 0)) (iter/range 6)))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(0), Value::Int(2), Value::Int(4)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_take_while() {
+        // (iter/to-vec (iter/take-while (fn [x] (< x 4)) (iter/range 10))) => [0 1 2 3]
+        let result = eval_str(
+            "(iter/to-vec (iter/take-while (fn [x] (< x 4)) (iter/range 10)))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_drop_while() {
+        // (iter/to-vec (iter/drop-while (fn [x] (< x 3)) (iter/from-vec [1 2 3 4 5]))) => [3 4 5]
+        let result = eval_str(
+            "(iter/to-vec (iter/drop-while (fn [x] (< x 3)) (iter/from-vec [1 2 3 4 5])))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Int(4), Value::Int(5)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_chain() {
+        // (iter/to-vec (iter/chain (iter/from-vec [1 2]) (iter/from-vec [3 4]))) => [1 2 3 4]
+        let result = eval_str(
+            "(iter/to-vec (iter/chain (iter/from-vec [1 2]) (iter/from-vec [3 4])))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_zip() {
+        // (iter/to-vec (iter/zip (iter/from-vec [1 2 3]) (iter/from-vec ["a" "b" "c"]))) => [[1 "a"] [2 "b"] [3 "c"]]
+        let result = eval_str(
+            r#"(iter/to-vec (iter/zip (iter/from-vec [1 2 3]) (iter/from-vec ["a" "b" "c"])))"#
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Str(std::rc::Rc::from("a"))])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(2), Value::Str(std::rc::Rc::from("b"))])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Str(std::rc::Rc::from("c"))])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_zip_stops_at_shorter() {
+        // zip of [1 2 3] and [10 20] => [[1 10] [2 20]]
+        let result = eval_str(
+            "(iter/to-vec (iter/zip (iter/from-vec [1 2 3]) (iter/from-vec [10 20])))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(10)])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(2), Value::Int(20)])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_enumerate() {
+        // (iter/to-vec (iter/enumerate (iter/from-vec ["a" "b" "c"]))) => [[0 "a"] [1 "b"] [2 "c"]]
+        let result = eval_str(
+            r#"(iter/to-vec (iter/enumerate (iter/from-vec ["a" "b" "c"])))"#
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(0), Value::Str(std::rc::Rc::from("a"))])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Str(std::rc::Rc::from("b"))])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(2), Value::Str(std::rc::Rc::from("c"))])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_flat_map() {
+        // (iter/to-vec (iter/flat-map (fn [x] (iter/from-vec [x (* x 2)])) (iter/from-vec [1 2 3])))
+        // => [1 2 2 4 3 6]
+        let result = eval_str(
+            "(iter/to-vec (iter/flat-map (fn [x] (iter/from-vec [x (* x 2)])) (iter/from-vec [1 2 3])))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(1), Value::Int(2),
+                Value::Int(2), Value::Int(4),
+                Value::Int(3), Value::Int(6),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_chunk() {
+        // (iter/to-vec (iter/chunk 2 (iter/from-vec [1 2 3 4 5]))) => [[1 2] [3 4] [5]]
+        let result = eval_str(
+            "(iter/to-vec (iter/chunk 2 (iter/from-vec [1 2 3 4 5])))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(1), Value::Int(2)])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Int(4)])),
+                Value::Vec(std::rc::Rc::new(vec![Value::Int(5)])),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_reduce() {
+        // (iter/reduce + 0 (iter/range 5)) => 10
+        let result = eval_str("(iter/reduce + 0 (iter/range 5))").unwrap();
+        assert_eq!(result, Value::Int(10));
+    }
+
+    #[test]
+    fn test_iter_count() {
+        // (iter/count (iter/from-vec [1 2 3 4 5])) => 5
+        let result = eval_str("(iter/count (iter/from-vec [1 2 3 4 5]))").unwrap();
+        assert_eq!(result, Value::Int(5));
+    }
+
+    #[test]
+    fn test_iter_find_some() {
+        // (iter/find (fn [x] (= (mod x 2) 0)) (iter/range 10)) => (Some 0)
+        let result = eval_str("(iter/find (fn [x] (= (mod x 2) 0)) (iter/range 10))").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Int(0)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_iter_find_none() {
+        // (iter/find (fn [x] (> x 100)) (iter/range 5)) => None
+        let result = eval_str("(iter/find (fn [x] (> x 100)) (iter/range 5))").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("None"),
+                fields: std::rc::Rc::new(vec![]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_iter_any_true() {
+        // (iter/any? (fn [x] (= (mod x 2) 0)) (iter/range 5)) => true
+        let result = eval_str("(iter/any? (fn [x] (= (mod x 2) 0)) (iter/range 5))").unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_iter_any_false() {
+        // no even numbers in [1 3 5] => false
+        let result = eval_str("(iter/any? (fn [x] (= (mod x 2) 0)) (iter/from-vec [1 3 5]))").unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_iter_all_true() {
+        // all even in [2 4 6] => true
+        let result = eval_str("(iter/all? (fn [x] (= (mod x 2) 0)) (iter/from-vec [2 4 6]))").unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_iter_all_false() {
+        // 3 is odd in [2 3 6] => false
+        let result = eval_str("(iter/all? (fn [x] (= (mod x 2) 0)) (iter/from-vec [2 3 6]))").unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn test_iter_nth() {
+        // (iter/nth 2 (iter/from-vec [10 20 30 40])) => (Some 30)
+        let result = eval_str("(iter/nth 2 (iter/from-vec [10 20 30 40]))").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Int(30)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_iter_nth_out_of_bounds() {
+        // (iter/nth 10 (iter/from-vec [1 2 3])) => None
+        let result = eval_str("(iter/nth 10 (iter/from-vec [1 2 3]))").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("None"),
+                fields: std::rc::Rc::new(vec![]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_iter_first() {
+        // (iter/first (iter/from-vec [42 99])) => (Some 42)
+        let result = eval_str("(iter/first (iter/from-vec [42 99]))").unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Int(42)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_iter_to_set() {
+        // (iter/to-set (iter/from-vec [1 2 1 3])) — deduplicates
+        let result = eval_str("(count (iter/to-set (iter/from-vec [1 2 1 3])))").unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_iter_to_map() {
+        // (iter/to-map (iter/from-vec [[:a 1] [:b 2]])) => {:a 1 :b 2}
+        let result = eval_str(r#"(get (iter/to-map (iter/from-vec [[:a 1] [:b 2]])) :a)"#).unwrap();
+        assert_eq!(
+            result,
+            Value::Adt {
+                type_name: std::rc::Rc::from("Option"),
+                ctor: std::rc::Rc::from("Some"),
+                fields: std::rc::Rc::new(vec![Value::Int(1)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_iter_iterate() {
+        // (iter/to-vec (iter/take 5 (iter/iterate (fn [x] (* x 2)) 1))) => [1 2 4 8 16]
+        let result = eval_str(
+            "(iter/to-vec (iter/take 5 (iter/iterate (fn [x] (* x 2)) 1)))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(1), Value::Int(2), Value::Int(4), Value::Int(8), Value::Int(16)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_unfold() {
+        // Countdown: unfold from 3 to 1
+        // (iter/to-vec (iter/unfold (fn [n] (if (= n 0) None (Some [n (- n 1)]))) 3)) => [3 2 1]
+        let result = eval_str(
+            "(iter/to-vec (iter/unfold (fn [n] (if (= n 0) None (Some [n (- n 1)]))) 3))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![Value::Int(3), Value::Int(2), Value::Int(1)]))
+        );
+    }
+
+    #[test]
+    fn test_iter_from_map() {
+        // (iter/count (iter/from-map {:a 1 :b 2 :c 3})) => 3
+        let result = eval_str("(iter/count (iter/from-map {:a 1 :b 2 :c 3}))").unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_iter_from_set() {
+        // (iter/count (iter/from-set #{1 2 3})) => 3
+        let result = eval_str("(iter/count (iter/from-set #{1 2 3}))").unwrap();
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_iter_range_by_negative_step() {
+        // (iter/to-vec (iter/range-by 5 0 -1)) => [5 4 3 2 1]
+        let result = eval_str("(iter/to-vec (iter/range-by 5 0 -1))").unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(5), Value::Int(4), Value::Int(3), Value::Int(2), Value::Int(1)
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_iter_lazy_infinite_take() {
+        // (iter/to-vec (iter/take 4 (iter/range-by 0 1000000 1))) only computes 4 elements
+        let result = eval_str(
+            "(iter/to-vec (iter/take 4 (iter/range-by 0 1000000 1)))"
+        ).unwrap();
+        assert_eq!(
+            result,
+            Value::Vec(std::rc::Rc::new(vec![
+                Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)
+            ]))
+        );
+    }
 }

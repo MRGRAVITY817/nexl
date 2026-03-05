@@ -47,16 +47,11 @@ Reference: `docs/stdlib-spec.md`
 
 ## `iter` Module (New — Nexl)
 
-- [ ] **Iter ADT & Iterable protocol** — implement spec §5.12
-  - `(deftype Iter [a] | Done | (Yield a (Fn [] -> (Iter a))))`
-  - `(defprotocol Iterable [a] (into-iter : (Fn [Self] -> (Iter a))))`
-  - Built-in `Iterable` impls for Vec, Map, Set, Str
-
-- [ ] **Iter constructors** — `from-vec`, `from-map`, `range`, `repeat`, `iterate`, `unfold`, `empty`
-
-- [ ] **Iter transforms** — `map`, `filter`, `take`, `drop`, `take-while`, `drop-while`, `flat-map`, `chain`, `zip`, `enumerate`, `chunk`
-
-- [ ] **Iter consumers** — `to-vec`, `to-map`, `to-set`, `reduce`, `find`, `any?`, `all?`, `count`, `nth`
+- [x] **Iter ADT** — `(deftype Iter [a] | Done | (Yield a (Fn [] -> (Iter a))))` via deftype
+- [x] **Iter constructors** — `empty`, `singleton`, `from-vec`, `from-map`, `from-set`, `range`, `range-from`, `range-by`, `repeat`, `iterate`, `unfold`
+- [x] **Iter transforms** — `map`, `filter`, `take`, `drop`, `take-while`, `drop-while`, `flat-map`, `chain`, `zip`, `enumerate`, `chunk`
+- [x] **Iter consumers** — `to-vec`, `to-map`, `to-set`, `reduce`, `find`, `any?`, `all?`, `count`, `nth`, `first`
+- [x] **Bug fix**: module-qualified recursive closures now resolve correctly (eval_apply adds self to module alias)
 
 ## `char` Module (New — Rust)
 
@@ -72,7 +67,7 @@ Reference: `docs/stdlib-spec.md`
 - [x] **`ok->` / `ok->>`** — Result chaining macros
   - Thread-first/last, short-circuit on Err; threads whole Result via let+match
 
-- [ ] **`cond->` / `cond->>`** — Conditional threading macros
+- [x] **`cond->` / `cond->>`** — Conditional threading macros
   - Apply steps only when guard condition is true
 
 ## `regex` Module (New — Rust)

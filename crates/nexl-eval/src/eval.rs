@@ -1851,8 +1851,16 @@ fn eval_apply<'a>(
 
     // Named functions can call themselves: bind the function under its own name
     // so recursive calls resolve correctly regardless of capture-snapshot timing.
+    // For qualified names like "iter/from-vec", also register in the module alias
+    // so inner closures can resolve the qualified symbol (iter/from-vec) via
+    // get_qualified(), which only looks in module aliases, not plain bindings.
     if let Some(self_name) = &func.name {
         call_env.define(self_name.clone(), Value::Function(Rc::clone(&func)));
+        if let Some(slash) = self_name.find('/') {
+            let alias = &self_name[..slash];
+            let name = &self_name[slash + 1..];
+            call_env.add_to_module_alias(alias, name, Value::Function(Rc::clone(&func)));
+        }
     }
 
     // bind required params
@@ -1967,10 +1975,15 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
         call_env.define_module_alias(alias.clone(), Rc::clone(exports));
     }
 
-    // Named functions can call themselves: bind the function under its own name
-    // so recursive calls resolve correctly regardless of capture-snapshot timing.
+    // Named functions can call themselves: bind the function under its own name.
+    // Also register in module alias for qualified self-references (e.g. iter/from-vec).
     if let Some(self_name) = &func.name {
         call_env.define(self_name.clone(), callee.clone());
+        if let Some(slash) = self_name.find('/') {
+            let alias = &self_name[..slash];
+            let name = &self_name[slash + 1..];
+            call_env.add_to_module_alias(alias, name, callee.clone());
+        }
     }
 
     for (idx, param) in func.params.iter().enumerate() {

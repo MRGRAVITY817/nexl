@@ -83,6 +83,7 @@ pub fn nexl_stdlib_sources() -> &'static [(&'static str, &'static str)] {
         ("vec",    include_str!("../nexl/vec_impl.nx")),
         ("map",    include_str!("../nexl/map_impl.nx")),
         ("set",    include_str!("../nexl/set_impl.nx")),
+        ("iter",   include_str!("../nexl/iter_impl.nx")),
     ]
 }
 

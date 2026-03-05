@@ -1,0 +1,250 @@
+;; stdlib/iter — Lazy iterator ADT and operations.
+;;
+;; The `Iter` ADT is defined as:
+;;   Done             — empty/exhausted iterator
+;;   (Yield val thunk) — yields `val`; `thunk` is (fn [] -> Iter) for the rest
+;;
+;; All transforms are lazy: they return a new Iter whose steps are computed
+;; only when forced (by a consumer such as `iter/to-vec` or `iter/reduce`).
+;;
+;; IMPORTANT: In patterns, nullary ADT constructors must be written as lists:
+;;   `(Done)` not `Done`, `(None)` not `None` — bare symbols become Var bindings.
+
+;; ─── ADT registration ────────────────────────────────────────────────────────
+;; Registers `Done` (nullary) and `Yield` (2-ary) constructors globally.
+(deftype Iter [a] | Done | (Yield a (Fn [] -> (Iter a))))
+
+;; ─── Constructors ─────────────────────────────────────────────────────────────
+
+(defn iter/empty [] Done)
+
+(defn iter/singleton [x]
+  ;; Single-element iterator.
+  (Yield x (fn [] Done)))
+
+(defn iter/from-vec [xs]
+  ;; Convert a Vec to a lazy Iter (head/tail via first/rest).
+  (match (first xs)
+    (None) Done
+    (Some v) (Yield v (fn [] (iter/from-vec (rest xs))))))
+
+(defn iter/from-map [m]
+  ;; Convert a Map to a lazy Iter of [key value] pairs.
+  (iter/from-vec (entries m)))
+
+(defn iter/from-set [s]
+  ;; Convert a Set to a lazy Iter of its elements.
+  (iter/from-vec (set/to-vec s)))
+
+(defn iter/range-step [cur end step]
+  ;; Internal: lazy range with step.
+  (if (if (> step 0) (>= cur end) (<= cur end))
+    Done
+    (Yield cur (fn [] (iter/range-step (+ cur step) end step)))))
+
+(defn iter/range [end]
+  ;; Lazy range [0, end), step 1.
+  (iter/range-step 0 end 1))
+
+(defn iter/range-from [start end]
+  ;; Lazy range [start, end), step 1.
+  (iter/range-step start end 1))
+
+(defn iter/range-by [start end step]
+  ;; Lazy range [start, end) with given step (positive or negative).
+  (iter/range-step start end step))
+
+(defn iter/repeat [x]
+  ;; Infinite iterator of x. Use iter/take to limit.
+  (Yield x (fn [] (iter/repeat x))))
+
+(defn iter/iterate [f x]
+  ;; Infinite iterator: x, (f x), (f (f x)), ...  Use iter/take to limit.
+  (Yield x (fn [] (iter/iterate f (f x)))))
+
+(defn iter/unfold [f init]
+  ;; Generate a Iter from a seed. f takes the state and returns (None) to stop
+  ;; or (Some [value next-state]) to yield the next element.
+  (match (f init)
+    (None) Done
+    (Some pair)
+    (let [v    (match (get pair 0) (Some x) x _ (panic "iter/unfold: expected [val next]"))
+          next (match (get pair 1) (Some x) x _ (panic "iter/unfold: expected [val next]"))]
+      (Yield v (fn [] (iter/unfold f next))))))
+
+;; ─── Transforms ───────────────────────────────────────────────────────────────
+
+(defn iter/map [f it]
+  ;; Apply f to each element, returning a new lazy Iter.
+  (match it
+    (Done) Done
+    (Yield v thunk) (Yield (f v) (fn [] (iter/map f (thunk))))))
+
+(defn iter/filter [pred it]
+  ;; Keep elements matching pred. Skips non-matching elements eagerly.
+  (match it
+    (Done) Done
+    (Yield v thunk)
+    (if (pred v)
+      (Yield v (fn [] (iter/filter pred (thunk))))
+      (iter/filter pred (thunk)))))
+
+(defn iter/take [n it]
+  ;; Yield the first n elements; stop at Done if exhausted sooner.
+  (if (<= n 0)
+    Done
+    (match it
+      (Done) Done
+      (Yield v thunk) (Yield v (fn [] (iter/take (- n 1) (thunk)))))))
+
+(defn iter/drop [n it]
+  ;; Skip the first n elements eagerly, then yield the rest lazily.
+  (if (<= n 0)
+    it
+    (match it
+      (Done) Done
+      (Yield _ thunk) (iter/drop (- n 1) (thunk)))))
+
+(defn iter/take-while [pred it]
+  ;; Yield elements while pred is true; stop at first false or Done.
+  (match it
+    (Done) Done
+    (Yield v thunk)
+    (if (pred v)
+      (Yield v (fn [] (iter/take-while pred (thunk))))
+      Done)))
+
+(defn iter/drop-while [pred it]
+  ;; Skip elements while pred is true; yield the rest lazily.
+  (match it
+    (Done) Done
+    (Yield v thunk)
+    (if (pred v)
+      (iter/drop-while pred (thunk))
+      it)))
+
+(defn iter/chain [it1 it2]
+  ;; Concatenate two iters: yield all of it1, then all of it2.
+  (match it1
+    (Done) it2
+    (Yield v thunk) (Yield v (fn [] (iter/chain (thunk) it2)))))
+
+(defn iter/zip [it1 it2]
+  ;; Pair corresponding elements; stops when the shorter iter is exhausted.
+  (match it1
+    (Done) Done
+    (Yield v1 thunk1)
+    (match it2
+      (Done) Done
+      (Yield v2 thunk2) (Yield [v1 v2] (fn [] (iter/zip (thunk1) (thunk2)))))))
+
+(defn iter/enumerate-from [idx it]
+  ;; Internal: pair each element with its index, starting at idx.
+  (match it
+    (Done) Done
+    (Yield v thunk) (Yield [idx v] (fn [] (iter/enumerate-from (+ idx 1) (thunk))))))
+
+(defn iter/enumerate [it]
+  ;; Pair each element with its 0-based index: yields [0 a] [1 b] ...
+  (iter/enumerate-from 0 it))
+
+(defn iter/flat-map [f it]
+  ;; Apply f to each element (f must return an Iter), then flatten the results.
+  (match it
+    (Done) Done
+    (Yield v thunk) (iter/chain (f v) (iter/flat-map f (thunk)))))
+
+(defn iter/chunk-acc [n cur acc]
+  ;; Internal: eagerly collect one chunk of size n from cur iterator.
+  (if (= (count acc) n)
+    (Yield acc (fn [] (iter/chunk-acc n cur [])))
+    (match cur
+      (Done) (if (empty? acc) Done (Yield acc (fn [] Done)))
+      (Yield v thunk) (iter/chunk-acc n (thunk) (append acc v)))))
+
+(defn iter/chunk [n it]
+  ;; Group elements into non-overlapping chunks of size n.
+  ;; The last chunk may be smaller than n.
+  (iter/chunk-acc n it []))
+
+;; ─── Consumers ────────────────────────────────────────────────────────────────
+
+(defn iter/to-vec [it]
+  ;; Force the entire iterator into a Vec.
+  (defn go [acc cur]
+    (match cur
+      (Done) acc
+      (Yield v thunk) (go (append acc v) (thunk))))
+  (go [] it))
+
+(defn iter/to-set [it]
+  ;; Force the entire iterator into a Set (deduplicates).
+  (defn go [acc cur]
+    (match cur
+      (Done) acc
+      (Yield v thunk) (go (conj acc v) (thunk))))
+  (go #{} it))
+
+(defn iter/to-map [it]
+  ;; Force the entire iterator of [key value] pairs into a Map.
+  (defn go [acc cur]
+    (match cur
+      (Done) acc
+      (Yield pair thunk)
+      (let [k (match (get pair 0) (Some x) x _ (panic "iter/to-map: expected [k v] pair"))
+            v (match (get pair 1) (Some x) x _ (panic "iter/to-map: expected [k v] pair"))]
+        (go (put acc k v) (thunk)))))
+  (go {} it))
+
+(defn iter/reduce [f init it]
+  ;; Fold over all iterator elements, left to right.
+  (defn go [acc cur]
+    (match cur
+      (Done) acc
+      (Yield v thunk) (go (f acc v) (thunk))))
+  (go init it))
+
+(defn iter/count [it]
+  ;; Count the total number of elements in the iterator.
+  (iter/reduce (fn [acc _] (+ acc 1)) 0 it))
+
+(defn iter/find [pred it]
+  ;; Return (Some x) for the first element satisfying pred, or None.
+  (match it
+    (Done) None
+    (Yield v thunk)
+    (if (pred v)
+      (Some v)
+      (iter/find pred (thunk)))))
+
+(defn iter/any? [pred it]
+  ;; True if at least one element satisfies pred.
+  (match (iter/find pred it)
+    (Some _) true
+    (None) false))
+
+(defn iter/all? [pred it]
+  ;; True if every element satisfies pred (vacuously true for empty iter).
+  (match it
+    (Done) true
+    (Yield v thunk)
+    (if (pred v)
+      (iter/all? pred (thunk))
+      false)))
+
+(defn iter/nth [n it]
+  ;; Return (Some x) for the element at 0-based index n, or None.
+  (if (< n 0)
+    None
+    (match it
+      (Done) None
+      (Yield v thunk)
+      (if (= n 0)
+        (Some v)
+        (iter/nth (- n 1) (thunk))))))
+
+(defn iter/first [it]
+  ;; Return (Some x) for the first element, or None.
+  (match it
+    (Done) None
+    (Yield v _) (Some v)))
