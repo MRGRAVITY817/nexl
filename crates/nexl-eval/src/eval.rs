@@ -194,6 +194,9 @@ fn eval_list<'a>(
         NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "submodule" => {
             eval_submodule(items, env, loop_state)
         }
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "load" => {
+            eval_load(items, env)
+        }
         // check, snap-file! — deleted in M27 Phase 6-7 (now defn/macro in test.nx)
         // bench — deleted in M27 Phase 3 (now a macro in test.nx)
         _ => eval_apply(items, env, loop_state),
@@ -2428,3 +2431,45 @@ fn eval_submodule<'a>(
 
 // eval_check, shrink_check, eval_snap_file deleted in M27 Phase 6-7 — now defn/macro in test.nx
 // eval_bench deleted in M27 Phase 3 — now a defmacro-syntax in test.nx
+
+/// Evaluate `(load "path/to/file.nx")` — read, parse, macro-expand, and evaluate
+/// a Nexl source file in the current environment.
+///
+/// This is the classic Lisp `load` primitive. Definitions (`def`, `defn`, etc.)
+/// in the loaded file become available in the caller's environment, making it
+/// useful for test files that need to load source modules.
+fn eval_load(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
+    if items.len() != 2 {
+        return Err(EvalError::NativeError(
+            "`load` requires exactly 1 argument (a file path string)".into(),
+        ));
+    }
+    let path_val = eval(&items[1], env)?;
+    let path_str = match &path_val {
+        Value::Str(s) => s.clone(),
+        _ => {
+            return Err(EvalError::NativeError(
+                "`load` argument must be a string".into(),
+            ))
+        }
+    };
+
+    let source = std::fs::read_to_string(path_str.as_ref()).map_err(|e| {
+        EvalError::NativeError(format!("load: cannot read {:?}: {e}", path_str.as_ref()))
+    })?;
+
+    let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC).map_err(|diag| {
+        EvalError::NativeError(format!("load: parse error in {:?}: {diag}", path_str.as_ref()))
+    })?;
+
+    let mut expander = nexl_macros::Expander::new();
+    let expanded = expander.expand_forms(&nodes).map_err(|e| {
+        EvalError::NativeError(format!("load: macro error in {:?}: {e}", path_str.as_ref()))
+    })?;
+
+    for node in &expanded {
+        eval(node, env)?;
+    }
+
+    Ok(EvalReturn::Value(Value::Unit))
+}

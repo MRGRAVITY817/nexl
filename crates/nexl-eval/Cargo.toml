@@ -11,8 +11,8 @@ meta = { package = "nexl-ast", path = "../nexl-ast" }
 nexl-reader = { path = "../nexl-reader" }
 nexl-modules = { path = "../nexl-modules" }
 nexl-stdlib = { path = "../nexl-stdlib" }
+nexl-macros = { path = "../nexl-macros" }
 thiserror = "1.0"
 
 [dev-dependencies]
 tempfile = "3"
-nexl-macros = { path = "../nexl-macros" }
