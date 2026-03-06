@@ -752,13 +752,39 @@ fn command_test(input_path: PathBuf, filter: Option<&str>, tags: &[String], form
     let nodes = nexl_reader::read(&source, meta::FileId::SYNTHETIC)
         .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
 
-    let env = nexl_eval::stdlib::standard_env();
-    let (expanded, prelude_forms) = macro_expand(&nodes)?;
-    for node in &prelude_forms {
-        let _ = nexl_eval::eval::eval(node, &env);
-    }
-    for node in &expanded {
-        nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
+    if has_module_decl(&nodes) {
+        // Module-mode: discover all imports via project.nx, macro-expand every module's
+        // forms (eval_modules skips macro expansion), then eval — tests register as a
+        // side effect of evaluating deftest-expanded forms.
+        let mut modules = discover_and_load_modules(&input_path)
+            .map_err(|e| format!("eval error: {e}"))?;
+
+        // Prime the expander with the test stdlib so deftest/is/check macros are known,
+        // then expand all module forms (source modules need -> threading, etc.).
+        const STDLIB_TEST: &str = include_str!("../../nexl-stdlib/nexl/test.nx");
+        let mut expander = nexl_macros::Expander::new();
+        let prelude_nodes = nexl_reader::read(STDLIB_TEST, meta::FileId::SYNTHETIC)
+            .map_err(|e| format!("stdlib macro parse error: {e}"))?;
+        expander
+            .expand_forms(&prelude_nodes)
+            .map_err(|e| format!("stdlib macro expand error: {e}"))?;
+        for module in &mut modules {
+            module.forms = expander
+                .expand_forms(&module.forms)
+                .map_err(|e| format!("macro error: {e}"))?;
+        }
+
+        nexl_eval::modules::eval_modules(modules)
+            .map_err(|e| format!("eval error: {e}"))?;
+    } else {
+        let env = nexl_eval::stdlib::standard_env();
+        let (expanded, prelude_forms) = macro_expand(&nodes)?;
+        for node in &prelude_forms {
+            let _ = nexl_eval::eval::eval(node, &env);
+        }
+        for node in &expanded {
+            nexl_eval::eval::eval(node, &env).map_err(|e| format!("eval error: {e}"))?;
+        }
     }
 
     // Drain the registry and optionally filter by name.
