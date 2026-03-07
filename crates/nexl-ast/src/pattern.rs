@@ -82,6 +82,14 @@ pub fn parse_pattern(node: &Node) -> Result<Pattern, PatternError> {
 fn parse_atom_pattern(atom: &Atom) -> Result<Pattern, PatternError> {
     match atom {
         Atom::Symbol { ns: None, name } if name == "_" => Ok(Pattern::Wildcard),
+        Atom::Symbol { ns: None, name }
+            if name.starts_with(|c: char| c.is_uppercase()) =>
+        {
+            Ok(Pattern::Constructor {
+                name: name.clone(),
+                args: vec![],
+            })
+        }
         Atom::Symbol { ns: None, name } => Ok(Pattern::Var(name.clone())),
         Atom::Symbol { .. } => Err(PatternError::new("pattern variables must be unqualified")),
         Atom::Keyword { .. }
@@ -218,6 +226,34 @@ mod tests {
                 suffix: None
             })
         );
+    }
+
+    // -- Parser Test 1b --
+    #[test]
+    fn parse_pattern_bare_uppercase_is_zero_arg_constructor() {
+        // `None` as a bare atom → zero-arg constructor, not a variable
+        let pat = parse_pattern(&sym("None")).unwrap();
+        assert_eq!(
+            pat,
+            Pattern::Constructor {
+                name: "None".to_string(),
+                args: vec![],
+            }
+        );
+
+        // Other uppercase bare symbols also become zero-arg constructors
+        let pat = parse_pattern(&sym("Red")).unwrap();
+        assert_eq!(
+            pat,
+            Pattern::Constructor {
+                name: "Red".to_string(),
+                args: vec![],
+            }
+        );
+
+        // Lowercase symbols remain variables
+        let pat = parse_pattern(&sym("x")).unwrap();
+        assert_eq!(pat, Pattern::Var("x".to_string()));
     }
 
     // -- Parser Test 2 --
