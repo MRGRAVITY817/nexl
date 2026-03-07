@@ -86,6 +86,7 @@ pub fn standard_env() -> Rc<Env> {
     env.define("take-while", native("take-while", take_while_fn));
     env.define("drop-while", native("drop-while", drop_while_fn));
     env.define("empty?", native("empty?", empty_pred));
+    env.define("type-of", native("type-of", type_of_fn));
     env.define("nth", native("nth", nth_fn));
     env.define("get-in", native("get-in", get_in_fn));
     env.define("assoc-in", native("assoc-in", assoc_in_fn));
@@ -666,6 +667,12 @@ fn empty_pred(args: &[Value]) -> Result<Value, String> {
         Value::Str(s) => Ok(Value::Bool(s.is_empty())),
         other => Err(type_mismatch("empty?", "Vec, Map, Set, or Str", other)),
     }
+}
+
+/// `(type-of v)` — return the type name of a value as a string.
+fn type_of_fn(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("type-of", args)?;
+    Ok(Value::Str(Rc::from(v.type_name())))
 }
 
 /// `(nth coll i)` — alias for `get` on indexed collections.
