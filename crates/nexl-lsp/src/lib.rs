@@ -54,15 +54,55 @@ fn collect_diagnostics(uri: &Url, source: &str) -> Vec<Diagnostic> {
     if uri.path().ends_with("project.nx") {
         return Vec::new();
     }
+    let file_path = uri.to_file_path().ok();
     match nexl_reader::read(source, FileId(0)) {
-        Ok(nodes) => type_check_diagnostics(&nodes, source),
+        Ok(nodes) => type_check_diagnostics(&nodes, source, file_path.as_deref()),
         Err(diag) => vec![reader_diagnostic_to_lsp(&diag, uri, source)],
     }
 }
 
-fn type_check_diagnostics(nodes: &[Node], source: &str) -> Vec<Diagnostic> {
+/// Register `deftype` declarations from an imported source file into `env`.
+///
+/// Loads the file at `path`, parses it, and calls `register_deftype` for every
+/// `deftype` form found — making imported ADT constructors visible to
+/// `check_constructor_pattern` in the importing file.
+fn register_imported_deftypes(env: Env, path: &Path) -> Env {
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return env;
+    };
+    let Ok(nodes) = nexl_reader::read(&source, FileId::SYNTHETIC) else {
+        return env;
+    };
+    let mut env = env;
+    for node in &nodes {
+        if list_head_is(node, "deftype") {
+            if let Ok(decl) = nexl_infer::parse_deftype(node) {
+                env = nexl_infer::register_deftype(&env, decl);
+            }
+        }
+    }
+    env
+}
+
+fn type_check_diagnostics(nodes: &[Node], source: &str, file_path: Option<&Path>) -> Vec<Diagnostic> {
     let mut env = Env::new();
     let mut state = InferState::new();
+
+    // If this file is a module with imports, load deftype declarations from
+    // each imported source file so ADT constructors are visible in patterns.
+    if let (Some(path), Some(imports)) = (file_path, extract_module_imports(nodes)) {
+        if let Some(ctx) = resolve_project_context(path) {
+            for import in &imports {
+                if let Ok(rel) =
+                    nexl_modules::module_name_to_path(&import.module_path, &ctx.prefix)
+                {
+                    let abs = ctx.source_root.join(rel);
+                    env = register_imported_deftypes(env, &abs);
+                }
+            }
+        }
+    }
+
     for node in nodes {
         // Skip module infrastructure forms.
         if list_head_is(node, "module") || list_head_is(node, "import") {
@@ -4366,5 +4406,49 @@ mod tests {
         };
         let has_logger = items.iter().any(|item| item.label == "Logger");
         assert!(has_logger, "completions should include 'Logger' from defhandler");
+    }
+
+    /// Regression test: importing a deftype from another module must make the
+    /// constructor visible to the type checker so that `(match v (Ctor x) ...)`
+    /// patterns don't produce "unknown constructor" false positives.
+    #[test]
+    fn test_imported_deftype_constructor_no_false_positive() {
+        let tmp = std::env::temp_dir().join("nexl_lsp_test_imported_deftype");
+        std::fs::create_dir_all(tmp.join("src/mylib")).unwrap();
+        std::fs::create_dir_all(tmp.join("tests")).unwrap();
+
+        std::fs::write(
+            tmp.join("project.nx"),
+            r#"{:package {:name "mylib" :version "0.1.0" :prefix "mylib" :source-dir "src"}}"#,
+        )
+        .unwrap();
+
+        // Source module: defines a single-variant ADT.
+        std::fs::write(
+            tmp.join("src/mylib/types.nx"),
+            "(module mylib.types)\n(deftype Wrapper | (Wrapper Str))\n",
+        )
+        .unwrap();
+
+        // Test file: imports Wrapper and uses it in a match pattern.
+        let test_source = r#"(module tests.wrapper
+  :imports [[mylib.types :refer [Wrapper]]])
+(defn unwrap [v]
+  (match v
+    (Wrapper s) s
+    _           ""))
+"#;
+        let test_path = tmp.join("tests/wrapper_test.nx");
+        let nodes = nexl_reader::read(test_source, FileId::SYNTHETIC).unwrap();
+        let diagnostics = type_check_diagnostics(&nodes, test_source, Some(&test_path));
+
+        let unknown_ctor: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.message.contains("unknown constructor"))
+            .collect();
+        assert!(
+            unknown_ctor.is_empty(),
+            "expected no 'unknown constructor' diagnostics for imported ADT, got: {unknown_ctor:?}"
+        );
     }
 }
