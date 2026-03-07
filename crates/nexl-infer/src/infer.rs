@@ -3901,6 +3901,8 @@ struct MatchArm<'a> {
     pattern: Pattern,
     guard: Option<Node>,
     body: &'a Node,
+    /// Span of the pattern node, used to locate redundant-arm warnings.
+    pattern_span: Span,
 }
 
 #[allow(dead_code)]
@@ -4072,6 +4074,7 @@ fn parse_match<'a>(node: &'a Node, env: &Env) -> Result<(&'a Node, Vec<MatchArm<
             pattern,
             guard,
             body,
+            pattern_span: pattern_node.span,
         });
     }
 
@@ -4324,6 +4327,7 @@ fn check_exhaustive_let_pattern(
                 pattern: pattern.clone(),
                 guard: None,
                 body: node,
+                pattern_span: node.span,
             };
             check_exhaustive(scrutinee_ty, std::slice::from_ref(&arm), env)
         }
@@ -4332,6 +4336,7 @@ fn check_exhaustive_let_pattern(
                 pattern: pattern.clone(),
                 guard: None,
                 body: node,
+                pattern_span: node.span,
             };
             check_exhaustive(scrutinee_ty, std::slice::from_ref(&arm), env)
         }
@@ -4339,10 +4344,13 @@ fn check_exhaustive_let_pattern(
     }
 }
 
-fn warn_redundant(state: &mut InferState) {
-    state.push_warning(TypeError::new(TypeErrorKind::MalformedForm {
-        description: "redundant match arm".to_string(),
-    }));
+fn warn_redundant(state: &mut InferState, span: Span) {
+    state.push_warning(
+        TypeError::new(TypeErrorKind::MalformedForm {
+            description: "redundant match arm".to_string(),
+        })
+        .with_span(span),
+    );
 }
 
 fn check_redundant_patterns(
@@ -4367,7 +4375,7 @@ fn check_redundant_patterns(
 
     for arm in arms {
         if covered_all {
-            warn_redundant(state);
+            warn_redundant(state, arm.pattern_span);
             continue;
         }
 
@@ -4381,7 +4389,7 @@ fn check_redundant_patterns(
                 _ => false,
             };
             if already_exhaustive {
-                warn_redundant(state);
+                warn_redundant(state, arm.pattern_span);
             } else {
                 covered_all = true;
             }
@@ -4393,12 +4401,12 @@ fn check_redundant_patterns(
                 if let Pattern::Literal(Atom::Bool(value)) = &arm.pattern {
                     if *value {
                         if covered_true {
-                            warn_redundant(state);
+                            warn_redundant(state, arm.pattern_span);
                         } else {
                             covered_true = true;
                         }
                     } else if covered_false {
-                        warn_redundant(state);
+                        warn_redundant(state, arm.pattern_span);
                     } else {
                         covered_false = true;
                     }
@@ -4413,7 +4421,7 @@ fn check_redundant_patterns(
                     };
                     if let Some(name) = ctor_name {
                         if covered_ctors.contains(name) {
-                            warn_redundant(state);
+                            warn_redundant(state, arm.pattern_span);
                         } else {
                             covered_ctors.insert(name.clone());
                         }
