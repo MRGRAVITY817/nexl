@@ -1,5 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::cell::RefCell;
+
+use nexl_runtime::ModuleFrame;
 
 use crate::{Env, EvalError, ModuleExports, eval::eval, stdlib};
 use meta::{
@@ -115,12 +118,25 @@ struct ModuleRuntime {
 }
 
 fn eval_module_forms(forms: &[Node], env: &Rc<Env>) -> Result<Vec<String>, EvalError> {
+    // Create a shared live frame for this module. Every function defined here
+    // captures an Rc to this frame, so they can all see each other at call time
+    // — enabling mutual recursion between top-level defns.
+    let module_frame: ModuleFrame = Rc::new(RefCell::new(HashMap::new()));
+    env.set_module_frame(Rc::clone(&module_frame));
+
     let mut defined = Vec::new();
     for form in forms {
         if let Some(name) = top_level_def_name(form) {
-            defined.push(name);
+            defined.push(name.clone());
         }
         eval(form, env)?;
+        // After each definition, register the new value in the shared frame so
+        // functions defined later (or already defined) can see it.
+        if let Some(name) = top_level_def_name(form) {
+            if let Some(value) = env.get(&name) {
+                module_frame.borrow_mut().insert(Rc::from(name.as_str()), value);
+            }
+        }
     }
     Ok(defined)
 }

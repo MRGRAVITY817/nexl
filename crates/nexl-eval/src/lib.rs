@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use nexl_runtime::Value;
+use nexl_runtime::{ModuleFrame, Value};
 use thiserror::Error;
 
 pub(crate) type ModuleExports = Rc<HashMap<Rc<str>, Value>>;
@@ -21,6 +21,9 @@ pub struct Env {
     parent: Option<Rc<Env>>,
     bindings: RefCell<HashMap<Rc<str>, Value>>,
     modules: RefCell<ModuleAliasMap>,
+    /// Module-level live binding frame. Set once during `eval_module_forms` so
+    /// functions created in module scope can capture it for mutual recursion.
+    module_frame: RefCell<Option<ModuleFrame>>,
 }
 
 impl Env {
@@ -30,6 +33,7 @@ impl Env {
             parent: None,
             bindings: RefCell::new(HashMap::new()),
             modules: RefCell::new(HashMap::new()),
+            module_frame: RefCell::new(None),
         }
     }
 
@@ -39,7 +43,22 @@ impl Env {
             parent: Some(parent),
             bindings: RefCell::new(HashMap::new()),
             modules: RefCell::new(HashMap::new()),
+            module_frame: RefCell::new(None),
         }
+    }
+
+    /// Attach a module-level live binding frame to this environment.
+    /// Called once per module at the start of `eval_module_forms`.
+    pub fn set_module_frame(&self, frame: ModuleFrame) {
+        *self.module_frame.borrow_mut() = Some(frame);
+    }
+
+    /// Return the module frame if one is set on this env or any ancestor.
+    pub fn get_module_frame(&self) -> Option<ModuleFrame> {
+        if let Some(frame) = self.module_frame.borrow().as_ref() {
+            return Some(Rc::clone(frame));
+        }
+        self.parent.as_ref()?.get_module_frame()
     }
 
     /// Define or overwrite a binding in the current frame.

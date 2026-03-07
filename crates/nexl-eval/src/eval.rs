@@ -1112,6 +1112,7 @@ fn eval_fn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         variadic,
         captures: env.capture_closure(),
         module_captures: env.capture_modules(),
+        module_frame: env.get_module_frame(),
         body: items[2..].to_vec(),
         requires: vec![],
         ensures: vec![],
@@ -1358,6 +1359,7 @@ fn eval_defn(items: &[Node], env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
             variadic: f.variadic,
             captures: f.captures.clone(),
             module_captures: f.module_captures.clone(),
+            module_frame: f.module_frame.clone(),
             body: f.body.clone(),
             requires: requires_nodes,
             ensures: ensures_nodes,
@@ -1844,7 +1846,15 @@ fn eval_apply<'a>(
 
     let call_env = Rc::new(Env::new());
 
-    // load captures
+    // Seed from module frame first (lowest priority): gives access to all
+    // module-level siblings, enabling mutual recursion between top-level defns.
+    if let Some(frame) = &func.module_frame {
+        for (name, value) in frame.borrow().iter() {
+            call_env.define(name.clone(), value.clone());
+        }
+    }
+
+    // load captures (override module frame — captures are more specific)
     for (name, value) in &func.captures {
         call_env.define(name.clone(), value.clone());
     }
@@ -1970,6 +1980,13 @@ pub(crate) fn apply_value(callee: &Value, args: &[Value]) -> Result<Value, EvalE
     }
 
     let call_env = Rc::new(Env::new());
+
+    // Seed from module frame (lowest priority) for mutual recursion.
+    if let Some(frame) = &func.module_frame {
+        for (name, value) in frame.borrow().iter() {
+            call_env.define(name.clone(), value.clone());
+        }
+    }
 
     for (name, value) in &func.captures {
         call_env.define(name.clone(), value.clone());

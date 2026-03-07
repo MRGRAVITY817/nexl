@@ -7,6 +7,12 @@ use std::rc::Rc;
 
 type ModuleExports = Rc<HashMap<Rc<str>, Value>>;
 
+/// Shared live binding table for a module's top-level definitions.
+/// All functions defined in the same module share one frame by `Rc`, so
+/// every function can resolve its module-level siblings at call time —
+/// enabling mutual recursion between top-level `defn`s.
+pub type ModuleFrame = Rc<RefCell<HashMap<Rc<str>, Value>>>;
+
 /// Type alias for a native closure's implementation.
 pub type NativeClosureFn = Rc<dyn Fn(&[Value]) -> Result<Value, String>>;
 
@@ -255,6 +261,9 @@ pub struct Function {
     pub captures: Vec<(Rc<str>, Value)>,
     /// Captured module aliases (alias, exports).
     pub module_captures: Vec<(Rc<str>, ModuleExports)>,
+    /// Shared live frame of module-level definitions (enables mutual recursion).
+    /// `None` for anonymous closures and non-module-level functions.
+    pub module_frame: Option<ModuleFrame>,
     /// Body expressions to evaluate when called (in order).
     pub body: Vec<Node>,
     /// Precondition expressions (`:requires` clause). Checked before body in dev mode (spec §4.2.1).
