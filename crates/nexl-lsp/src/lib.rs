@@ -84,6 +84,61 @@ fn register_imported_deftypes(env: Env, path: &Path) -> Env {
     env
 }
 
+/// Load deftype and defn/def types from a source file into `env`.
+///
+/// Used by hover to make imported names visible in the infer environment.
+fn load_module_env(env: Env, path: &Path, state: &mut InferState) -> Env {
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return env;
+    };
+    let Ok(nodes) = nexl_reader::read(&source, FileId::SYNTHETIC) else {
+        return env;
+    };
+    let mut env = env;
+    for node in &nodes {
+        if list_head_is(node, "deftype") {
+            if let Ok(decl) = nexl_infer::parse_deftype(node) {
+                env = nexl_infer::register_deftype(&env, decl);
+            }
+        } else if defn_name_and_docstring(node).is_some() {
+            let node_for_infer = defn_node_for_infer(node);
+            if let Ok((_, _, new_env)) = nexl_infer::infer_defn(node_for_infer.as_ref(), &env, state) {
+                env = new_env;
+            }
+        } else if def_name_node(node).is_some() {
+            if let Ok((_, _, new_env)) = nexl_infer::infer_def(node, &env, state) {
+                env = new_env;
+            }
+        }
+    }
+    env
+}
+
+/// Search for a `defn` docstring by name in a source file on disk.
+fn find_defn_docstring_in_path(path: &Path, name: &str) -> Option<String> {
+    let source = std::fs::read_to_string(path).ok()?;
+    let nodes = nexl_reader::read(&source, FileId::SYNTHETIC).ok()?;
+    find_defn_docstring(&nodes, name)
+}
+
+/// Resolve the file paths for all imports declared in `nodes`, relative to `file_path`.
+fn resolve_import_paths(nodes: &[Node], file_path: &Path) -> Vec<PathBuf> {
+    let Some(imports) = extract_module_imports(nodes) else {
+        return Vec::new();
+    };
+    let Some(ctx) = resolve_project_context(file_path) else {
+        return Vec::new();
+    };
+    imports
+        .iter()
+        .filter_map(|imp| {
+            let rel = nexl_modules::module_name_to_path(&imp.module_path, &ctx.prefix).ok()?;
+            let abs = ctx.source_root.join(rel);
+            abs.is_file().then_some(abs)
+        })
+        .collect()
+}
+
 fn type_check_diagnostics(nodes: &[Node], source: &str, file_path: Option<&Path>) -> Vec<Diagnostic> {
     let mut env = Env::new();
     let mut state = InferState::new();
@@ -1486,9 +1541,18 @@ fn special_form_doc(name: &str) -> Option<&'static str> {
     })
 }
 
-fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover> {
+fn hover_for_offset(nodes: &[Node], offset: usize, source: &str, file_path: Option<&Path>) -> Option<Hover> {
     let mut env = Env::new();
     let mut state = InferState::new();
+
+    // Pre-load types from all imported modules so imported names are hover-able.
+    let import_paths: Vec<PathBuf> = file_path
+        .map(|p| resolve_import_paths(nodes, p))
+        .unwrap_or_default();
+    for path in &import_paths {
+        env = load_module_env(env, path, &mut state);
+    }
+
     for node in nodes {
         // Register deftype declarations so record/ADT types are known.
         if list_head_is(node, "deftype") {
@@ -1578,11 +1642,15 @@ fn hover_for_offset(nodes: &[Node], offset: usize, source: &str) -> Option<Hover
     let name = symbol_name(sym_node)?;
     let span = sym_node.span;
 
-    // 1. Check inference env for user-defined bindings
+    // 1. Check inference env for user-defined bindings (includes imported names)
     if let Some(scheme) = env.lookup(&name) {
         let ty = scheme.instantiate(&mut state.supply);
-        // Try to find a docstring from the defn that defines this name
-        let docstring = find_defn_docstring(nodes, &name);
+        // Try to find a docstring in the current file, then imported files.
+        let docstring = find_defn_docstring(nodes, &name).or_else(|| {
+            import_paths
+                .iter()
+                .find_map(|p| find_defn_docstring_in_path(p, &name))
+        });
         let doc = docstring.as_deref().or_else(|| stdlib_doc(&name));
         return Some(build_hover(&name, &ty, doc, span, source));
     }
@@ -2041,6 +2109,26 @@ fn find_definition_range(nodes: &[Node], name: &str, source: &str) -> Option<Ran
                 return Some(span_to_range(source, name_node.span));
             }
             _ => {}
+        }
+        // deftype: match the type name (items[1]) and constructor names
+        // Form: (deftype TypeName | (Ctor Field*) | ...)
+        if list_head_is(node, "deftype") {
+            if let NodeKind::List(items) = &node.kind {
+                if let Some(name_node) = items.get(1) {
+                    if symbol_name(name_node).as_deref() == Some(name) {
+                        return Some(span_to_range(source, name_node.span));
+                    }
+                }
+                for item in items.iter().skip(2) {
+                    if let NodeKind::List(ctor_items) = &item.kind {
+                        if let Some(ctor_name_node) = ctor_items.first() {
+                            if symbol_name(ctor_name_node).as_deref() == Some(name) {
+                                return Some(span_to_range(source, ctor_name_node.span));
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     None
@@ -2580,7 +2668,8 @@ impl LanguageServer for Backend {
             Ok(nodes) => nodes,
             Err(_) => return Ok(None),
         };
-        Ok(hover_for_offset(&nodes, offset, &source))
+        let file_path = text_document.uri.to_file_path().ok();
+        Ok(hover_for_offset(&nodes, offset, &source, file_path.as_deref()))
     }
 
     async fn goto_definition(
