@@ -680,8 +680,15 @@ fn command_run(input_path: PathBuf) -> Result<(), String> {
         .map_err(|diag| format_reader_report(*diag, &source, &input_path.display().to_string()))?;
 
     if has_module_decl(&nodes) {
-        // Multi-file module mode
-        let modules = discover_and_load_modules(&input_path)?;
+        // Multi-file module mode: discover modules, macro-expand each module's forms
+        // (eval_modules skips macro expansion), then evaluate.
+        let mut modules = discover_and_load_modules(&input_path)?;
+        let mut expander = nexl_macros::Expander::new();
+        for module in &mut modules {
+            module.forms = expander
+                .expand_forms(&module.forms)
+                .map_err(|e| format!("macro error: {e}"))?;
+        }
         nexl_eval::modules::eval_modules(modules).map_err(|e| format!("eval error: {e}"))?;
         return Ok(());
     }
