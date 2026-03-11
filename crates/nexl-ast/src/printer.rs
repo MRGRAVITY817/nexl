@@ -896,6 +896,40 @@ impl PrettyPrinter {
             return;
         }
 
+        // Hiccup vector heuristic: [keyword ?attrs children...]
+        // Keep the tag keyword (and optional attribute map) on the first line, then
+        // break each child onto its own line.  This preserves the idiomatic layout:
+        //   [:div {:class "card"}
+        //     [:p "hello"]]
+        if open == '[' {
+            if let Some(head) = items.first() {
+                if matches!(&head.kind, NodeKind::Atom(Atom::Keyword { .. })) {
+                    // Count how many items stay on the first line (keyword + optional attrs).
+                    let first_line_count =
+                        if items.len() >= 2 && matches!(&items[1].kind, NodeKind::Map(_)) {
+                            2
+                        } else {
+                            1
+                        };
+                    let rest = &items[first_line_count..];
+                    if !rest.is_empty() {
+                        let item_indent = column + 1;
+                        out.push(open);
+                        write_sep(&items[..first_line_count], out, |n, o| {
+                            self.write_node(n, o)
+                        });
+                        for item in rest {
+                            out.push('\n');
+                            push_indent(out, item_indent);
+                            self.write_node_indented(item, out, item_indent, item_indent);
+                        }
+                        out.push(close);
+                        return;
+                    }
+                }
+            }
+        }
+
         let item_indent = column + 1; // +1 for the bracket
         out.push(open);
         for (i, item) in items.iter().enumerate() {
