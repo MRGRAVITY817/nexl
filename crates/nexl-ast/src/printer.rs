@@ -169,6 +169,10 @@ impl PrettyPrinter {
                 if pairs.is_empty() {
                     return 2; // "{}"
                 }
+                // Multi-pair maps always expand to multi-line with alignment.
+                if pairs.len() >= 2 {
+                    return usize::MAX;
+                }
                 let mut len: usize = 2; // "{" + "}"
                 for (i, (k, v)) in pairs.iter().enumerate() {
                     if i > 0 {
@@ -955,20 +959,17 @@ impl PrettyPrinter {
             return;
         }
 
-        // Try flat
-        let flat = self.flat_len_kind(&NodeKind::Map(pairs.to_vec()));
-        if flat != usize::MAX && column.saturating_add(flat) <= self.config.max_line_width {
-            out.push('{');
-            for (i, (k, v)) in pairs.iter().enumerate() {
-                if i > 0 {
-                    out.push(' ');
-                }
-                self.write_node(k, out);
+        // Single-pair maps can be flat if they fit; multi-pair maps always expand.
+        if pairs.len() == 1 {
+            let flat = self.flat_len_kind(&NodeKind::Map(pairs.to_vec()));
+            if flat != usize::MAX && column.saturating_add(flat) <= self.config.max_line_width {
+                out.push('{');
+                self.write_node(&pairs[0].0, out);
                 out.push(' ');
-                self.write_node(v, out);
+                self.write_node(&pairs[0].1, out);
+                out.push('}');
+                return;
             }
-            out.push('}');
-            return;
         }
 
         let pair_indent = column + 1;
@@ -2628,7 +2629,8 @@ mod tests {
         ]);
         let expected = "\
 (deftype PaymentMethod
-  (Card {:last4 Str :brand Str})
+  (Card {:last4 Str
+         :brand Str})
   (BankTransfer {:iban Str})
   (Wallet))
 ";
