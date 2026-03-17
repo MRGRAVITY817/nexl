@@ -1,4 +1,4 @@
-//! `http` module — HTTP client with Request/Response record types.
+//! `http` module — HTTP client/server with Request/Response record types.
 //!
 //! Provides a higher-level HTTP interface on top of the `net` module's
 //! TCP-based transport:
@@ -6,14 +6,16 @@
 //! - `(http/get url)` → `(Result Response Str)`
 //! - `(http/post url body headers)` → `(Result Response Str)`
 //! - `(http/response status body)` → `Response`
-//! - `(http/serve handler port)` → stub (Component Model in WASM mode)
+//! - `(http/serve handler opts)` → starts a blocking HTTP server
 //! - `(http/status resp)` → `Int`
 //! - `(http/body resp)` → `Str`
 //! - `(http/headers resp)` → `Map`
 //!
 //! Response is a Map record: `{:status Int, :body Str, :headers Map}`.
-//! Request is a Map record: `{:method Str, :url Str, :path Str, :headers Map, :body (Option Str)}`.
+//! Request is a Map record: `{:method Keyword, :path Str, :query Str, :headers Map, :body (Option Str), :params Map, :remote Str, :scheme Keyword}`.
 
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
 use std::rc::Rc;
 
 use nexl_runtime::sandbox::{self, Capability};
@@ -307,10 +309,279 @@ fn response_fn(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-/// `(http/serve handler port)` — stub: requires WASM Component Model.
+/// `(http/serve handler opts)` — start a blocking HTTP/1.1 server.
+///
+/// `handler` is a function `(Fn [Request] -> Response)`.
+/// `opts` is a Map with `:port Int` (required), `:host Str` (optional, default "0.0.0.0").
+///
+/// This is a Stage 0 eval-mode server: single-threaded, blocking, no TLS.
+/// Production use should target `wasi:http` Component Model.
 fn serve_fn(args: &[Value]) -> Result<Value, String> {
-    let _ = args;
-    Err("`http/serve` is not available in eval mode; use `nexl run --wasm` with wasi:http Component Model".to_string())
+    sandbox::check(Capability::Net)?;
+    match args {
+        [handler, Value::Map(opts)] => {
+            let port = match map_get(opts, "port") {
+                Some(Value::Int(p)) => *p as u16,
+                _ => return Err("`http/serve` requires :port Int in options map".to_string()),
+            };
+            let host = match map_get(opts, "host") {
+                Some(Value::Str(h)) => h.to_string(),
+                _ => "0.0.0.0".to_string(),
+            };
+            let addr = format!("{host}:{port}");
+            let listener = TcpListener::bind(&addr)
+                .map_err(|e| format!("`http/serve` failed to bind {addr}: {e}"))?;
+
+            eprintln!("http/serve listening on http://{addr}");
+
+            for stream in listener.incoming() {
+                let stream = match stream {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("http/serve: accept error: {e}");
+                        continue;
+                    }
+                };
+                if let Err(e) = handle_connection(handler, stream) {
+                    eprintln!("http/serve: handler error: {e}");
+                }
+            }
+            Ok(Value::Unit)
+        }
+        [_handler, Value::Int(port)] => {
+            // Convenience: (http/serve handler 3000) — create opts map
+            let opts = Value::Map(Rc::new(
+                vec![(kw("port"), Value::Int(*port))].into(),
+            ));
+            serve_fn(&[args[0].clone(), opts])
+        }
+        _ => Err(format!(
+            "`http/serve` requires 2 arguments (handler opts), got {}",
+            args.len()
+        )),
+    }
+}
+
+/// Handle a single HTTP connection: parse request, call handler, write response.
+fn handle_connection(
+    handler: &Value,
+    mut stream: std::net::TcpStream,
+) -> Result<(), String> {
+    let peer = stream
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| "unknown".into());
+
+    // Read request
+    let mut reader = BufReader::new(&stream);
+    let (method, path, query) = parse_request_line(&mut reader)?;
+    let headers = parse_headers(&mut reader)?;
+    let body = read_body(&mut reader, &headers)?;
+
+    // Build Nexl request map
+    let req = build_request_map(&method, &path, &query, &headers, &body, &peer);
+
+    // Call handler
+    let resp = nexl_runtime::call_value(handler, &[req])?;
+
+    // Extract response fields
+    let (status, resp_headers, resp_body) = extract_response(&resp)?;
+
+    // Write HTTP response
+    let status_text = status_text(status);
+    let mut response_bytes = format!("HTTP/1.1 {status} {status_text}\r\n");
+
+    // Write headers from response map
+    if let Value::Map(hdrs) = &resp_headers {
+        for (k, v) in hdrs.iter() {
+            let key_str = match k {
+                Value::Str(s) => s.to_string(),
+                Value::Keyword { name, .. } => name.to_string(),
+                _ => continue,
+            };
+            let val_str = match v {
+                Value::Str(s) => s.to_string(),
+                _ => format!("{v}"),
+            };
+            response_bytes.push_str(&format!("{key_str}: {val_str}\r\n"));
+        }
+    }
+
+    // Add Content-Length if not present
+    let body_bytes = resp_body.as_bytes();
+    if !response_bytes.to_lowercase().contains("content-length:") {
+        response_bytes.push_str(&format!("Content-Length: {}\r\n", body_bytes.len()));
+    }
+    // Add Connection: close
+    response_bytes.push_str("Connection: close\r\n");
+    response_bytes.push_str("\r\n");
+
+    stream
+        .write_all(response_bytes.as_bytes())
+        .map_err(|e| format!("write error: {e}"))?;
+    stream
+        .write_all(body_bytes)
+        .map_err(|e| format!("write body error: {e}"))?;
+    stream.flush().map_err(|e| format!("flush error: {e}"))?;
+    Ok(())
+}
+
+/// Parse the HTTP request line: `GET /path?query HTTP/1.1`
+fn parse_request_line(reader: &mut BufReader<&std::net::TcpStream>) -> Result<(String, String, String), String> {
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("read request line: {e}"))?;
+    let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
+    if parts.len() < 2 {
+        return Err("malformed request line".into());
+    }
+    let method = parts[0].to_string();
+    let raw_path = parts[1].to_string();
+
+    // Split path and query string
+    let (path, query) = match raw_path.find('?') {
+        Some(pos) => (raw_path[..pos].to_string(), raw_path[pos + 1..].to_string()),
+        None => (raw_path, String::new()),
+    };
+
+    Ok((method, path, query))
+}
+
+/// Parse HTTP headers until empty line.
+fn parse_headers(reader: &mut BufReader<&std::net::TcpStream>) -> Result<Vec<(String, String)>, String> {
+    let mut headers = Vec::new();
+    loop {
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .map_err(|e| format!("read header: {e}"))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(colon) = trimmed.find(':') {
+            let name = trimmed[..colon].trim().to_lowercase();
+            let value = trimmed[colon + 1..].trim().to_string();
+            headers.push((name, value));
+        }
+    }
+    Ok(headers)
+}
+
+/// Read the request body based on Content-Length header.
+fn read_body(
+    reader: &mut BufReader<&std::net::TcpStream>,
+    headers: &[(String, String)],
+) -> Result<Option<String>, String> {
+    let content_length = headers
+        .iter()
+        .find(|(k, _)| k == "content-length")
+        .and_then(|(_, v)| v.parse::<usize>().ok());
+
+    match content_length {
+        Some(len) if len > 0 => {
+            let mut body = vec![0u8; len];
+            reader
+                .read_exact(&mut body)
+                .map_err(|e| format!("read body: {e}"))?;
+            Ok(Some(
+                String::from_utf8(body).map_err(|e| format!("body not utf-8: {e}"))?,
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Build a Nexl request map from parsed HTTP data.
+fn build_request_map(
+    method: &str,
+    path: &str,
+    query: &str,
+    headers: &[(String, String)],
+    body: &Option<String>,
+    remote: &str,
+) -> Value {
+    let method_kw = kw(&method.to_lowercase());
+    let header_map: NexlMap = headers
+        .iter()
+        .map(|(k, v)| (Value::Str(Rc::from(k.as_str())), Value::Str(Rc::from(v.as_str()))))
+        .collect::<Vec<_>>()
+        .into();
+    let body_val = match body {
+        Some(s) => Value::Str(Rc::from(s.as_str())),
+        None => Value::Adt {
+            type_name: Rc::from("Option"),
+            ctor: Rc::from("None"),
+            fields: Rc::new(vec![]),
+        },
+    };
+
+    Value::Map(Rc::new(
+        vec![
+            (kw("method"), method_kw),
+            (kw("path"), Value::Str(Rc::from(path))),
+            (kw("query"), Value::Str(Rc::from(query))),
+            (kw("headers"), Value::Map(Rc::new(header_map))),
+            (kw("body"), body_val),
+            (kw("params"), Value::Map(Rc::new(vec![].into()))),
+            (kw("remote"), Value::Str(Rc::from(remote))),
+            (kw("scheme"), kw("http")),
+        ]
+        .into(),
+    ))
+}
+
+/// Extract status, headers, body from a Nexl response map.
+fn extract_response(resp: &Value) -> Result<(i64, Value, String), String> {
+    let map = match resp {
+        Value::Map(m) => m,
+        _ => return Err(format!("handler must return a Map, got {}", resp.type_name())),
+    };
+
+    let status = match map_get(map, "status") {
+        Some(Value::Int(n)) => *n,
+        _ => 200,
+    };
+
+    let headers = map_get(map, "headers")
+        .cloned()
+        .unwrap_or_else(|| Value::Map(Rc::new(vec![].into())));
+
+    let body = match map_get(map, "body") {
+        Some(Value::Str(s)) => s.to_string(),
+        Some(other) => format!("{other}"),
+        None => String::new(),
+    };
+
+    Ok((status, headers, body))
+}
+
+/// Map HTTP status code to reason phrase.
+fn status_text(code: i64) -> &'static str {
+    match code {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        409 => "Conflict",
+        422 => "Unprocessable Entity",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        _ => "OK",
+    }
 }
 
 /// `(http/status resp)` — extract the `:status` field from a Response.
@@ -479,11 +750,11 @@ mod tests {
     // ── Test 13 ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_serve_stub_error() {
+    fn test_serve_requires_handler_and_opts() {
         let err = serve_fn(&[]).unwrap_err();
         assert!(
-            err.contains("Component Model") || err.contains("wasi:http"),
-            "error should mention Component Model: {err}"
+            err.contains("2 arguments"),
+            "error should mention 2 arguments: {err}"
         );
     }
 
