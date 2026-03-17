@@ -362,6 +362,12 @@ fn serve_fn(args: &[Value]) -> Result<Value, String> {
     }
 }
 
+/// Response body: either a complete string or a lazy Iter of strings.
+enum ResponseBody {
+    Complete(String),
+    Streaming(Value), // An Iter ADT value (Yield str thunk | Done)
+}
+
 /// Handle a single HTTP connection: parse request, call handler, write response.
 fn handle_connection(
     handler: &Value,
@@ -386,13 +392,100 @@ fn handle_connection(
 
     // Extract response fields
     let (status, resp_headers, resp_body) = extract_response(&resp)?;
-
-    // Write HTTP response
     let status_text = status_text(status);
-    let mut response_bytes = format!("HTTP/1.1 {status} {status_text}\r\n");
 
-    // Write headers from response map
-    if let Value::Map(hdrs) = &resp_headers {
+    match resp_body {
+        ResponseBody::Complete(body_str) => {
+            write_complete_response(&mut stream, status, status_text, &resp_headers, &body_str)
+        }
+        ResponseBody::Streaming(iter_val) => {
+            write_streaming_response(&mut stream, status, status_text, &resp_headers, iter_val)
+        }
+    }
+}
+
+/// Write a complete (non-streaming) HTTP response.
+fn write_complete_response(
+    stream: &mut std::net::TcpStream,
+    status: i64,
+    status_text: &str,
+    resp_headers: &Value,
+    body: &str,
+) -> Result<(), String> {
+    let mut header_block = format!("HTTP/1.1 {status} {status_text}\r\n");
+    write_headers(&mut header_block, resp_headers);
+    let body_bytes = body.as_bytes();
+    if !header_block.to_lowercase().contains("content-length:") {
+        header_block.push_str(&format!("Content-Length: {}\r\n", body_bytes.len()));
+    }
+    header_block.push_str("Connection: close\r\n\r\n");
+    stream.write_all(header_block.as_bytes()).map_err(|e| format!("write error: {e}"))?;
+    stream.write_all(body_bytes).map_err(|e| format!("write body error: {e}"))?;
+    stream.flush().map_err(|e| format!("flush error: {e}"))?;
+    Ok(())
+}
+
+/// Write a streaming HTTP response using chunked transfer encoding.
+/// Walks the Iter ADT (Yield value thunk | Done) and sends each chunk.
+fn write_streaming_response(
+    stream: &mut std::net::TcpStream,
+    status: i64,
+    status_text: &str,
+    resp_headers: &Value,
+    mut iter_val: Value,
+) -> Result<(), String> {
+    let mut header_block = format!("HTTP/1.1 {status} {status_text}\r\n");
+    write_headers(&mut header_block, resp_headers);
+    // Add chunked transfer encoding if not present
+    if !header_block.to_lowercase().contains("transfer-encoding:") {
+        header_block.push_str("Transfer-Encoding: chunked\r\n");
+    }
+    header_block.push_str("Connection: close\r\n\r\n");
+    stream.write_all(header_block.as_bytes()).map_err(|e| format!("write error: {e}"))?;
+    stream.flush().map_err(|e| format!("flush error: {e}"))?;
+
+    // Walk the Iter ADT: (Yield value thunk) | Done
+    loop {
+        match &iter_val {
+            Value::Adt { ctor, fields, .. } if ctor.as_ref() == "Done" => {
+                // Send terminating chunk
+                stream.write_all(b"0\r\n\r\n").map_err(|e| format!("write error: {e}"))?;
+                stream.flush().map_err(|e| format!("flush error: {e}"))?;
+                break;
+            }
+            Value::Adt { ctor, fields, .. } if ctor.as_ref() == "Yield" && fields.len() == 2 => {
+                let chunk_str = match &fields[0] {
+                    Value::Str(s) => s.to_string(),
+                    other => format!("{other}"),
+                };
+                let chunk_bytes = chunk_str.as_bytes();
+                // Write chunk size (hex) + CRLF + data + CRLF
+                let chunk_header = format!("{:x}\r\n", chunk_bytes.len());
+                stream.write_all(chunk_header.as_bytes()).map_err(|e| format!("write error: {e}"))?;
+                stream.write_all(chunk_bytes).map_err(|e| format!("write error: {e}"))?;
+                stream.write_all(b"\r\n").map_err(|e| format!("write error: {e}"))?;
+                stream.flush().map_err(|e| format!("flush error: {e}"))?;
+
+                // Call the thunk to get the next iterator value
+                let thunk = &fields[1];
+                iter_val = nexl_runtime::call_value(thunk, &[])?;
+            }
+            other => {
+                // Unknown body shape — send as single chunk
+                let s = format!("{other}");
+                let chunk = format!("{:x}\r\n{s}\r\n0\r\n\r\n", s.len());
+                stream.write_all(chunk.as_bytes()).map_err(|e| format!("write error: {e}"))?;
+                stream.flush().map_err(|e| format!("flush error: {e}"))?;
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Write response headers from a Nexl Map value.
+fn write_headers(buf: &mut String, resp_headers: &Value) {
+    if let Value::Map(hdrs) = resp_headers {
         for (k, v) in hdrs.iter() {
             let key_str = match k {
                 Value::Str(s) => s.to_string(),
@@ -403,27 +496,9 @@ fn handle_connection(
                 Value::Str(s) => s.to_string(),
                 _ => format!("{v}"),
             };
-            response_bytes.push_str(&format!("{key_str}: {val_str}\r\n"));
+            buf.push_str(&format!("{key_str}: {val_str}\r\n"));
         }
     }
-
-    // Add Content-Length if not present
-    let body_bytes = resp_body.as_bytes();
-    if !response_bytes.to_lowercase().contains("content-length:") {
-        response_bytes.push_str(&format!("Content-Length: {}\r\n", body_bytes.len()));
-    }
-    // Add Connection: close
-    response_bytes.push_str("Connection: close\r\n");
-    response_bytes.push_str("\r\n");
-
-    stream
-        .write_all(response_bytes.as_bytes())
-        .map_err(|e| format!("write error: {e}"))?;
-    stream
-        .write_all(body_bytes)
-        .map_err(|e| format!("write body error: {e}"))?;
-    stream.flush().map_err(|e| format!("flush error: {e}"))?;
-    Ok(())
 }
 
 /// Parse the HTTP request line: `GET /path?query HTTP/1.1`
@@ -533,7 +608,7 @@ fn build_request_map(
 }
 
 /// Extract status, headers, body from a Nexl response map.
-fn extract_response(resp: &Value) -> Result<(i64, Value, String), String> {
+fn extract_response(resp: &Value) -> Result<(i64, Value, ResponseBody), String> {
     let map = match resp {
         Value::Map(m) => m,
         _ => return Err(format!("handler must return a Map, got {}", resp.type_name())),
@@ -549,9 +624,13 @@ fn extract_response(resp: &Value) -> Result<(i64, Value, String), String> {
         .unwrap_or_else(|| Value::Map(Rc::new(vec![].into())));
 
     let body = match map_get(map, "body") {
-        Some(Value::Str(s)) => s.to_string(),
-        Some(other) => format!("{other}"),
-        None => String::new(),
+        Some(Value::Str(s)) => ResponseBody::Complete(s.to_string()),
+        // Detect Iter ADT (Yield/Done) for streaming
+        Some(Value::Adt { type_name, .. }) if type_name.as_ref() == "Iter" => {
+            ResponseBody::Streaming(map_get(map, "body").unwrap().clone())
+        }
+        Some(other) => ResponseBody::Complete(format!("{other}")),
+        None => ResponseBody::Complete(String::new()),
     };
 
     Ok((status, headers, body))
