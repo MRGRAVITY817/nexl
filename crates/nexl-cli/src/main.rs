@@ -44,9 +44,12 @@ enum Command {
         #[arg(long = "no-opt")]
         no_opt: bool,
     },
+    /// Run a Nexl source file. If no FILE is given, runs the project entry point
+    /// (src/main.nx by default, or {source-dir}/main.nx from project.nx).
     Run {
+        /// File to run. If omitted, discovers main.nx from project.nx source-dir.
         #[arg(value_name = "FILE")]
-        input: PathBuf,
+        input: Option<PathBuf>,
         /// Compile to WASM and execute via wasmtime instead of the tree-walk evaluator.
         #[arg(long = "wasm")]
         wasm: bool,
@@ -263,6 +266,16 @@ fn main() {
             wasm,
             experimental_wasi3,
         } => {
+            let input = match input {
+                Some(path) => path,
+                None => match discover_run_file() {
+                    Some(path) => path,
+                    None => {
+                        eprintln!("nexl: no FILE given and no main.nx found.\n\nLooking for: src/main.nx (or {{source-dir}}/main.nx from project.nx).\n\nUsage: nexl run [FILE]");
+                        process::exit(1);
+                    }
+                },
+            };
             if experimental_wasi3 {
                 eprintln!(
                     "{}",
@@ -807,6 +820,38 @@ fn discover_test_files() -> Vec<PathBuf> {
         .collect();
     files.sort();
     files
+}
+
+/// Discover the entry point for `nexl run` (no argument).
+///
+/// Checks project.nx for `:source-dir` (defaults to `src`), then looks for
+/// `main.nx` inside that directory.  Falls back to `src/main.nx` if no
+/// `project.nx` is found.
+fn discover_run_file() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let manifest_path = cwd.join("project.nx");
+
+    let source_dir = if manifest_path.is_file() {
+        // Read source-dir from project.nx
+        if let Ok(contents) = std::fs::read_to_string(&manifest_path) {
+            if let Ok(manifest) = parse_manifest(&contents) {
+                manifest.package.source_dir.clone()
+            } else {
+                "src".to_string()
+            }
+        } else {
+            "src".to_string()
+        }
+    } else {
+        "src".to_string()
+    };
+
+    let main_path = cwd.join(&source_dir).join("main.nx");
+    if main_path.is_file() {
+        return Some(main_path);
+    }
+
+    None
 }
 
 /// `nexl test [file]` — evaluate source file and run all registered tests.
@@ -2055,7 +2100,21 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Run {
-                input: PathBuf::from("main.nexl"),
+                input: Some(PathBuf::from("main.nexl")),
+                wasm: false,
+                experimental_wasi3: false,
+                args: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn parse_run_without_input() {
+        let cli = Cli::try_parse_from(["nexl", "run"]).expect("parse");
+        assert_eq!(
+            cli.command,
+            Command::Run {
+                input: None,
                 wasm: false,
                 experimental_wasi3: false,
                 args: vec![],
