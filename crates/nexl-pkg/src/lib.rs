@@ -56,10 +56,12 @@ pub enum DependencySpec {
 /// Structured dependency specification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyDetail {
-    /// Semver range string.
+    /// Semver range string (required unless `:path` is given).
     pub version: String,
     /// Optional registry alias to resolve against.
     pub registry: Option<String>,
+    /// Optional local filesystem path (relative to project root).
+    pub path: Option<String>,
 }
 
 /// Registry configuration in `:registries`.
@@ -388,11 +390,13 @@ fn parse_dependencies(node: &Node) -> Result<BTreeMap<String, DependencySpec>, M
 fn parse_dependency_detail(pairs: &[(Node, Node)]) -> Result<DependencyDetail, ManifestError> {
     let mut version = None;
     let mut registry = None;
+    let mut path = None;
 
     for (key, value) in pairs {
         match keyword_name(key) {
             Some("version") => version = Some(expect_string(value, "dependency.version")?),
             Some("registry") => registry = Some(expect_string(value, "dependency.registry")?),
+            Some("path") => path = Some(expect_string(value, "dependency.path")?),
             Some(other) => {
                 return Err(ManifestError::Parse(format!(
                     "unknown dependency field :{other}"
@@ -406,10 +410,24 @@ fn parse_dependency_detail(pairs: &[(Node, Node)]) -> Result<DependencyDetail, M
         }
     }
 
+    // Path dependencies don't require a version
+    let version = version.unwrap_or_else(|| {
+        if path.is_some() {
+            "*".to_string()
+        } else {
+            String::new()
+        }
+    });
+    if version.is_empty() && path.is_none() {
+        return Err(ManifestError::MissingField(
+            "dependency.version (or :path for local dependencies)".to_string(),
+        ));
+    }
+
     Ok(DependencyDetail {
-        version: version
-            .ok_or_else(|| ManifestError::MissingField("dependency.version".to_string()))?,
+        version,
         registry,
+        path,
     })
 }
 
@@ -1612,7 +1630,8 @@ mod tests {
             manifest.dependencies.get("internal-lib"),
             Some(&DependencySpec::Detailed(DependencyDetail {
                 version: "^1.0.0".to_string(),
-                registry: Some("internal".to_string())
+                registry: Some("internal".to_string()),
+                path: None,
             }))
         );
     }
@@ -1835,6 +1854,7 @@ mod tests {
             DependencySpec::Detailed(DependencyDetail {
                 version: "^1.0.0".to_string(),
                 registry: Some("internal".to_string()),
+                path: None,
             }),
         );
 

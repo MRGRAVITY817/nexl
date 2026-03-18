@@ -571,7 +571,7 @@ fn macro_expand(nodes: &[Node]) -> Result<(Vec<Node>, Vec<Node>), String> {
 fn discover_and_load_modules(
     entry_path: &Path,
 ) -> Result<Vec<nexl_eval::modules::ModuleSource>, String> {
-    use std::collections::{HashSet, VecDeque};
+    use std::collections::{HashMap, HashSet, VecDeque};
 
     let entry_path = entry_path
         .canonicalize()
@@ -587,6 +587,35 @@ fn discover_and_load_modules(
         parse_manifest(&manifest_source).map_err(|e| format!("invalid project.nx: {e}"))?;
     let prefix = &manifest.package.prefix;
     let source_root = project_root.join(&manifest.package.source_dir);
+
+    // Build dependency prefix→source_root map for cross-project resolution.
+    // Each path dependency's project.nx is loaded to discover its prefix and source_dir.
+    let mut dep_roots: HashMap<String, std::path::PathBuf> = HashMap::new();
+    let all_deps = manifest
+        .dependencies
+        .iter()
+        .chain(manifest.dev_dependencies.iter());
+    for (dep_name, spec) in all_deps {
+        if let nexl_pkg::DependencySpec::Detailed(detail) = spec {
+            if let Some(dep_path) = &detail.path {
+                let dep_project_root = project_root.join(dep_path);
+                let dep_manifest_path = dep_project_root.join("project.nx");
+                let dep_manifest_source =
+                    std::fs::read_to_string(&dep_manifest_path).map_err(|e| {
+                        format!(
+                            "cannot read dependency `{dep_name}` manifest at {:?}: {e}",
+                            dep_manifest_path
+                        )
+                    })?;
+                let dep_manifest = parse_manifest(&dep_manifest_source).map_err(|e| {
+                    format!("invalid project.nx for dependency `{dep_name}`: {e}")
+                })?;
+                let dep_source_root =
+                    dep_project_root.join(&dep_manifest.package.source_dir);
+                dep_roots.insert(dep_manifest.package.prefix.clone(), dep_source_root);
+            }
+        }
+    }
 
     // Parse entry file
     let entry_source = std::fs::read_to_string(&entry_path)
@@ -613,9 +642,24 @@ fn discover_and_load_modules(
             }
             seen.insert(import.module_path.clone());
 
-            let rel_path = nexl_modules::module_name_to_path(&import.module_path, prefix)
-                .map_err(|e| format!("cannot resolve module `{}`: {e}", import.module_path))?;
-            let abs_path = source_root.join(&rel_path);
+            // Try resolving with the current project's prefix first.
+            // If prefix doesn't match, check path dependencies.
+            let abs_path = match nexl_modules::module_name_to_path(
+                &import.module_path,
+                prefix,
+            ) {
+                Ok(rel_path) => source_root.join(&rel_path),
+                Err(nexl_modules::ModulePathError::PrefixMismatch { .. }) => {
+                    // Try each dependency's prefix
+                    resolve_dep_module(&import.module_path, &dep_roots)?
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "cannot resolve module `{}`: {e}",
+                        import.module_path
+                    ));
+                }
+            };
 
             let source = std::fs::read_to_string(&abs_path).map_err(|e| {
                 format!(
@@ -635,6 +679,40 @@ fn discover_and_load_modules(
     }
 
     Ok(loaded)
+}
+
+/// Resolve a module path against path dependencies.
+///
+/// Given `frond.render` and dep_roots `{"frond" => "/path/to/frond/src"}`,
+/// this resolves to `/path/to/frond/src/frond/render.nx`.
+fn resolve_dep_module(
+    module_path: &str,
+    dep_roots: &std::collections::HashMap<String, std::path::PathBuf>,
+) -> Result<std::path::PathBuf, String> {
+    // Extract the first component as the potential dependency prefix
+    let first_dot = module_path.find('.');
+    let candidates: Vec<&str> = if let Some(pos) = first_dot {
+        // Try progressively longer prefixes: "frond", then "frond.sub", etc.
+        // Most deps use a single-segment prefix, so try that first.
+        vec![&module_path[..pos]]
+    } else {
+        vec![module_path]
+    };
+
+    for candidate in &candidates {
+        if let Some(dep_source_root) = dep_roots.get(*candidate) {
+            let rel_path = nexl_modules::module_name_to_path(module_path, candidate)
+                .map_err(|e| format!("cannot resolve dep module `{module_path}`: {e}"))?;
+            return Ok(dep_source_root.join(&rel_path));
+        }
+    }
+
+    let available: Vec<&String> = dep_roots.keys().collect();
+    Err(format!(
+        "module `{module_path}` does not match project prefix or any dependency. \
+         Available prefixes: {:?}",
+        available
+    ))
 }
 
 fn command_run_wasm(input_path: PathBuf, args: Vec<String>) -> Result<(), String> {
