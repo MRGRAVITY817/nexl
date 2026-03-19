@@ -87,6 +87,7 @@ pub fn standard_env() -> Rc<Env> {
     env.define("drop-while", native("drop-while", drop_while_fn));
     env.define("empty?", native("empty?", empty_pred));
     env.define("type-of", native("type-of", type_of_fn));
+    env.define("keyword", native("keyword", keyword_fn));
     env.define("nth", native("nth", nth_fn));
     env.define("get-in", native("get-in", get_in_fn));
     env.define("assoc-in", native("assoc-in", assoc_in_fn));
@@ -673,6 +674,21 @@ fn empty_pred(args: &[Value]) -> Result<Value, String> {
 fn type_of_fn(args: &[Value]) -> Result<Value, String> {
     let v = one_arg("type-of", args)?;
     Ok(Value::Str(Rc::from(v.type_name())))
+}
+
+/// `(keyword s)` — convert a string to a keyword.
+///
+/// `(keyword "foo")` → `:foo`
+/// `(keyword "is-loading")` → `:is-loading`
+fn keyword_fn(args: &[Value]) -> Result<Value, String> {
+    let v = one_arg("keyword", args)?;
+    match v {
+        Value::Str(s) => Ok(Value::Keyword {
+            ns: None,
+            name: Rc::from(s.as_ref()),
+        }),
+        other => Err(type_mismatch("keyword", "Str", other)),
+    }
 }
 
 /// `(nth coll i)` — alias for `get` on indexed collections.
