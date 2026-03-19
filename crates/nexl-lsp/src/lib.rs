@@ -131,11 +131,7 @@ fn resolve_import_paths(nodes: &[Node], file_path: &Path) -> Vec<PathBuf> {
     };
     imports
         .iter()
-        .filter_map(|imp| {
-            let rel = nexl_modules::module_name_to_path(&imp.module_path, &ctx.prefix).ok()?;
-            let abs = ctx.source_root.join(rel);
-            abs.is_file().then_some(abs)
-        })
+        .filter_map(|imp| resolve_module_to_file_path(&imp.module_path, &ctx))
         .collect()
 }
 
@@ -148,10 +144,7 @@ fn type_check_diagnostics(nodes: &[Node], source: &str, file_path: Option<&Path>
     if let (Some(path), Some(imports)) = (file_path, extract_module_imports(nodes)) {
         if let Some(ctx) = resolve_project_context(path) {
             for import in &imports {
-                if let Ok(rel) =
-                    nexl_modules::module_name_to_path(&import.module_path, &ctx.prefix)
-                {
-                    let abs = ctx.source_root.join(rel);
+                if let Some(abs) = resolve_module_to_file_path(&import.module_path, &ctx) {
                     env = register_imported_deftypes(env, &abs);
                 }
             }
@@ -2354,18 +2347,42 @@ struct ProjectContext {
     prefix: String,
     /// The absolute source root: `project_root.join(source_dir)`.
     source_root: PathBuf,
+    /// Dependency prefix → source root mappings from path dependencies.
+    dep_roots: std::collections::HashMap<String, PathBuf>,
 }
 
-/// Read `project.nx` and extract prefix + source root.
+/// Read `project.nx` and extract prefix + source root + dependency roots.
 fn resolve_project_context(file_path: &Path) -> Option<ProjectContext> {
     let project_root = find_project_root(file_path)?;
     let manifest_path = project_root.join("project.nx");
     let manifest_src = std::fs::read_to_string(&manifest_path).ok()?;
     let manifest = nexl_pkg::parse_manifest(&manifest_src).ok()?;
     let source_root = project_root.join(&manifest.package.source_dir);
+
+    // Resolve path dependencies to their source roots.
+    let mut dep_roots = std::collections::HashMap::new();
+    for (_name, dep_spec) in manifest.dependencies.iter().chain(manifest.dev_dependencies.iter()) {
+        // Extract path from either Version (no path) or Detailed (optional path).
+        let dep_path = match dep_spec {
+            nexl_pkg::DependencySpec::Detailed(detail) => detail.path.as_deref(),
+            _ => None,
+        };
+        if let Some(path) = dep_path {
+            let dep_dir = project_root.join(path);
+            let dep_manifest_path = dep_dir.join("project.nx");
+            if let Ok(dep_manifest_src) = std::fs::read_to_string(&dep_manifest_path) {
+                if let Ok(dep_manifest) = nexl_pkg::parse_manifest(&dep_manifest_src) {
+                    let dep_source_root = dep_dir.join(&dep_manifest.package.source_dir);
+                    dep_roots.insert(dep_manifest.package.prefix.clone(), dep_source_root);
+                }
+            }
+        }
+    }
+
     Some(ProjectContext {
         prefix: manifest.package.prefix,
         source_root,
+        dep_roots,
     })
 }
 
@@ -2421,10 +2438,41 @@ fn find_import_for_unqualified_name<'a>(
 }
 
 /// Convert a dotted module path to a file path via `nexl_modules`.
+///
+/// Tries the current project's prefix first, then checks path dependencies.
 fn resolve_module_to_file_path(module_path: &str, ctx: &ProjectContext) -> Option<PathBuf> {
-    let rel = nexl_modules::module_name_to_path(module_path, &ctx.prefix).ok()?;
-    let abs = ctx.source_root.join(rel);
-    if abs.is_file() { Some(abs) } else { None }
+    // 1. Try current project's prefix.
+    match nexl_modules::module_name_to_path(module_path, &ctx.prefix) {
+        Ok(rel) => {
+            let abs = ctx.source_root.join(rel);
+            if abs.is_file() {
+                return Some(abs);
+            }
+        }
+        Err(nexl_modules::ModulePathError::PrefixMismatch { .. }) => {
+            // Prefix didn't match — fall through to dependency lookup.
+        }
+        Err(_) => return None,
+    }
+
+    // 2. Try each dependency's prefix.
+    let first_dot = module_path.find('.');
+    let candidate_prefix = if let Some(pos) = first_dot {
+        &module_path[..pos]
+    } else {
+        module_path
+    };
+
+    if let Some(dep_source_root) = ctx.dep_roots.get(candidate_prefix) {
+        if let Ok(rel) = nexl_modules::module_name_to_path(module_path, candidate_prefix) {
+            let abs = dep_source_root.join(rel);
+            if abs.is_file() {
+                return Some(abs);
+            }
+        }
+    }
+
+    None
 }
 
 /// Collect top-level named symbols from a parsed file for `textDocument/documentSymbol`.
