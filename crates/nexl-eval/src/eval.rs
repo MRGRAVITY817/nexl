@@ -86,7 +86,7 @@ fn eval_atom(atom: &Atom, env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
         Atom::Ratio { numer, denom } => Value::Ratio(*numer, *denom),
         Atom::Bool(b) => Value::Bool(*b),
         Atom::Char(c) => Value::Char(*c),
-        Atom::Str(s) => Value::Str(Rc::from(s.as_str())),
+        Atom::Str(s) => eval_string_atom(s, env)?,
         Atom::Unit => Value::Unit,
         Atom::Keyword { ns, name } => Value::Keyword {
             ns: ns.as_ref().map(|s| Rc::from(s.as_str())),
@@ -114,6 +114,116 @@ fn eval_atom(atom: &Atom, env: &Rc<Env>) -> Result<EvalReturn, EvalError> {
             })?,
     };
     Ok(EvalReturn::Value(v))
+}
+
+fn value_to_interpolated_str(v: &Value) -> String {
+    match v {
+        Value::Str(s) => s.to_string(),
+        Value::Char(c) => c.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn eval_string_atom(s: &str, env: &Rc<Env>) -> Result<Value, EvalError> {
+    if !s.as_bytes().contains(&b'{') && !s.as_bytes().contains(&b'}') {
+        return Ok(Value::Str(Rc::from(s)));
+    }
+
+    let mut out = String::new();
+    let chars: Vec<(usize, char)> = s.char_indices().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let (byte_idx, ch) = chars[i];
+        match ch {
+            '{' => {
+                if i + 1 < chars.len() && chars[i + 1].1 == '{' {
+                    out.push('{');
+                    i += 2;
+                    continue;
+                }
+                let Some((end_i, expr)) = find_interpolation_end(s, &chars, i + 1) else {
+                    out.push('{');
+                    i += 1;
+                    continue;
+                };
+                let trimmed = expr.trim();
+                let forms = if trimmed.is_empty() {
+                    Vec::new()
+                } else {
+                    match nexl_reader::read(trimmed, meta::FileId::SYNTHETIC) {
+                        Ok(forms) => forms,
+                        Err(_) => Vec::new(),
+                    }
+                };
+                if forms.len() == 1 {
+                    let value = eval(&forms[0], env)?;
+                    out.push_str(&value_to_interpolated_str(&value));
+                } else {
+                    out.push('{');
+                    out.push_str(expr);
+                    out.push('}');
+                }
+                i = end_i + 1;
+            }
+            '}' => {
+                if i + 1 < chars.len() && chars[i + 1].1 == '}' {
+                    out.push('}');
+                    i += 2;
+                } else {
+                    out.push('}');
+                    i += 1;
+                }
+            }
+            _ => {
+                out.push_str(&s[byte_idx..byte_idx + ch.len_utf8()]);
+                i += 1;
+            }
+        }
+    }
+
+    Ok(Value::Str(Rc::from(out.as_str())))
+}
+
+fn find_interpolation_end<'a>(
+    s: &'a str,
+    chars: &[(usize, char)],
+    start_i: usize,
+) -> Option<(usize, &'a str)> {
+    let mut paren = 0i32;
+    let mut bracket = 0i32;
+    let mut brace = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for i in start_i..chars.len() {
+        let (byte_idx, ch) = chars[i];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '(' => paren += 1,
+            ')' => paren -= 1,
+            '[' => bracket += 1,
+            ']' => bracket -= 1,
+            '{' => brace += 1,
+            '}' if paren == 0 && bracket == 0 && brace == 0 => {
+                let start = chars[start_i].0;
+                return Some((i, &s[start..byte_idx]));
+            }
+            '}' => brace -= 1,
+            _ => {}
+        }
+    }
+    None
 }
 
 fn eval_list<'a>(

@@ -5,6 +5,7 @@
 
 use dashmap::DashMap;
 use nexl_ast::module::parse_module_decl;
+use nexl_ast::printer::PrettyPrinter;
 use nexl_ast::{Atom, FileId, ImportDecl, ImportKind, Node, NodeKind, Span};
 use nexl_errors::{Diagnostic as NexlDiagnostic, Severity as NexlSeverity};
 use nexl_infer::{Env, InferState};
@@ -2633,6 +2634,1142 @@ fn collect_references_across_project(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Code actions
+// ---------------------------------------------------------------------------
+
+/// Collect all applicable code actions for the given cursor position.
+fn collect_code_actions(
+    nodes: &[Node],
+    source: &str,
+    offset: usize,
+    _range: Range,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    // Collect all enclosing nodes from outermost to innermost so that
+    // actions on any ancestor form are offered regardless of cursor depth.
+    let mut ancestors = Vec::new();
+    collect_ancestors(nodes, offset, &mut ancestors);
+
+    for node in &ancestors {
+        thread_actions(node, source, uri, actions);
+        unwind_thread_action(node, source, uri, actions);
+        def_defn_convert_actions(node, source, uri, actions);
+        negate_condition_action(node, source, uri, actions);
+        flip_binary_action(node, source, uri, actions);
+        cycle_collection_action(node, source, uri, actions);
+        if_cond_convert_actions(node, source, uri, actions);
+        wrap_in_fn_action(node, source, uri, actions);
+        demorgan_action(node, source, uri, actions);
+        str_to_interpolation_action(node, source, uri, actions);
+    }
+    // Extract variable needs the ancestor chain to find the parent form.
+    extract_variable_action(&ancestors, source, uri, actions);
+}
+
+/// Collect all nodes whose span contains `offset`, from outermost to innermost.
+fn collect_ancestors<'a>(nodes: &'a [Node], offset: usize, out: &mut Vec<&'a Node>) {
+    for node in nodes {
+        if span_contains(node.span, offset) {
+            out.push(node);
+            collect_ancestors_in_node(node, offset, out);
+            return;
+        }
+    }
+}
+
+/// Recurse into a node's children to collect all enclosing nodes.
+fn collect_ancestors_in_node<'a>(node: &'a Node, offset: usize, out: &mut Vec<&'a Node>) {
+    match &node.kind {
+        NodeKind::List(children) | NodeKind::Vector(children) | NodeKind::Set(children) => {
+            for child in children {
+                if span_contains(child.span, offset) {
+                    out.push(child);
+                    collect_ancestors_in_node(child, offset, out);
+                    return;
+                }
+            }
+        }
+        NodeKind::Map(pairs) => {
+            for (k, v) in pairs {
+                if span_contains(k.span, offset) {
+                    out.push(k);
+                    collect_ancestors_in_node(k, offset, out);
+                    return;
+                }
+                if span_contains(v.span, offset) {
+                    out.push(v);
+                    collect_ancestors_in_node(v, offset, out);
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Thread first / Thread last
+// ---------------------------------------------------------------------------
+
+/// Check if a node is a threadable nested call chain like `(f (g (h x)))`.
+///
+/// Returns the list of (function_name_source, extra_args_source) from outer→inner,
+/// plus the innermost value's source text, if the chain is at least 2 calls deep.
+///
+/// For thread-first, the nested call is the *first* argument: `(f (g x) ...)`.
+/// For thread-last, the nested call is the *last* argument: `(f ... (g x))`.
+/// We check both positions.
+fn extract_thread_chain(
+    node: &Node,
+    source: &str,
+) -> Option<ThreadChain> {
+    let NodeKind::List(children) = &node.kind else {
+        return None;
+    };
+    if children.len() < 2 {
+        return None;
+    }
+    // Don't thread special forms (defn, if, let, etc.)
+    if is_special_form(children) {
+        return None;
+    }
+
+    // Determine if this is a first-threadable or last-threadable chain.
+    // Thread-first: nested call is always the *second* element (first arg).
+    // Thread-last: nested call is always the *last* element.
+    // For a simple 2-element list `(f (g x))`, both positions coincide.
+
+    // We'll extract a chain for thread-first: the nested call is at position 1.
+    let mut chain_first = Vec::new();
+    let seed_first = extract_chain_first(node, source, &mut chain_first);
+    let first_ok = seed_first.is_some() && chain_first.len() >= 2;
+
+    // And for thread-last: the nested call is at the last position.
+    let mut chain_last = Vec::new();
+    let seed_last = extract_chain_last(node, source, &mut chain_last);
+    let last_ok = seed_last.is_some() && chain_last.len() >= 2;
+
+    // Heuristic: reject threading when the chain looks like structured/DSL
+    // code rather than a pipeline. We check if any step has a complex extra
+    // arg (map, vector, or set literal) — that signals component/template code
+    // where threading would be nonsensical.
+    let first_ok = first_ok && !chain_has_complex_extras(node, true);
+    let last_ok = last_ok && !chain_has_complex_extras(node, false);
+
+    if !first_ok && !last_ok {
+        return None;
+    }
+
+    Some(ThreadChain {
+        first: if first_ok {
+            Some((chain_first, seed_first.unwrap()))
+        } else {
+            None
+        },
+        last: if last_ok {
+            Some((chain_last, seed_last.unwrap()))
+        } else {
+            None
+        },
+    })
+}
+
+/// Check if a threadable chain contains complex extra args (maps, vectors, sets)
+/// which signal DSL/component code rather than a pipeline.
+fn chain_has_complex_extras(node: &Node, is_first: bool) -> bool {
+    let NodeKind::List(children) = &node.kind else {
+        return false;
+    };
+    if children.len() < 2 {
+        return false;
+    }
+
+    // Check extra args at this level (everything except head and the nested call).
+    let extras = if is_first {
+        // Thread-first: nested call at position 1, extras are positions 2..
+        &children[2..]
+    } else {
+        // Thread-last: nested call at last position, extras are positions 1..len-1
+        &children[1..children.len() - 1]
+    };
+
+    for extra in extras {
+        if matches!(
+            extra.kind,
+            NodeKind::Map(_) | NodeKind::Vector(_) | NodeKind::Set(_)
+        ) {
+            return true;
+        }
+    }
+
+    // Recurse into the nested call.
+    let nested = if is_first {
+        children.get(1)
+    } else {
+        children.last()
+    };
+    if let Some(nested) = nested {
+        if matches!(&nested.kind, NodeKind::List(inner) if !inner.is_empty() && !is_special_form(inner))
+        {
+            return chain_has_complex_extras(nested, is_first);
+        }
+    }
+
+    false
+}
+
+struct ThreadChain {
+    /// (steps, seed) for thread-first. Each step is (fn_text, extra_args_text).
+    first: Option<(Vec<(String, String)>, String)>,
+    /// (steps, seed) for thread-last.
+    last: Option<(Vec<(String, String)>, String)>,
+}
+
+/// Extract a thread-first chain: at each level, the nested call is at position 1
+/// (the first argument). Extra args follow.
+fn extract_chain_first(node: &Node, source: &str, steps: &mut Vec<(String, String)>) -> Option<String> {
+    let NodeKind::List(children) = &node.kind else {
+        return Some(node_source(node, source).to_string());
+    };
+    if children.is_empty() {
+        return None;
+    }
+    let fn_text = node_source(&children[0], source).to_string();
+    let extra: Vec<&str> = children[2..].iter().map(|n| node_source(n, source)).collect();
+    let extra_text = extra.join(" ");
+    steps.push((fn_text, extra_text));
+
+    if children.len() < 2 {
+        return None;
+    }
+
+    // Recurse into the first argument (position 1).
+    let first_arg = &children[1];
+    match &first_arg.kind {
+        NodeKind::List(inner) if !inner.is_empty() && !is_special_form(inner) => {
+            extract_chain_first(first_arg, source, steps)
+        }
+        _ => Some(node_source(first_arg, source).to_string()),
+    }
+}
+
+/// Extract a thread-last chain: at each level, the nested call is at the last position.
+fn extract_chain_last(node: &Node, source: &str, steps: &mut Vec<(String, String)>) -> Option<String> {
+    let NodeKind::List(children) = &node.kind else {
+        return Some(node_source(node, source).to_string());
+    };
+    if children.is_empty() {
+        return None;
+    }
+    let fn_text = node_source(&children[0], source).to_string();
+    let extra: Vec<&str> = children[1..children.len() - 1]
+        .iter()
+        .map(|n| node_source(n, source))
+        .collect();
+    let extra_text = extra.join(" ");
+    steps.push((fn_text, extra_text));
+
+    if children.len() < 2 {
+        return None;
+    }
+
+    // Recurse into the last argument.
+    let last_arg = children.last().unwrap();
+    match &last_arg.kind {
+        NodeKind::List(inner) if !inner.is_empty() && !is_special_form(inner) => {
+            extract_chain_last(last_arg, source, steps)
+        }
+        _ => Some(node_source(last_arg, source).to_string()),
+    }
+}
+
+/// Check if a list starts with a special form head (def, defn, fn, let, if, match, etc.)
+fn is_special_form(children: &[Node]) -> bool {
+    if let Some(head) = children.first() {
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &head.kind {
+            return matches!(
+                name.as_str(),
+                "def" | "defn" | "fn" | "let" | "if" | "cond" | "match" | "do" | "quote"
+                    | "import" | "module" | "deftype" | "defeffect" | "defhandler"
+                    | "handle" | "if-let" | "when" | "when-let" | "->" | "->>" | "and" | "or"
+            );
+        }
+    }
+    false
+}
+
+/// Get the source text for a node.
+fn node_source<'a>(node: &Node, source: &'a str) -> &'a str {
+    let start = node.span.start as usize;
+    let end = node.span.end() as usize;
+    &source[start..end]
+}
+
+/// Build the threaded text from a chain.
+fn build_threaded_text(steps: &[(String, String)], seed: &str, arrow: &str) -> String {
+    let mut parts = vec![arrow.to_string(), seed.to_string()];
+    // Steps are outer→inner, but threading reads inner→outer.
+    for (fn_text, extra) in steps.iter().rev() {
+        if extra.is_empty() {
+            parts.push(fn_text.clone());
+        } else {
+            // For thread-first: (-> x (f extra))
+            // For thread-last: (->> x (f extra))
+            parts.push(format!("({fn_text} {extra})"));
+        }
+    }
+    format!("({})", parts.join(" "))
+}
+
+/// Create a WorkspaceEdit that replaces a node's span.
+/// Re-parse and pretty-print code to get proper indentation.
+fn format_code(text: &str) -> String {
+    let Ok(nodes) = nexl_reader::read(text, FileId::SYNTHETIC) else {
+        return text.to_string();
+    };
+    if nodes.len() == 1 {
+        let printer = PrettyPrinter::default_config();
+        // print_file adds trailing newline; we just want the form.
+        let formatted = printer.print_file(&nodes);
+        formatted.trim_end().to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+fn make_edit(uri: &Url, node: &Node, source: &str, new_text: String) -> WorkspaceEdit {
+    let range = span_to_range(source, node.span);
+    let formatted = format_code(&new_text);
+    let edit = TextEdit {
+        range,
+        new_text: formatted,
+    };
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), vec![edit]);
+    WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
+    }
+}
+
+/// Offer "Thread first" / "Thread last" for nested call chains.
+fn thread_actions(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    // Walk up to find the outermost list at this position.
+    // Since we get the innermost node, we need the outermost list.
+    // Actually, we need to check the node itself — if cursor is on `(`,
+    // find_node_at_offset returns the list node.
+    let Some(chain) = extract_thread_chain(node, source) else {
+        return;
+    };
+
+    let first_text = chain
+        .first
+        .as_ref()
+        .map(|(steps, seed)| build_threaded_text(steps, seed, "->"));
+    let last_text = chain
+        .last
+        .as_ref()
+        .map(|(steps, seed)| build_threaded_text(steps, seed, "->>"));
+
+    if let Some(text) = &first_text {
+        let edit = make_edit(uri, node, source, text.clone());
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: "Thread first (->)".to_string(),
+            kind: Some(CodeActionKind::REFACTOR_REWRITE),
+            edit: Some(edit),
+            ..Default::default()
+        }));
+    }
+
+    // Only show thread-last if it produces a different result than thread-first.
+    if let Some(text) = &last_text {
+        if first_text.as_ref() != Some(text) {
+            let edit = make_edit(uri, node, source, text.clone());
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Thread last (->>)".to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                ..Default::default()
+            }));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unwind threading
+// ---------------------------------------------------------------------------
+
+/// Detect `(-> seed f g h)` or `(->> seed f g h)` and offer to unwind.
+fn unwind_thread_action(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    let NodeKind::List(children) = &node.kind else {
+        return;
+    };
+    if children.len() < 3 {
+        return;
+    }
+    let arrow = match &children[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "->" || name == "->>" => {
+            name.as_str()
+        }
+        _ => return,
+    };
+    let is_first = arrow == "->";
+
+    // children[1] is the seed, children[2..] are the steps.
+    let seed_text = node_source(&children[1], source);
+    let steps = &children[2..];
+
+    // Build nested calls.
+    let mut result = seed_text.to_string();
+    for step in steps {
+        match &step.kind {
+            // Bare symbol: (fn result) or (fn result)
+            NodeKind::Atom(_) => {
+                let fn_name = node_source(step, source);
+                result = format!("({fn_name} {result})");
+            }
+            // Wrapped form like (f extra): thread-first inserts as first arg,
+            // thread-last inserts as last arg.
+            NodeKind::List(inner) if !inner.is_empty() => {
+                let fn_name = node_source(&inner[0], source);
+                let extra_args: Vec<&str> =
+                    inner[1..].iter().map(|n| node_source(n, source)).collect();
+                if is_first {
+                    // (f result extra...)
+                    let mut parts = vec![fn_name, &result];
+                    parts.extend(extra_args.iter().copied());
+                    result = format!("({})", parts.join(" "));
+                } else {
+                    // (f extra... result)
+                    let mut parts = vec![fn_name];
+                    parts.extend(extra_args.iter().copied());
+                    parts.push(&result);
+                    result = format!("({})", parts.join(" "));
+                }
+            }
+            _ => return, // unexpected form, bail
+        }
+    }
+
+    let edit = make_edit(uri, node, source, result.clone());
+    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+        title: "Unwind threading".to_string(),
+        kind: Some(CodeActionKind::REFACTOR_REWRITE),
+        edit: Some(edit),
+        ..Default::default()
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Convert def ↔ defn
+// ---------------------------------------------------------------------------
+
+/// Offer "Convert to defn" on `(def name (fn [params] body))` and
+/// "Convert to def" on `(defn name [params] body)`.
+fn def_defn_convert_actions(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    let NodeKind::List(children) = &node.kind else {
+        return;
+    };
+    if children.len() < 3 {
+        return;
+    }
+
+    let head_name = match &children[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.as_str(),
+        _ => return,
+    };
+
+    match head_name {
+        "def" => {
+            // (def name (fn [params] body...))
+            // children: [def, name, (fn [params] body...)]
+            if children.len() != 3 {
+                return;
+            }
+            let name_text = node_source(&children[1], source);
+            let fn_form = &children[2];
+            let NodeKind::List(fn_children) = &fn_form.kind else {
+                return;
+            };
+            // fn_children: [fn, [params], body...]
+            if fn_children.len() < 3 {
+                return;
+            }
+            if !matches!(
+                &fn_children[0].kind,
+                NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "fn"
+            ) {
+                return;
+            }
+            let params_text = node_source(&fn_children[1], source);
+            let body_parts: Vec<&str> = fn_children[2..]
+                .iter()
+                .map(|n| node_source(n, source))
+                .collect();
+            let body_text = body_parts.join(" ");
+            let new_text = format!("(defn {name_text} {params_text} {body_text})");
+            let edit = make_edit(uri, node, source, new_text);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Convert to defn".to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                ..Default::default()
+            }));
+        }
+        "defn" => {
+            // (defn name [params] body...)
+            // children: [defn, name, [params], body...]
+            if children.len() < 4 {
+                return;
+            }
+            // Skip if there's a docstring (children[2] is a string, params at [3]).
+            let (params_idx, _has_doc) = match &children[2].kind {
+                NodeKind::Atom(Atom::Str(_)) => (3, true),
+                NodeKind::Vector(_) => (2, false),
+                _ => return,
+            };
+            if params_idx >= children.len() {
+                return;
+            }
+            let name_text = node_source(&children[1], source);
+            let params_text = node_source(&children[params_idx], source);
+            let body_parts: Vec<&str> = children[params_idx + 1..]
+                .iter()
+                .map(|n| node_source(n, source))
+                .collect();
+            let body_text = body_parts.join(" ");
+            let new_text = format!("(def {name_text} (fn {params_text} {body_text}))");
+            let edit = make_edit(uri, node, source, new_text);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Convert to def".to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                ..Default::default()
+            }));
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Negate condition
+// ---------------------------------------------------------------------------
+
+/// Offer "Negate condition" on `(if cond then else)` — swaps branches and
+/// negates the condition. If condition is already `(not x)`, simplifies to `x`.
+fn negate_condition_action(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    let NodeKind::List(children) = &node.kind else {
+        return;
+    };
+    // (if cond then else) — must have exactly 4 elements
+    if children.len() != 4 {
+        return;
+    }
+    let is_if = matches!(
+        &children[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "if"
+    );
+    if !is_if {
+        return;
+    }
+
+    let cond = &children[1];
+    let then_text = node_source(&children[2], source);
+    let else_text = node_source(&children[3], source);
+
+    // Check if condition is already `(not x)` — if so, simplify.
+    let new_cond = if let NodeKind::List(cond_children) = &cond.kind {
+        if cond_children.len() == 2 {
+            if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &cond_children[0].kind {
+                if name == "not" {
+                    // Already negated: unwrap
+                    Some(node_source(&cond_children[1], source).to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let new_cond = new_cond.unwrap_or_else(|| format!("(not {})", node_source(cond, source)));
+    let new_text = format!("(if {new_cond} {else_text} {then_text})");
+    let edit = make_edit(uri, node, source, new_text);
+    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+        title: "Negate condition".to_string(),
+        kind: Some(CodeActionKind::REFACTOR_REWRITE),
+        edit: Some(edit),
+        ..Default::default()
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Flip binary expression
+// ---------------------------------------------------------------------------
+
+/// Offer "Flip operands" on binary operators like `(< a b)` → `(> b a)`.
+fn flip_binary_action(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    let NodeKind::List(children) = &node.kind else {
+        return;
+    };
+    if children.len() != 3 {
+        return;
+    }
+    let op = match &children[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.as_str(),
+        _ => return,
+    };
+
+    let flipped_op = match op {
+        "<" => ">",
+        ">" => "<",
+        "<=" => ">=",
+        ">=" => "<=",
+        "=" => "=",
+        "!=" => "!=",
+        "and" => "and",
+        "or" => "or",
+        "+" => "+",
+        "*" => "*",
+        _ => return,
+    };
+
+    let left = node_source(&children[1], source);
+    let right = node_source(&children[2], source);
+    let new_text = format!("({flipped_op} {right} {left})");
+    let edit = make_edit(uri, node, source, new_text);
+    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+        title: format!("Flip operands of `{op}`"),
+        kind: Some(CodeActionKind::REFACTOR_REWRITE),
+        edit: Some(edit),
+        ..Default::default()
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Cycle collection
+// ---------------------------------------------------------------------------
+
+/// Offer to convert between vector `[...]` and set `#{...}` literals.
+fn cycle_collection_action(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    match &node.kind {
+        NodeKind::Vector(children) => {
+            let inner: Vec<&str> = children.iter().map(|n| node_source(n, source)).collect();
+            let new_text = format!("#{{{}}}", inner.join(" "));
+            let edit = make_edit(uri, node, source, new_text);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Convert to set".to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                ..Default::default()
+            }));
+        }
+        NodeKind::Set(children) => {
+            let inner: Vec<&str> = children.iter().map(|n| node_source(n, source)).collect();
+            let new_text = format!("[{}]", inner.join(" "));
+            let edit = make_edit(uri, node, source, new_text);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Convert to vector".to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                ..Default::default()
+            }));
+        }
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Extract variable
+// ---------------------------------------------------------------------------
+
+/// Offer "Extract variable" on a non-trivial expression inside a call.
+///
+/// Finds the innermost compound expression (list/call) and wraps the parent
+/// form in a `(let [x extracted] ...)` binding.
+fn extract_variable_action(
+    ancestors: &[&Node],
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    // Need at least 2 ancestors: the parent form and the expression to extract.
+    if ancestors.len() < 2 {
+        return;
+    }
+
+    // Walk from innermost to outermost to find the first compound expression
+    // (a list that looks like a function call, not a special form).
+    let mut target_idx = None;
+    for i in (0..ancestors.len()).rev() {
+        let node = ancestors[i];
+        if let NodeKind::List(children) = &node.kind {
+            if children.len() >= 2 && !is_special_form(children) {
+                // This is a function call — it's a good extraction target.
+                // But only if it has a parent to wrap.
+                if i > 0 {
+                    target_idx = Some(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    let Some(target_idx) = target_idx else {
+        return;
+    };
+
+    let target = ancestors[target_idx]; // expression to extract
+    let target_src = node_source(target, source);
+
+    // Check if any ancestor is a `let` form — if so, add the binding there
+    // instead of creating a new nested let.
+    if let Some(let_node) = find_enclosing_let(ancestors, target_idx) {
+        if let NodeKind::List(let_children) = &let_node.kind {
+            // let_children: [let, [bindings...], body...]
+            if let_children.len() >= 3 {
+                if let NodeKind::Vector(_) = &let_children[1].kind {
+                    let bindings_node = &let_children[1];
+
+                    // Build new bindings vector: append "x target_src"
+                    let existing_bindings = node_source(bindings_node, source);
+                    // Insert before the closing ']'
+                    let inner = &existing_bindings[1..existing_bindings.len() - 1];
+                    let new_bindings = if inner.trim().is_empty() {
+                        format!("[x {target_src}]")
+                    } else {
+                        format!("[{} x {target_src}]", inner.trim_end())
+                    };
+
+                    // Build new let form with the target replaced by 'x' in the body
+                    let let_src = node_source(let_node, source);
+                    let old_bindings = node_source(bindings_node, source);
+                    // First, replace the bindings vector
+                    let with_new_bindings = let_src.replacen(old_bindings, &new_bindings, 1);
+                    // Then replace the target expression with 'x' in the result
+                    // (must not accidentally replace inside the new bindings)
+                    let binding_end = with_new_bindings.find(&new_bindings)
+                        .map(|pos| pos + new_bindings.len())
+                        .unwrap_or(0);
+                    let (prefix, suffix) = with_new_bindings.split_at(binding_end);
+                    let new_suffix = suffix.replacen(target_src, "x", 1);
+                    let new_text = format!("{prefix}{new_suffix}");
+
+                    let edit = make_edit(uri, let_node, source, new_text);
+                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: "Extract variable".to_string(),
+                        kind: Some(CodeActionKind::REFACTOR_EXTRACT),
+                        edit: Some(edit),
+                        ..Default::default()
+                    }));
+                    return;
+                }
+            }
+        }
+    }
+
+    // No enclosing let — find the best scope to wrap.
+    // Walk up to find the outermost non-special-form parent, or the enclosing
+    // special form (defn body, if branch, etc.).
+    let wrap_node = ancestors[target_idx - 1];
+
+    let wrap_src = node_source(wrap_node, source);
+    let new_wrap = wrap_src.replacen(target_src, "x", 1);
+    let new_text = format!("(let [x {target_src}] {new_wrap})");
+    let edit = make_edit(uri, wrap_node, source, new_text);
+    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+        title: "Extract variable".to_string(),
+        kind: Some(CodeActionKind::REFACTOR_EXTRACT),
+        edit: Some(edit),
+        ..Default::default()
+    }));
+}
+
+/// Find the nearest enclosing `(let [...] ...)` form in the ancestor chain.
+fn find_enclosing_let<'a>(ancestors: &[&'a Node], below_idx: usize) -> Option<&'a Node> {
+    for i in (0..below_idx).rev() {
+        if let NodeKind::List(children) = &ancestors[i].kind {
+            if children.len() >= 3 {
+                if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &children[0].kind {
+                    if name == "let" {
+                        // Verify it has a vector bindings form
+                        if matches!(&children[1].kind, NodeKind::Vector(_)) {
+                            return Some(ancestors[i]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Convert if ↔ cond
+// ---------------------------------------------------------------------------
+
+/// Offer "Convert to cond" on `(if a 1 (if b 2 3))` chains.
+/// Offer "Convert to if" on `(cond a 1 b 2 :else 3)`.
+fn if_cond_convert_actions(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    let NodeKind::List(children) = &node.kind else {
+        return;
+    };
+    if children.len() < 3 {
+        return;
+    }
+
+    let head = match &children[0].kind {
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) => name.as_str(),
+        _ => return,
+    };
+
+    match head {
+        "if" => {
+            // Check if this is an if-chain: (if cond then (if cond2 then2 else2))
+            if children.len() != 4 {
+                return;
+            }
+            // The else branch must be another if
+            let else_branch = &children[3];
+            if !list_head_is(else_branch, "if") {
+                return;
+            }
+
+            // Collect the chain
+            let mut clauses = Vec::new();
+            collect_if_chain(node, source, &mut clauses);
+
+            if clauses.len() < 2 {
+                return;
+            }
+
+            // Build cond form: (cond c1 e1 c2 e2 :else default)
+            let mut parts = vec!["cond".to_string()];
+            for (cond, expr) in &clauses {
+                parts.push(cond.clone());
+                parts.push(expr.clone());
+            }
+            let new_text = format!("({})", parts.join(" "));
+            let edit = make_edit(uri, node, source, new_text);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Convert to cond".to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                ..Default::default()
+            }));
+        }
+        "cond" => {
+            // (cond c1 e1 c2 e2 :else default) → nested ifs
+            // Must have odd number of args after "cond" (pairs + optional :else default)
+            let args = &children[1..];
+            if args.len() < 4 || args.len() % 2 != 0 {
+                return;
+            }
+
+            let pairs: Vec<(&str, &str)> = args
+                .chunks(2)
+                .map(|pair| (node_source(&pair[0], source), node_source(&pair[1], source)))
+                .collect();
+
+            let new_text = build_nested_ifs(&pairs);
+            let edit = make_edit(uri, node, source, new_text);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Convert to if".to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                ..Default::default()
+            }));
+        }
+        _ => {}
+    }
+}
+
+/// Collect an if-chain: (if c1 e1 (if c2 e2 default)) → [(c1,e1), (c2,e2), (:else,default)]
+fn collect_if_chain(node: &Node, source: &str, clauses: &mut Vec<(String, String)>) {
+    let NodeKind::List(children) = &node.kind else {
+        return;
+    };
+    if children.len() != 4 || !list_head_is(node, "if") {
+        return;
+    }
+
+    let cond = node_source(&children[1], source).to_string();
+    let then = node_source(&children[2], source).to_string();
+    clauses.push((cond, then));
+
+    let else_branch = &children[3];
+    if list_head_is(else_branch, "if") {
+        collect_if_chain(else_branch, source, clauses);
+    } else {
+        clauses.push((":else".to_string(), node_source(else_branch, source).to_string()));
+    }
+}
+
+/// Build nested ifs from (cond, expr) pairs. Last pair's condition is treated as :else.
+fn build_nested_ifs(pairs: &[(&str, &str)]) -> String {
+    if pairs.len() == 1 {
+        // Last pair — just the expression (it's the :else branch)
+        return pairs[0].1.to_string();
+    }
+    if pairs.len() == 2 {
+        let (c1, e1) = pairs[0];
+        let (_c2, e2) = pairs[1]; // c2 is :else
+        return format!("(if {c1} {e1} {e2})");
+    }
+    let (c, e) = pairs[0];
+    let rest = build_nested_ifs(&pairs[1..]);
+    format!("(if {c} {e} {rest})")
+}
+
+// ---------------------------------------------------------------------------
+// Wrap in anonymous function
+// ---------------------------------------------------------------------------
+
+/// Offer "Wrap in fn" on a bare symbol that's used as a function argument.
+/// `(map inc xs)` → cursor on `inc` → `(fn [x] (inc x))`
+fn wrap_in_fn_action(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    // Only on bare symbols (not qualified)
+    let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &node.kind else {
+        return;
+    };
+
+    // Skip special keywords/forms
+    if matches!(
+        name.as_str(),
+        "def" | "defn" | "fn" | "let" | "if" | "cond" | "match" | "do"
+            | "true" | "false" | "unit"
+    ) {
+        return;
+    }
+
+    let fn_name = node_source(node, source);
+    let new_text = format!("(fn [x] ({fn_name} x))");
+    let edit = make_edit(uri, node, source, new_text);
+    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+        title: "Wrap in fn".to_string(),
+        kind: Some(CodeActionKind::REFACTOR_REWRITE),
+        edit: Some(edit),
+        ..Default::default()
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// De Morgan's law
+// ---------------------------------------------------------------------------
+
+/// Offer De Morgan transformation on `(not (and a b))` ↔ `(or (not a) (not b))`
+/// and `(not (or a b))` ↔ `(and (not a) (not b))`.
+fn demorgan_action(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    let NodeKind::List(children) = &node.kind else {
+        return;
+    };
+
+    // Pattern 1: (not (and/or a b ...)) → (or/and (not a) (not b) ...)
+    if children.len() == 2 {
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &children[0].kind {
+            if name == "not" {
+                if let NodeKind::List(inner) = &children[1].kind {
+                    if inner.len() >= 3 {
+                        if let NodeKind::Atom(Atom::Symbol { ns: None, name: op }) =
+                            &inner[0].kind
+                        {
+                            let (flipped, label) = match op.as_str() {
+                                "and" => ("or", "Apply De Morgan's law"),
+                                "or" => ("and", "Apply De Morgan's law"),
+                                _ => return,
+                            };
+                            let negated: Vec<String> = inner[1..]
+                                .iter()
+                                .map(|n| format!("(not {})", node_source(n, source)))
+                                .collect();
+                            let new_text =
+                                format!("({flipped} {})", negated.join(" "));
+                            let edit = make_edit(uri, node, source, new_text);
+                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                title: label.to_string(),
+                                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                                edit: Some(edit),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Pattern 2: (and/or (not a) (not b)) → (not (or/and a b))
+    if children.len() >= 3 {
+        if let NodeKind::Atom(Atom::Symbol { ns: None, name }) = &children[0].kind {
+            let flipped = match name.as_str() {
+                "and" => "or",
+                "or" => "and",
+                _ => return,
+            };
+
+            // Check all args are (not x)
+            let mut unwrapped = Vec::new();
+            for arg in &children[1..] {
+                if let NodeKind::List(inner) = &arg.kind {
+                    if inner.len() == 2 {
+                        if let NodeKind::Atom(Atom::Symbol { ns: None, name: n }) = &inner[0].kind
+                        {
+                            if n == "not" {
+                                unwrapped.push(node_source(&inner[1], source));
+                                continue;
+                            }
+                        }
+                    }
+                }
+                return; // Not all args are (not x)
+            }
+
+            let new_text = format!("(not ({flipped} {}))", unwrapped.join(" "));
+            let edit = make_edit(uri, node, source, new_text);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Apply De Morgan's law".to_string(),
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(edit),
+                ..Default::default()
+            }));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Convert (str ...) to interpolated string
+// ---------------------------------------------------------------------------
+
+/// Offer "Convert to interpolated string" on `(str "Hello, " name "!")`
+/// → `"Hello, {name}!"`.
+fn str_to_interpolation_action(
+    node: &Node,
+    source: &str,
+    uri: &Url,
+    actions: &mut Vec<CodeActionOrCommand>,
+) {
+    let NodeKind::List(children) = &node.kind else {
+        return;
+    };
+    if children.len() < 3 {
+        return;
+    }
+
+    // Head must be `str`
+    let is_str = matches!(
+        &children[0].kind,
+        NodeKind::Atom(Atom::Symbol { ns: None, name }) if name == "str"
+    );
+    if !is_str {
+        return;
+    }
+
+    let args = &children[1..];
+
+    // Must have at least one non-string arg (otherwise no point interpolating)
+    let has_expr = args.iter().any(|a| !matches!(&a.kind, NodeKind::Atom(Atom::Str(_))));
+    if !has_expr {
+        return;
+    }
+
+    // Build the interpolated string
+    let mut result = String::new();
+    for arg in args {
+        match &arg.kind {
+            NodeKind::Atom(Atom::Str(s)) => {
+                // Escape any literal { or } in the string content
+                for ch in s.chars() {
+                    match ch {
+                        '{' => result.push_str("{{"),
+                        '}' => result.push_str("}}"),
+                        _ => result.push(ch),
+                    }
+                }
+            }
+            _ => {
+                // Interpolate the expression
+                let expr_src = node_source(arg, source);
+                result.push('{');
+                result.push_str(expr_src);
+                result.push('}');
+            }
+        }
+    }
+
+    let new_text = format!("\"{result}\"");
+    // Don't re-format interpolated strings — they're already in final form.
+    let range = span_to_range(source, node.span);
+    let edit = TextEdit {
+        range,
+        new_text: new_text.clone(),
+    };
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), vec![edit]);
+    let workspace_edit = WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
+    };
+
+    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+        title: "Convert to interpolated string".to_string(),
+        kind: Some(CodeActionKind::REFACTOR_REWRITE),
+        edit: Some(workspace_edit),
+        ..Default::default()
+    }));
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -2647,6 +3784,18 @@ impl LanguageServer for Backend {
                 completion_provider: Some(CompletionOptions::default()),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                code_action_provider: Some(CodeActionProviderCapability::Options(
+                    CodeActionOptions {
+                        code_action_kinds: Some(vec![
+                            CodeActionKind::QUICKFIX,
+                            CodeActionKind::REFACTOR_REWRITE,
+                            CodeActionKind::REFACTOR_EXTRACT,
+                            CodeActionKind::REFACTOR_INLINE,
+                            CodeActionKind::SOURCE,
+                        ]),
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
             },
             ..Default::default()
@@ -2905,6 +4054,30 @@ impl LanguageServer for Backend {
         Ok(Some(vec![edit]))
     }
 
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = &params.text_document.uri;
+        let source = match self.get_document_text(uri) {
+            Some(source) => source,
+            None => return Ok(None),
+        };
+        let nodes = match nexl_reader::read(&source, FileId(0)) {
+            Ok(nodes) => nodes,
+            Err(_) => return Ok(None),
+        };
+
+        let mut actions = Vec::new();
+        let range = params.range;
+        let offset = position_to_offset(&source, range.start);
+
+        collect_code_actions(&nodes, &source, offset, range, uri, &mut actions);
+
+        if actions.is_empty() {
+            Ok(Some(Vec::new()))
+        } else {
+            Ok(Some(actions))
+        }
+    }
+
     async fn document_symbol(
         &self,
         params: DocumentSymbolParams,
@@ -3001,6 +4174,447 @@ mod tests {
 
         // Formatting should be enabled
         assert_eq!(caps.document_formatting_provider, Some(OneOf::Left(true)));
+
+        // Code actions should be enabled
+        assert!(caps.code_action_provider.is_some());
+    }
+
+    /// Helper: get code actions for source at a byte offset.
+    fn get_actions_at(source: &str, offset: usize) -> Vec<CodeActionOrCommand> {
+        let nodes = nexl_reader::read(source, FileId(0)).unwrap();
+        let pos = offset_to_position(source, offset);
+        let range = Range::new(pos, pos);
+        let uri = test_uri("test.nx");
+        let mut actions = Vec::new();
+        collect_code_actions(&nodes, source, offset, range, &uri, &mut actions);
+        actions
+    }
+
+    /// Helper: find a code action by title substring.
+    fn find_action<'a>(
+        actions: &'a [CodeActionOrCommand],
+        title_contains: &str,
+    ) -> Option<&'a CodeAction> {
+        actions.iter().find_map(|a| match a {
+            CodeActionOrCommand::CodeAction(ca) if ca.title.contains(title_contains) => Some(ca),
+            _ => None,
+        })
+    }
+
+    /// Helper: extract the new text from a code action's single-edit.
+    fn action_new_text(action: &CodeAction) -> &str {
+        let edit = action.edit.as_ref().expect("action should have edit");
+        let changes = edit.changes.as_ref().expect("edit should have changes");
+        let edits = changes.values().next().expect("should have at least one file");
+        &edits[0].new_text
+    }
+
+    fn code_action_params(uri: Url, range: Range) -> CodeActionParams {
+        CodeActionParams {
+            text_document: TextDocumentIdentifier { uri },
+            range,
+            context: CodeActionContext {
+                diagnostics: Vec::new(),
+                only: None,
+                trigger_kind: None,
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn code_action_empty_for_clean_file() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("clean.nx");
+        backend
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "nexl".to_string(),
+                    version: 1,
+                    text: "(def x 42)".to_string(),
+                },
+            })
+            .await;
+
+        let result = backend
+            .code_action(code_action_params(
+                uri,
+                Range::new(Position::new(0, 0), Position::new(0, 0)),
+            ))
+            .await
+            .expect("code_action should succeed");
+
+        // Clean file with cursor not on any actionable form → empty list
+        assert_eq!(result, Some(Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn code_action_returns_none_for_unknown_doc() {
+        let (service, _socket) = LspService::new(Backend::new);
+        let backend = service.inner();
+        let uri = test_uri("nonexistent.nx");
+
+        let result = backend
+            .code_action(code_action_params(
+                uri,
+                Range::new(Position::new(0, 0), Position::new(0, 0)),
+            ))
+            .await
+            .expect("code_action should succeed");
+
+        assert_eq!(result, None);
+    }
+
+    // -----------------------------------------------------------------------
+    // B: Thread first / Thread last
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_thread_first_nested_calls() {
+        let source = "(f (g (h x)))";
+        // cursor on the opening paren of outer call
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Thread first")
+            .expect("should offer 'Thread first'");
+        assert_eq!(action_new_text(action), "(-> x h g f)");
+    }
+
+    #[test]
+    fn code_action_thread_last_nested_calls() {
+        let source = "(f (g (h x)))";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Thread last")
+            .expect("should offer 'Thread last'");
+        assert_eq!(action_new_text(action), "(->> x h g f)");
+    }
+
+    #[test]
+    fn code_action_unwind_thread_first() {
+        let source = "(-> x h g f)";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Unwind threading")
+            .expect("should offer 'Unwind threading'");
+        assert_eq!(action_new_text(action), "(f (g (h x)))");
+    }
+
+    #[test]
+    fn code_action_defn_convert_with_cursor_inside() {
+        // Cursor on 'add' (offset 6), should still offer Convert to def
+        // because the ancestor (defn ...) list is checked.
+        let source = "(defn add [a b] (+ a b))";
+        let actions = get_actions_at(source, 6); // on 'a' of 'add'
+        let action = find_action(&actions, "Convert to def")
+            .expect("should offer 'Convert to def' with cursor inside form");
+        assert_eq!(
+            action_new_text(action),
+            "(def add\n  (fn [a b]\n    (+ a b)))"
+        );
+    }
+
+    #[test]
+    fn code_action_no_threading_on_simple_call() {
+        // Single call with no nesting — nothing to thread
+        let source = "(f x)";
+        let actions = get_actions_at(source, 0);
+        assert!(find_action(&actions, "Thread first").is_none());
+        assert!(find_action(&actions, "Thread last").is_none());
+    }
+
+    #[test]
+    fn code_action_no_threading_on_dsl_code() {
+        // Every level has extra args — this is DSL/component code, not a pipeline.
+        let source = r#"(attrs {:id "card"} (on :dragstart (set-signal :card-id id)))"#;
+        let actions = get_actions_at(source, 0);
+        assert!(
+            find_action(&actions, "Thread").is_none(),
+            "should not offer threading on DSL code where every call has extra args"
+        );
+    }
+
+    #[test]
+    fn code_action_threading_with_mixed_args() {
+        // (map inc (filter even? xs)) — filter is bare-ish, map has extra arg
+        // thread-last: (->> xs (filter even?) (map inc))
+        let source = "(map inc (filter even? xs))";
+        let actions = get_actions_at(source, 0);
+        // This should offer thread-last because filter has a bare nested call
+        assert!(find_action(&actions, "Thread last").is_some());
+    }
+
+    #[test]
+    fn code_action_no_threading_on_special_forms() {
+        // defn, if, let etc. should never be offered for threading
+        let source = "(defn add [a b] (+ a b))";
+        let actions = get_actions_at(source, 0);
+        assert!(find_action(&actions, "Thread").is_none());
+
+        let source = "(if cond (foo x) (bar y))";
+        let actions = get_actions_at(source, 0);
+        assert!(find_action(&actions, "Thread").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // C: Convert def ↔ defn
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_convert_def_fn_to_defn() {
+        let source = "(def add (fn [a b] (+ a b)))";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Convert to defn")
+            .expect("should offer 'Convert to defn'");
+        assert_eq!(action_new_text(action), "(defn add [a b]\n  (+ a b))");
+    }
+
+    #[test]
+    fn code_action_convert_defn_to_def_fn() {
+        let source = "(defn add [a b] (+ a b))";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Convert to def")
+            .expect("should offer 'Convert to def'");
+        assert_eq!(
+            action_new_text(action),
+            "(def add\n  (fn [a b]\n    (+ a b)))"
+        );
+    }
+
+    #[test]
+    fn code_action_no_convert_on_non_fn_def() {
+        let source = "(def x 42)";
+        let actions = get_actions_at(source, 0);
+        assert!(find_action(&actions, "Convert to defn").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // D: Negate condition
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_negate_if_condition() {
+        let source = "(if cond a b)";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Negate condition")
+            .expect("should offer 'Negate condition'");
+        assert_eq!(action_new_text(action), "(if (not cond) b a)");
+    }
+
+    #[test]
+    fn code_action_negate_already_negated() {
+        let source = "(if (not cond) a b)";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Negate condition")
+            .expect("should offer 'Negate condition'");
+        assert_eq!(action_new_text(action), "(if cond b a)");
+    }
+
+    // -----------------------------------------------------------------------
+    // E: Flip binary expression
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_flip_comparison() {
+        let source = "(< a b)";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Flip")
+            .expect("should offer flip action");
+        assert_eq!(action_new_text(action), "(> b a)");
+    }
+
+    #[test]
+    fn code_action_flip_equality() {
+        let source = "(= a b)";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Flip")
+            .expect("should offer flip action");
+        assert_eq!(action_new_text(action), "(= b a)");
+    }
+
+    // -----------------------------------------------------------------------
+    // F: Cycle collection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_cycle_vector_to_set() {
+        let source = "[1 2 3]";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Convert to set")
+            .expect("should offer 'Convert to set'");
+        assert_eq!(action_new_text(action), "#{1 2 3}");
+    }
+
+    #[test]
+    fn code_action_cycle_set_to_vector() {
+        let source = "#{1 2 3}";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Convert to vector")
+            .expect("should offer 'Convert to vector'");
+        assert_eq!(action_new_text(action), "[1 2 3]");
+    }
+
+    #[test]
+    fn code_action_no_cycle_on_list() {
+        // Lists are calls, not data — don't cycle them.
+        let source = "(f x)";
+        let actions = get_actions_at(source, 0);
+        assert!(find_action(&actions, "Convert to set").is_none());
+        assert!(find_action(&actions, "Convert to vector").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // G: Extract variable
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_extract_variable() {
+        // Cursor on (+ a b) inside a call — offer to extract it
+        let source = "(f (+ a b) c)";
+        // offset 3 = opening paren of (+ a b)
+        let actions = get_actions_at(source, 3);
+        let action = find_action(&actions, "Extract variable")
+            .expect("should offer 'Extract variable'");
+        assert_eq!(action_new_text(action), "(let [x (+ a b)] (f x c))");
+    }
+
+    #[test]
+    fn code_action_extract_variable_into_existing_let() {
+        let source = "(let [a 1] (f (+ a 2) b))";
+        // offset 14 = opening paren of (+ a 2)
+        let actions = get_actions_at(source, 14);
+        let action = find_action(&actions, "Extract variable")
+            .expect("should offer 'Extract variable'");
+        assert_eq!(
+            action_new_text(action),
+            "(let [a 1\n      x (+ a 2)]\n  (f x b))"
+        );
+    }
+
+    #[test]
+    fn code_action_no_extract_on_atom() {
+        // Extracting a single symbol is useless
+        let source = "(f x)";
+        let actions = get_actions_at(source, 3); // on 'x'
+        assert!(find_action(&actions, "Extract variable").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // H: Convert if ↔ cond
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_convert_if_chain_to_cond() {
+        let source = "(if a 1 (if b 2 3))";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Convert to cond")
+            .expect("should offer 'Convert to cond'");
+        assert_eq!(action_new_text(action), "(cond a 1 b 2 :else 3)");
+    }
+
+    #[test]
+    fn code_action_convert_cond_to_if() {
+        let source = "(cond a 1 b 2 :else 3)";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "Convert to if")
+            .expect("should offer 'Convert to if'");
+        assert_eq!(
+            action_new_text(action),
+            "(if a\n  1\n  (if b 2 3))"
+        );
+    }
+
+    #[test]
+    fn code_action_no_cond_on_simple_if() {
+        // Single if with no else-if chain — no point converting to cond
+        let source = "(if a 1 2)";
+        let actions = get_actions_at(source, 0);
+        assert!(find_action(&actions, "Convert to cond").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // I: Wrap/unwrap in anonymous function
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_wrap_in_fn() {
+        let source = "(map inc xs)";
+        // cursor on `inc` (offset 5)
+        let actions = get_actions_at(source, 5);
+        let action = find_action(&actions, "Wrap in fn")
+            .expect("should offer 'Wrap in fn'");
+        assert_eq!(action_new_text(action), "(fn [x]\n  (inc x))");
+    }
+
+    // -----------------------------------------------------------------------
+    // J: De Morgan's law
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_demorgan_not_and() {
+        let source = "(not (and a b))";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "De Morgan")
+            .expect("should offer De Morgan's law");
+        assert_eq!(action_new_text(action), "(or (not a) (not b))");
+    }
+
+    #[test]
+    fn code_action_demorgan_not_or() {
+        let source = "(not (or a b))";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "De Morgan")
+            .expect("should offer De Morgan's law");
+        assert_eq!(action_new_text(action), "(and (not a) (not b))");
+    }
+
+    #[test]
+    fn code_action_demorgan_reverse() {
+        // (and (not a) (not b)) → (not (or a b))
+        let source = "(and (not a) (not b))";
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "De Morgan")
+            .expect("should offer De Morgan's law reverse");
+        assert_eq!(action_new_text(action), "(not (or a b))");
+    }
+
+    // -----------------------------------------------------------------------
+    // K: Convert str to interpolated string
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn code_action_str_to_interpolation_basic() {
+        let source = r#"(str "Hello, " name "!")"#;
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "interpolated string")
+            .expect("should offer interpolation");
+        assert_eq!(action_new_text(action), r#""Hello, {name}!""#);
+    }
+
+    #[test]
+    fn code_action_str_to_interpolation_multiple_exprs() {
+        let source = r#"(str "Status: " code " (" msg ")")"#;
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "interpolated string")
+            .expect("should offer interpolation");
+        assert_eq!(action_new_text(action), r#""Status: {code} ({msg})""#);
+    }
+
+    #[test]
+    fn code_action_str_to_interpolation_expr_call() {
+        let source = r#"(str "Count: " (count xs))"#;
+        let actions = get_actions_at(source, 0);
+        let action = find_action(&actions, "interpolated string")
+            .expect("should offer interpolation");
+        assert_eq!(action_new_text(action), r#""Count: {(count xs)}""#);
+    }
+
+    #[test]
+    fn code_action_no_interpolation_on_all_strings() {
+        // All args are strings — no point converting
+        let source = r#"(str "Hello" " " "world")"#;
+        let actions = get_actions_at(source, 0);
+        assert!(find_action(&actions, "interpolated string").is_none());
     }
 
     fn test_uri(name: &str) -> Url {

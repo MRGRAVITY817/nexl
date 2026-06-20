@@ -856,6 +856,28 @@ mod tests {
     }
 
     #[test]
+    fn eval_str_interpolation_symbol_and_expression() {
+        let env = crate::stdlib::standard_env();
+        env.define("name", Value::Str(Rc::from("Alice")));
+        let node = lit(Atom::Str("Hello, {name}! {(+ 1 2)}".to_string()));
+        assert_eq!(
+            eval(&node, &env).unwrap(),
+            Value::Str(Rc::from("Hello, Alice! 3"))
+        );
+    }
+
+    #[test]
+    fn eval_str_interpolation_escaped_braces() {
+        let env = crate::stdlib::standard_env();
+        env.define("name", Value::Str(Rc::from("Alice")));
+        let node = lit(Atom::Str("use {{name}} then {name}".to_string()));
+        assert_eq!(
+            eval(&node, &env).unwrap(),
+            Value::Str(Rc::from("use {name} then Alice"))
+        );
+    }
+
+    #[test]
     fn eval_unit_literal() {
         let env = Rc::new(Env::new());
         let node = lit(Atom::Unit);

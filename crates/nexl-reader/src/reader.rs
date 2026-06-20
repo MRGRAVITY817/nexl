@@ -782,7 +782,15 @@ fn reassemble_str(parts: &[StringPart]) -> String {
     let mut out = String::new();
     for part in parts {
         match part {
-            StringPart::Lit(s) => out.push_str(s),
+            StringPart::Lit(s) => {
+                for ch in s.chars() {
+                    match ch {
+                        '{' => out.push_str("{{"),
+                        '}' => out.push_str("}}"),
+                        _ => out.push(ch),
+                    }
+                }
+            }
             StringPart::Interp(s) => {
                 out.push('{');
                 out.push_str(s);

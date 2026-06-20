@@ -2,3 +2,9 @@
 **/*.rs.bk
 *.pdb
 .DS_Store
+
+# Private / non-public material
+docs/business-model.md
+docs/pitch.html
+docs/pitch-ko.html
+.pi/
