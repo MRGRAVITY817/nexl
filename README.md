@@ -56,6 +56,29 @@ Nexl is designed around a single guiding idea: **composability is the master vir
     name))
 ```
 
+### Success / failure handling in `let`, the pipe way
+
+Refutable bindings in `let` use the `|` operator to split every line into two
+reading lanes — the **happy path** on the left, the **failure case** on the right.
+If a pattern on the left fails to match, its fallback on the right becomes the value
+of the whole `let`, and the rest is skipped. You can scan a binding vector twice:
+once down the left to follow the nominal logic, once down the right to audit every
+failure mode — without the two ever interleaving.
+
+```clojure
+(defn handle-request! [req] -> (Result Response Error) ! [Db Net Log]
+  (let [req-id        (gen-id)                              ; plain binding, always succeeds
+        (Ok user)     (auth/verify (:token req)) | (Err :unauthorized)
+        (Ok body)     (json/parse (:body req))   | (Err :bad-json)
+        (Some record) (Db/query user (:id body)) | (Err :not-found)]
+    ;; Reached only when every pattern on the left matched:
+    (Ok {:status 200 :body (json/encode record)})))
+```
+
+No pyramid of nested `if`/`match`, no early-return boilerplate, no error-handling
+noise drowning out the success path — just two clean columns. This is Nexl's
+answer to railway-oriented error handling.
+
 ## Key Features
 
 - **Modern type system on a Lisp** — bidirectional type inference (most code needs no annotations), row polymorphism, algebraic data types with exhaustive `match`, and protocols.
