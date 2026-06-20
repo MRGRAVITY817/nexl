@@ -8,3 +8,7 @@ docs/business-model.md
 docs/pitch.html
 docs/pitch-ko.html
 .pi/
+
+# Symlinks into the design repo — not part of the public tree
+/decisions
+/examples

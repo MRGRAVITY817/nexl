@@ -100,10 +100,8 @@ This is the Stage 0 bootstrap compiler, implemented in **Rust** as a Cargo works
 |------|----------|
 | `nexl-spec.md` | The full language specification (v0.1 draft) |
 | `crates/` | Compiler crates — one per phase (reader, types, infer, effects, macros, IR, WASM/native codegen, CLI, LSP, package manager) |
-| `examples/` | Annotated `.nx` example programs |
 | `cookbook/` | Task-oriented recipes |
 | `docs/` | Design notes, crate map, milestones, glossary |
-| `decisions/` | Architecture Decision Records (ADRs) |
 | `editors/` | Editor integrations |
 
 See `docs/crate-map.md` for the full dependency graph.
@@ -134,7 +132,6 @@ Self-hosting (a Nexl compiler written in Nexl) is an aspirational milestone, not
 ## Learn More
 
 - **[`nexl-spec.md`](./nexl-spec.md)** — the complete language specification.
-- **[`examples/`](./examples/)** — runnable example programs.
 - **[`CONTRIBUTING.md`](./CONTRIBUTING.md)** — how to contribute.
 - **[`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)** — community guidelines.
 
